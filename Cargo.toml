@@ -1,0 +1,26 @@
+[package]
+name = "ruvane"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+description = "Dependency-free HTML rendering primitives for the Ruvane web framework."
+license = "MIT"
+repository = "https://github.com/ruvane-rs/Ruvane"
+readme = "README.md"
+keywords = ["html", "ssr", "web", "rendering", "zero-dependencies"]
+categories = ["web-programming", "template-engine"]
+publish = ["crates-io"]
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/src/**",
+    "/tests/**",
+    "/examples/**",
+]
+
+[lib]
+path = "src/lib.rs"
