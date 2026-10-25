@@ -24,8 +24,9 @@ Typed text inputs, textareas and checkboxes send bounded values to Rust.
 Client forms support Rust validation, reset tokens and selection/composition handling.
 Native POST forms validate bounded fields on the server, check their source origin
 and support internal 303 redirects. Interactive HTTP pages explicitly opt into a
-fixed module/Wasm CSP. Calling server actions from Wasm and client-side navigation
-remain future work.
+fixed module/Wasm CSP. Wasm components can call explicit server actions with
+bounded typed replies, pending state and lifetime-checked completions.
+Client-side navigation remains future work.
 
 ## Principles
 
@@ -45,7 +46,7 @@ cargo build --offline --locked -p ruvane-browser --target wasm32-unknown-unknown
 cargo run --offline --locked -p ruvane --example browser
 ```
 
-Open the printed address. The server renders a counter at 5/10, a boolean toggle
+Open the printed address. The server renders a counter at 5/10, a boolean toggle,
 an item list and a task form. Wasm hydrates those same DOM nodes and connects their events.
 The list supports add/remove, per-item counters, ordering and filtering. Keys keep
 surviving rows and state attached to their identities. Both targets compile
@@ -106,8 +107,13 @@ from URL queries. Origin is mandatory and must match the server-validated local
 Host; Fetch Metadata, when present, must also indicate same-origin. Body size,
 framing, MIME type and deadlines are checked before an action runs.
 
-The server keeps its loopback-only profile and script-blocking CSP. These forms
-have no automatic Wasm integration, sessions or database. See
+Build the Wasm target and open `/interactive` for server actions without page
+navigation. A Rust component sends typed requests, handles validation/pending
+state and reconciles replies. Native forms remain available as a fallback.
+See [Wasm actions](docs/actions.md) for the protocol and lifecycle.
+
+The server keeps its loopback-only profile; `/tasks` retains the script-blocking CSP.
+There are no sessions or database. See
 [server POST forms](docs/post-forms.md) for the API, origin policy and limits.
 
 ## Reactive state

@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.16 implements a small development profile based on the
+Ruvane 0.1.0-alpha.17 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not

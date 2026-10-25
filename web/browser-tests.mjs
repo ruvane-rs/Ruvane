@@ -18,13 +18,13 @@ const toggle = value => ({ component: 2, state: { kind: "boolean", value } });
 const emptyRoot = () => { const root = document.createElement("div"); document.body.appendChild(root); return root; };
 const serverRoot = (name = "counter") => { const root = document.querySelector(`#${name} > div`).cloneNode(true); document.body.appendChild(root); return root; };
 const values = root => [...root.querySelectorAll("output")].map(node => node.textContent);
-const zero = state => ({ state, views: 0, domHandles: 0, eventListeners: 0, rustInstances: 0, rustSignals: 0, rustEffects: 0 });
+const zero = state => ({ state, views: 0, domHandles: 0, eventListeners: 0, pendingActions: 0, rustInstances: 0, rustSignals: 0, rustEffects: 0 });
 const load = () => createRuntime("/assets/app.wasm");
 
 await test("real Wasm ABI, props, invalid events and stale handles", async () => {
   const { instance } = await WebAssembly.instantiate(await (await fetch("/assets/app.wasm")).arrayBuffer(), {});
   const e = validateExports(instance.exports);
-  equal(e.ruvane_abi_version(), 4, "ABI");
+  equal(e.ruvane_abi_version(), 5, "ABI");
   equal(e.ruvane_mount(0, 1, 1, 0), 0, "invalid root");
   equal(e.ruvane_last_error(), 1, "root error");
   equal(e.ruvane_mount(1, 2, 2, 2), 0, "invalid boolean");
@@ -111,13 +111,13 @@ await test("wrong MIME, old ABI and cross-origin module rejection", async () => 
   await rejects(() => createRuntime("https://invalid.example/module.wasm"));
 });
 await test("strict command framing and typed mount props", async () => {
-  const header = new Uint8Array([82, 86, 78, 51, 0, 0, 0, 0]);
+  const header = new Uint8Array([82, 86, 78, 52, 0, 0, 0, 0]);
   equal(decodeCommands(header), [], "empty batch");
   const bom = new TextEncoder().encode("\uFEFFtext"), frame = new Uint8Array(21 + bom.length);
-  frame.set([82,86,78,51,1,0,0,0,2,1,0,0,0,1,0,0,0]);
+  frame.set([82,86,78,52,1,0,0,0,2,1,0,0,0,1,0,0,0]);
   new DataView(frame.buffer).setUint32(17, bom.length, true); frame.set(bom, 21);
   equal(decodeCommands(frame)[0].text, "\uFEFFtext", "BOM preserved");
-  for (const bytes of [header.slice(0, 7), new Uint8Array(65537), new Uint8Array([82,86,78,51,1,0,0,0,99,1,0,0,0]), new Uint8Array([...header, 0])]) await rejects(() => decodeCommands(bytes));
+  for (const bytes of [header.slice(0, 7), new Uint8Array(65537), new Uint8Array([82,86,78,52,1,0,0,0,99,1,0,0,0]), new Uint8Array([...header, 0])]) await rejects(() => decodeCommands(bytes));
   for (const value of [-1, 1.5, NaN, Infinity, 0x100000000, "5"]) await rejects(() => validateProps(counter(value)));
   await rejects(() => validateProps({ component: 1, state: { kind: "boolean", value: 1 } }));
 });

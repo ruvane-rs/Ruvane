@@ -48,7 +48,7 @@ impl fmt::Display for FormError {
 
 impl std::error::Error for FormError {}
 
-fn valid_name(name: &str) -> Result<(), FormError> {
+pub(crate) fn valid_name(name: &str) -> Result<(), FormError> {
     let mut bytes = name.bytes();
     if name.len() > MAX_FORM_NAME_BYTES
         || !bytes

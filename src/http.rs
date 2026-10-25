@@ -227,6 +227,16 @@ impl AsRef<[u8]> for Body {
 }
 
 impl Response {
+    /// Serves a typed RVA1 action reply with fixed MIME and success/validation status.
+    pub fn action(reply: &crate::ActionReply) -> Self {
+        let mut response = Self::bytes(reply.encode(), MediaType::Action);
+        response.status = if reply.is_validation() {
+            StatusCode::BadRequest
+        } else {
+            StatusCode::Ok
+        };
+        response
+    }
     /// Creates a successful plain-text response.
     pub fn text(body: impl Into<String>) -> Self {
         Self {

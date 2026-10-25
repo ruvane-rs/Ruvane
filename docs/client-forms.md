@@ -4,6 +4,7 @@ Alpha.15 adds typed controls to shared Rust views. This is a client-side form
 profile: submit events run application code in Wasm. No HTTP mutation route,
 session or server action is involved. Native [GET forms](get-forms.md) handle
 server navigation; alpha.16's [POST forms](post-forms.md) handle server mutations.
+For server calls from a Wasm component, use alpha.17's [action API](actions.md).
 
 ## Build a form
 

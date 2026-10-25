@@ -1,8 +1,17 @@
-// DOM bridge for RVN3 commands.
-export const ABI_VERSION = 4;
+// DOM and action bridge for RVN4 commands.
+export const ABI_VERSION = 5;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
 const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button" });
-const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk"];
+const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete"];
+export const ACTION_MEDIA_TYPE = "application/vnd.ruvane.action";
+function actionPath(path) {
+  if (typeof path !== "string" || path.length > 1024 || !path.startsWith("/") || path.includes("//") || /[^A-Za-z0-9\-._~!$&'()*+,;=:@/%]/.test(path)) throw invalid();
+  for (const part of path.slice(1).split("/")) {
+    let decoded; try { decoded = decodeURIComponent(part); } catch { throw invalid(); }
+    if (decoded === "." || decoded === ".." || /[/\\\u0000-\u001f\u007f-\u009f]/.test(decoded)) throw invalid();
+  }
+  return path;
+}
 const invalid = () => new Error("Invalid Ruvane browser protocol");
 function uint(value, zero = false) {
   if (!Number.isInteger(value) || value < (zero ? 0 : 1) || value > 0xffffffff) throw invalid();
@@ -24,7 +33,7 @@ export function validateExports(exports) {
 /** Decodes a batch before touching the DOM. */
 export function decodeCommands(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 8 || bytes.length > LIMITS.bytes) throw invalid();
-  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 51) throw invalid();
+  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 52) throw invalid();
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 4;
   const u8 = () => { if (offset >= bytes.length) throw invalid(); return bytes[offset++]; };
@@ -36,6 +45,15 @@ export function decodeCommands(bytes) {
   for (let i = 0; i < count; i++) {
     const op = u8(), view = uint(u32());
     if (op === 5) { commands.push({ op, view }); continue; }
+    if (op === 11) {
+      const request = uint(u32()), action = uint(u32()), length = u32();
+      if (length > 1024 || offset + length > bytes.length) throw invalid();
+      const url = actionPath(decoder.decode(bytes.subarray(offset, offset + length))); offset += length;
+      const size = u32(); if (size > 16384 || offset + size > bytes.length) throw invalid();
+      const body = decoder.decode(bytes.subarray(offset, offset + size)); offset += size;
+      if (/[^\x21-\x7e]/.test(body)) throw invalid();
+      commands.push({ op, view, request, action, url, body }); continue;
+    }
     if (![1, 2, 3, 4, 6, 7, 8, 9, 10].includes(op)) throw invalid();
     const node = uint(u32());
     if (op === 1) {
@@ -275,7 +293,10 @@ function matchDom(nodes, root, inert) {
   children(nodes.get(0), root);
 }
 /** Loads a module and manages mounted or hydrated views. Disposal is final. */
-export async function createRuntime(url) {
+export async function createRuntime(url, options = {}) {
+  if (!options || typeof options !== "object" || Object.keys(options).some(key => key !== "actionTimeoutMs")) throw invalid();
+  const actionTimeout = options.actionTimeoutMs ?? 10000;
+  if (!Number.isInteger(actionTimeout) || actionTimeout < 1 || actionTimeout > 10000) throw invalid();
   let exports = await loadModule(url);
   const views = new Map();
   let nextRoot = 0, busy = false, closed = false, faulted = false, finalRust = null;
@@ -284,6 +305,8 @@ export async function createRuntime(url) {
   function forget(id, preserve = false) {
     const view = views.get(id);
     if (!view) return;
+    if (view.action) { clearTimeout(view.action.timer); view.action.controller.abort(); view.action = null; }
+    view.resolveIdle?.("disposed"); view.idlePromise = null; view.resolveIdle = null;
     for (const [node, listeners] of view.listeners) for (const [type, listener] of listeners) view.nodes.get(node).element.removeEventListener(type, listener);
     view.listeners.clear();
     // A failed hydration leaves the server's content in place.
@@ -328,6 +351,67 @@ export async function createRuntime(url) {
     const memory = exports.memory.buffer;
     if (size < 8 || size > LIMITS.bytes || pointer + size > memory.byteLength) throw invalid();
     return decodeCommands(new Uint8Array(memory, pointer, size).slice());
+  }
+  function settle(view, outcome) {
+    view.lastOutcome = outcome;
+    if (!view.action) { view.resolveIdle?.(outcome); view.idlePromise = null; view.resolveIdle = null; }
+  }
+  function whenIdle(id) {
+    const view = views.get(id);
+    if (!view || closed) return Promise.resolve("disposed");
+    if (!view.action) return Promise.resolve(view.lastOutcome);
+    if (!view.idlePromise) view.idlePromise = new Promise(resolve => { view.resolveIdle = resolve; });
+    return view.idlePromise;
+  }
+  function deliver(id, view, operation, bytes, kind) {
+    if (closed || views.get(id) !== view || view.action !== operation) return;
+    if (busy) { queueMicrotask(() => deliver(id, view, operation, bytes, kind)); return; }
+    busy = true; view.action = null;
+    try {
+      if (bytes) {
+        if (result(exports.ruvane_action_begin(id, operation.request, bytes.length)) !== 1) throw invalid();
+        for (let offset = 0; offset < bytes.length; offset += 4) {
+          const count = Math.min(4, bytes.length - offset); let word = 0;
+          for (let n = 0; n < count; n++) word |= bytes[offset + n] << (8 * n);
+          if (result(exports.ruvane_action_chunk(word >>> 0, count)) !== 1) throw invalid();
+        }
+      }
+      const completed = result(exports.ruvane_action_complete(id, operation.request, kind));
+      if (![1, 2].includes(completed)) throw invalid();
+      if (completed === 2) kind = 3;
+      drain(id, "dispatch");
+      settle(view, kind ? ["", "network", "timeout", "protocol", "rejected"][kind] : bytes[4] === 1 ? "validation" : "success");
+    } catch { stop(true); }
+    finally { busy = false; }
+  }
+  class TransportError extends Error { constructor(kind) { super("Ruvane action transport failed"); this.kind = kind; } }
+  async function perform(id, view, operation) {
+    let bytes = null, kind = 0;
+    try {
+      const response = await fetch(operation.url, { method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": ACTION_MEDIA_TYPE }, body: operation.body, signal: operation.controller.signal });
+      if (![200, 400].includes(response.status)) { await response.body?.cancel(); throw new TransportError(4); }
+      if (response.headers.get("content-type")?.trim().toLowerCase() !== ACTION_MEDIA_TYPE || !response.body) { await response.body?.cancel(); throw new TransportError(3); }
+      const length = response.headers.get("content-length");
+      if (length !== null && (!/^\d+$/.test(length) || Number(length) > 65536)) { await response.body.cancel(); throw new TransportError(3); }
+      const reader = response.body.getReader(), parts = []; let total = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read(); if (done) break;
+          total += value.length; if (total > 65536) { await reader.cancel(); throw new TransportError(3); } parts.push(value);
+        }
+      } finally { reader.releaseLock(); }
+      bytes = new Uint8Array(total); let offset = 0;
+      for (const part of parts) { bytes.set(part, offset); offset += part.length; }
+      if (bytes.length < 7 || bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 65 || bytes[3] !== 49 || bytes[4] !== (response.status === 400 ? 1 : 0)) throw new TransportError(3);
+    } catch (error) { bytes = null; kind = operation.timedOut ? 2 : error instanceof TransportError ? error.kind : 1; }
+    finally { clearTimeout(operation.timer); }
+    deliver(id, view, operation, bytes, kind);
+  }
+  function launch(id, view, command) {
+    const operation = { ...command, controller: new AbortController(), timer: null, timedOut: false };
+    view.action = operation; view.lastAction = command.request;
+    operation.timer = setTimeout(() => { operation.timedOut = true; operation.controller.abort(); }, actionTimeout);
+    void perform(id, view, operation);
   }
   function context(view, id) {
     if (!view.edits.has(id)) view.edits.set(id, { composing: false, pending: null });
@@ -438,7 +522,9 @@ export async function createRuntime(url) {
     }
   }
   function drain(id, phase) {
-    const batch = commands(), view = views.get(id);
+    const decoded = commands(), view = views.get(id);
+    const actions = decoded.filter(command => command.op === 11), batch = decoded.filter(command => command.op !== 11);
+    if (actions.length > 1 || (phase === "dispose" && actions.length) || actions.some(command => command.view !== id || command.request <= view.lastAction || view.action)) throw invalid();
     if (phase === "dispose") {
       matchDom(view.nodes, view.root, false);
       if (batch.length !== 1 || batch[0].op !== 5 || batch[0].view !== id) throw invalid();
@@ -495,6 +581,7 @@ export async function createRuntime(url) {
       const active = [...nodes].find(([, node]) => node.element === focused);
       if (!active || !view.edits.get(active[0])?.composing) restoreSelection(focused, saved);
     }
+    if (actions.length) launch(id, view, actions[0]);
   }
   function start(root, props, hydrated) {
     live(); host(root);
@@ -510,10 +597,10 @@ export async function createRuntime(url) {
         throw invalid();
       }
       if (views.has(id)) throw invalid();
-      views.set(id, { root, hydrated, nodes: new Map([[0, { element: root, tag: 0, depth: 0, children: [], key: 0 }]]), nextNode: 0, listeners: new Map(), events: new Set(), edits: new Map(), ingress: new Set(), hydrationEdits: [] });
+      views.set(id, { root, hydrated, nodes: new Map([[0, { element: root, tag: 0, depth: 0, children: [], key: 0 }]]), nextNode: 0, listeners: new Map(), events: new Set(), edits: new Map(), ingress: new Set(), hydrationEdits: [], action: null, lastAction: 0, lastOutcome: "success", idlePromise: null, resolveIdle: null });
       CLAIMS.add(root);
       drain(id, hydrated ? "hydrate" : "mount");
-      return Object.freeze({ id, dispatch: (event, value) => dispatch(id, event, value), dispose: () => disposeView(id) });
+      return Object.freeze({ id, dispatch: (event, value) => dispatch(id, event, value), whenIdle: () => whenIdle(id), dispose: () => disposeView(id) });
     } catch (error) {
       if (error instanceof HydrationMismatch || error instanceof MountRejected) {
         try { if (id) { releaseNative(id); forget(id, true); } }
@@ -589,7 +676,8 @@ export async function createRuntime(url) {
       let domHandles = 0, eventListeners = 0;
       for (const view of views.values()) { domHandles += Math.max(0, view.nodes.size - 1); eventListeners += [...view.listeners.values()].reduce((sum, listeners) => sum + listeners.length, 0); }
       const native = closed ? finalRust : nativeStats();
-      return Object.freeze({ state: closed ? (faulted ? "faulted" : "disposed") : "active", views: views.size, domHandles, eventListeners,
+      const pendingActions = [...views.values()].filter(view => view.action).length;
+      return Object.freeze({ state: closed ? (faulted ? "faulted" : "disposed") : "active", views: views.size, domHandles, eventListeners, pendingActions,
         rustInstances: native?.rustInstances ?? null, rustSignals: native?.rustSignals ?? null, rustEffects: native?.rustEffects ?? null });
     },
     dispose() { if (busy) throw new Error("Ruvane bridge busy"); stop(false); },

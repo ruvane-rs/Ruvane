@@ -3,7 +3,8 @@
 Alpha.16 adds native forms and explicit Rust mutation handlers. The server stays
 loopback-only and keeps its fixed script-blocking CSP. There is no browser runtime
 needed for these forms. The existing [Wasm controls](client-forms.md) remain a
-separate client-side API; they do not call these actions yet.
+separate client-side API. Alpha.17 adds [Wasm actions](actions.md) with typed replies
+and pending/completion callbacks; native forms still use their HTML/303 flow.
 
 ## Run the task example
 

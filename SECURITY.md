@@ -1,5 +1,35 @@
 # Security
 
+Alpha.17 adds explicit typed actions called by Rust/Wasm components. All action
+routes reuse the alpha.16 origin, Host, body, charset and method checks below.
+Action IDs label application callbacks, not authorization or secret function
+names. Requests use validated internal paths, fixed POST and URL-encoded fields.
+The bridge refuses redirects, external origins and arbitrary HTTP headers.
+
+RVA1 replies carry named text, u64 and boolean values with strict UTF-8, unique
+ASCII names, field-count and decoded-byte caps. HTTP status must agree with the
+frame kind, and MIME must match the fixed action type. Rust decodes the whole
+reply before invoking the model. Network bytes never become HTML, selectors or
+DOM commands. Applications must still check their response schema and resource
+authorization. MediaType::Action declares MIME only; it is not a byte validator
+and cannot be used for static export.
+
+Browser ABI v5/RVN4 isolate sixteen reviewed numeric exports. The added reply
+ingress uses exact-length bounded chunks and accepts no input pointers. Each
+request has a checked, never-reused token bound to a live component. One action
+per view can await I/O without holding the synchronous ABI busy. Disposal aborts
+fetch/read operations, clears timers, resolves the shared idle promise and drops
+the native owner; later completions cannot address a remounted view.
+
+Fetch and response reading have an absolute deadline and a 64 KiB decoded cap;
+request bodies are limited to 16 KiB. Invalid network data becomes a local
+Protocol outcome. Unexpected HTTP status or lost replies can occur after a
+server mutation. Timeout and abort do not roll back effects, and the bridge
+does not retry automatically or promise exactly-once execution. Trusted Rust
+callbacks are not preempted or sandboxed. The example keeps native forms as its
+fallback and continues to hold only bounded, shared in-memory task state.
+See [actions](docs/actions.md) for the exact protocol and limits.
+
 Alpha.16 adds explicit POST form routes to the loopback HTTP server. Host must
 first match the bound IP or localhost and actual port. Origin is then mandatory,
 canonical and equal to the HTTP origin of that validated Host. Null, missing,

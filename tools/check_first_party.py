@@ -17,7 +17,7 @@ assert len(metadata["workspace_members"]) == len(expected), "unexpected workspac
 for package in metadata["packages"]:
     assert package["source"] is None, "registry/git dependency is forbidden"
     assert package["name"] in expected and Path(package["manifest_path"]).resolve() == expected[package["name"]], "unexpected package path"
-    assert package["version"] == "0.1.0-alpha.16", "workspace versions must match"
+    assert package["version"] == "0.1.0-alpha.17", "workspace versions must match"
 abi = root / "browser/src/abi.rs"
 for source in (root / "browser/src").rglob("*.rs"):
     text = source.read_text()
@@ -25,5 +25,5 @@ for source in (root / "browser/src").rglob("*.rs"):
     for attribute in re.findall(r"#\[unsafe\([^\n]*", text):
         assert source == abi and attribute == "#[unsafe(no_mangle)]", "unexpected unsafe attribute"
 symbols = re.findall(r'pub extern "C" fn (\w+)', abi.read_text())
-assert len(symbols) == len(set(symbols)) == 13 and all(s.startswith("ruvane_") for s in symbols), "invalid ABI symbols"
+assert len(symbols) == len(set(symbols)) == 16 and all(s.startswith("ruvane_") for s in symbols), "invalid ABI symbols"
 print("First-party Cargo packages only; ABI boundary contains reviewed export attributes only.")

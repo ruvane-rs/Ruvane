@@ -195,6 +195,7 @@ pub(crate) fn valid_suffix(path: &str, kind: MediaType) -> bool {
         MediaType::Css => path.ends_with(".css"),
         MediaType::JavaScript => path.ends_with(".js") || path.ends_with(".mjs"),
         MediaType::WebAssembly => path.ends_with(".wasm"),
+        MediaType::Action => false,
         MediaType::Png => path.ends_with(".png"),
         MediaType::Jpeg => path.ends_with(".jpg") || path.ends_with(".jpeg"),
         MediaType::WebP => path.ends_with(".webp"),

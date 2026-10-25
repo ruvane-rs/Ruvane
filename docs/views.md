@@ -99,6 +99,12 @@ The factory maps `ComponentProps` to `Box<dyn Component>`. Construct
 `BrowserRuntime::new(factory)` with it. The registry handles ownership, limits,
 patches and disposal without knowing a specific widget.
 
+`take_action` returns a queued request, and `action_result` handles its typed
+completion. Both have defaults for components without server I/O. The registry
+permits one action per component and checks the live request token before calling
+back. A component's pending/error state belongs in its Rust model. See
+[actions](actions.md) for the protocol, failure handling and disposal.
+
 The shared examples in `examples/support/widgets.rs` include a counter, toggle
 and item list, plus a task form. The list has at most four logical items, with a child scope for
 each item's counter and done flag. Reordering preserves the scopes. Filtering

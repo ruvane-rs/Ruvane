@@ -1,5 +1,9 @@
 # Assets and media
 
+Alpha.17 adds MediaType::Action for RVA1 runtime responses. It declares the
+fixed action MIME without validating bytes. Action replies are not static assets
+and are rejected by static export. See [actions](actions.md).
+
 Ruvane 0.1.0-alpha.4 adds raw byte responses, embedded assets, stylesheet links,
 and image rendering using only standard Rust and project code.
 

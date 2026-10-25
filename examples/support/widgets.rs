@@ -4,10 +4,18 @@ use ruvane::{
     ReactiveRuntime, Scope, Signal, View,
 };
 
+#[path = "action_probe.rs"]
+mod action_probe;
 #[path = "fields_probe.rs"]
 mod fields_probe;
+#[path = "remote_tasks.rs"]
+mod remote_tasks;
+/// Action transport fixture registry ID.
+pub const ACTION_PROBE: u32 = 7;
 #[path = "tasks.rs"]
 mod tasks;
+/// Server-backed task component registry ID.
+pub const REMOTE_TASKS: u32 = 6;
 /// Field lifecycle fixture registry ID.
 pub const FIELDS_PROBE: u32 = 5;
 
@@ -298,6 +306,8 @@ pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentErro
         }
         (TASK_FORM, InitialState::Number(count)) => tasks::create(count),
         (FIELDS_PROBE, InitialState::Number(0)) => Ok(fields_probe::create()),
+        (REMOTE_TASKS, InitialState::Number(0)) => Ok(remote_tasks::create()),
+        (ACTION_PROBE, InitialState::Number(mode)) if mode <= 9 => Ok(action_probe::create(mode)),
         _ => Err(ComponentError::InvalidProps),
     }
 }

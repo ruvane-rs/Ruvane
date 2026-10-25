@@ -130,6 +130,20 @@ pub(crate) fn pattern_segments(pattern: &str) -> Result<(Vec<Segment>, bool), Ro
 }
 
 impl Router {
+    /// Registers a typed POST action with the same origin/body policy as native forms.
+    pub fn post_action(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Result<crate::ActionReply, crate::ActionError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Result<(), RouteError> {
+        self.post_form(path, move |request| match handler(request) {
+            Ok(reply) => Response::action(&reply),
+            Err(_) => Response::error(StatusCode::InternalServerError),
+        })
+    }
     /// Creates an empty router, which returns 404 for every path.
     pub fn new() -> Self {
         Self::default()

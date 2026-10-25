@@ -2,6 +2,7 @@
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
 
+mod actions;
 mod app;
 mod assets;
 mod browser;
@@ -18,6 +19,11 @@ mod static_site;
 mod url;
 mod view;
 
+pub use actions::{
+    ACTION_MEDIA_TYPE, ActionData, ActionError, ActionFailure, ActionOutcome, ActionReply,
+    ActionRequest, ActionValue, MAX_ACTION_FIELDS, MAX_ACTION_REPLY_BYTES,
+    MAX_ACTION_REQUEST_BYTES,
+};
 pub use app::{
     App, AppError, MAX_APP_LAYOUTS, MAX_APP_ROUTES, MAX_LAYOUT_DEPTH, MAX_PAGE_STYLESHEETS, Page,
     PageContext, PageError, PageMode,

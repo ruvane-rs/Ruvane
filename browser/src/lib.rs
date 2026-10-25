@@ -3,7 +3,8 @@
 #![deny(missing_docs)]
 
 use ruvane::{
-    BrowserCommands, Component, ComponentError, ComponentProps, EventValue, View, ViewSnapshot,
+    ActionFailure, ActionOutcome, ActionReply, BrowserCommands, Component, ComponentError,
+    ComponentProps, EventValue, View, ViewSnapshot,
 };
 use std::collections::BTreeMap;
 use std::fmt;
@@ -46,6 +47,8 @@ pub enum BrowserError {
     InvalidView = 8,
     /// Event data has the wrong type, encoding or size.
     InvalidPayload = 9,
+    /// An action completion no longer belongs to this live component.
+    InvalidAction = 10,
 }
 
 impl fmt::Display for BrowserError {
@@ -60,6 +63,7 @@ impl fmt::Display for BrowserError {
             Self::InvalidProps => "invalid component props",
             Self::InvalidView => "invalid component view",
             Self::InvalidPayload => "invalid event payload",
+            Self::InvalidAction => "expired action request",
         })
     }
 }
@@ -80,12 +84,20 @@ struct Instance {
     component: Box<dyn Component>,
     view: View,
     snapshot: ViewSnapshot,
+    action: Option<(u32, u32)>,
 }
 
 struct PendingText {
     view: u32,
     node: u32,
     event: u32,
+    length: usize,
+    bytes: Vec<u8>,
+}
+
+struct PendingReply {
+    view: u32,
+    request: u32,
     length: usize,
     bytes: Vec<u8>,
 }
@@ -97,6 +109,8 @@ pub struct BrowserRuntime {
     factory: ComponentFactory,
     next: u32,
     pending: Option<PendingText>,
+    reply: Option<PendingReply>,
+    next_action: u32,
 }
 
 impl BrowserRuntime {
@@ -108,11 +122,13 @@ impl BrowserRuntime {
             factory,
             next: 0,
             pending: None,
+            reply: None,
+            next_action: 0,
         }
     }
 
     fn ready(&self) -> Result<(), BrowserError> {
-        if self.buffer.is_empty() && self.pending.is_none() {
+        if self.buffer.is_empty() && self.pending.is_none() && self.reply.is_none() {
             Ok(())
         } else {
             Err(BrowserError::Busy)
@@ -139,13 +155,21 @@ impl BrowserRuntime {
         }
         let id = self.next.checked_add(1).ok_or(BrowserError::Limit)?;
         self.next = id;
-        let component = (self.factory)(props)?;
+        let mut component = (self.factory)(props)?;
         Self::resources(component.as_ref())?;
         let view = component.view()?;
         let snapshot = view.snapshot().map_err(|_| BrowserError::InvalidView)?;
-        let commands = snapshot
+        let mut commands = snapshot
             .commands(id)
             .map_err(|_| BrowserError::InvalidView)?;
+        let mut action = None;
+        Self::queue_action(
+            component.as_mut(),
+            &mut action,
+            &mut self.next_action,
+            &mut commands,
+            id,
+        )?;
         self.instances.insert(
             id,
             Instance {
@@ -153,6 +177,7 @@ impl BrowserRuntime {
                 component,
                 view,
                 snapshot,
+                action,
             },
         );
         self.buffer = commands;
@@ -201,10 +226,17 @@ impl BrowserRuntime {
             instance.component.dispatch_value(event, value)?;
             Self::resources(instance.component.as_ref())?;
             let next = instance.component.view()?;
-            let (snapshot, commands) = instance
+            let (snapshot, mut commands) = instance
                 .snapshot
                 .update(&next, view)
                 .map_err(|_| BrowserError::InvalidView)?;
+            Self::queue_action(
+                instance.component.as_mut(),
+                &mut instance.action,
+                &mut self.next_action,
+                &mut commands,
+                view,
+            )?;
             Ok::<_, BrowserError>((next, snapshot, commands))
         })();
         match update {
@@ -220,6 +252,155 @@ impl BrowserRuntime {
                 Err(error)
             }
         }
+    }
+
+    fn queue_action(
+        component: &mut dyn Component,
+        active: &mut Option<(u32, u32)>,
+        next: &mut u32,
+        commands: &mut BrowserCommands,
+        view: u32,
+    ) -> Result<(), BrowserError> {
+        if let Some(action) = component.take_action() {
+            if active.is_some() {
+                return Err(BrowserError::InvalidView);
+            }
+            *next = next.checked_add(1).ok_or(BrowserError::Limit)?;
+            commands
+                .action(view, *next, &action)
+                .map_err(|_| BrowserError::InvalidView)?;
+            *active = Some((*next, action.action()));
+        }
+        Ok(())
+    }
+
+    /// Delivers one completion to its live owner. Repeated or stale tokens are errors.
+    pub fn complete_action(
+        &mut self,
+        view: u32,
+        request: u32,
+        outcome: ActionOutcome,
+    ) -> Result<(), BrowserError> {
+        self.ready()?;
+        let instance = self
+            .instances
+            .get_mut(&view)
+            .ok_or(BrowserError::InvalidAction)?;
+        let (token, action) = instance.action.ok_or(BrowserError::InvalidAction)?;
+        if token != request {
+            return Err(BrowserError::InvalidAction);
+        }
+        instance.action = None;
+        let update = (|| {
+            instance.component.action_result(action, outcome)?;
+            Self::resources(instance.component.as_ref())?;
+            let next = instance.component.view()?;
+            let (snapshot, mut commands) = instance
+                .snapshot
+                .update(&next, view)
+                .map_err(|_| BrowserError::InvalidView)?;
+            Self::queue_action(
+                instance.component.as_mut(),
+                &mut instance.action,
+                &mut self.next_action,
+                &mut commands,
+                view,
+            )?;
+            Ok::<_, BrowserError>((next, snapshot, commands))
+        })();
+        match update {
+            Ok((next, snapshot, commands)) => {
+                instance.view = next;
+                instance.snapshot = snapshot;
+                self.buffer = commands;
+                Ok(())
+            }
+            Err(error) => {
+                self.instances.remove(&view);
+                self.buffer.clear();
+                Err(error)
+            }
+        }
+    }
+
+    /// Starts bounded RVA1 input for the current action token.
+    pub fn begin_reply(
+        &mut self,
+        view: u32,
+        request: u32,
+        length: u32,
+    ) -> Result<(), BrowserError> {
+        self.ready()?;
+        if self
+            .instances
+            .get(&view)
+            .and_then(|instance| instance.action)
+            .is_none_or(|(token, _)| token != request)
+        {
+            return Err(BrowserError::InvalidAction);
+        }
+        if length as usize > ruvane::MAX_ACTION_REPLY_BYTES {
+            return Err(BrowserError::InvalidPayload);
+        }
+        self.reply = Some(PendingReply {
+            view,
+            request,
+            length: length as usize,
+            bytes: Vec::with_capacity(length as usize),
+        });
+        Ok(())
+    }
+
+    /// Appends one to four reply bytes; invalid chunks discard staged input.
+    pub fn reply_chunk(&mut self, word: u32, count: u32) -> Result<(), BrowserError> {
+        let mut reply = self.reply.take().ok_or(BrowserError::InvalidPayload)?;
+        if !(1..=4).contains(&count)
+            || (count < 4 && word >> (count * 8) != 0)
+            || reply.bytes.len() + count as usize > reply.length
+        {
+            return Err(BrowserError::InvalidPayload);
+        }
+        reply
+            .bytes
+            .extend_from_slice(&word.to_le_bytes()[..count as usize]);
+        self.reply = Some(reply);
+        Ok(())
+    }
+
+    /// Commits RVA1 (kind 0) or ActionFailure (1..=4). False reports malformed RVA1.
+    pub fn complete_wire(
+        &mut self,
+        view: u32,
+        request: u32,
+        kind: u32,
+    ) -> Result<bool, BrowserError> {
+        let reply = self.reply.take();
+        if reply
+            .as_ref()
+            .is_some_and(|reply| reply.view != view || reply.request != request)
+        {
+            return Err(BrowserError::InvalidPayload);
+        }
+        let outcome = match kind {
+            0 => match reply {
+                Some(reply)
+                    if reply.view == view
+                        && reply.request == request
+                        && reply.bytes.len() == reply.length =>
+                {
+                    ActionReply::decode(&reply.bytes).map_err(|_| ActionFailure::Protocol)
+                }
+                _ => Err(ActionFailure::Protocol),
+            },
+            1 => Err(ActionFailure::Network),
+            2 => Err(ActionFailure::Timeout),
+            3 => Err(ActionFailure::Protocol),
+            4 => Err(ActionFailure::Rejected),
+            _ => return Err(BrowserError::InvalidPayload),
+        };
+        let malformed = kind == 0 && outcome == Err(ActionFailure::Protocol);
+        self.complete_action(view, request, outcome)?;
+        Ok(!malformed)
     }
 
     /// Starts one bounded text payload. Other mutations wait until commit or clear.
@@ -330,6 +511,7 @@ impl BrowserRuntime {
     pub fn clear_commands(&mut self) {
         self.buffer.clear();
         self.pending = None;
+        self.reply = None;
     }
     /// Number of live components.
     pub fn live_instances(&self) -> usize {
@@ -549,7 +731,7 @@ mod tests {
             };
             assert_eq!(runtime.dispatch(id, 42), Err(expected));
             assert_eq!(runtime.live_instances(), 0);
-            assert_eq!(runtime.command_bytes(), b"RVN3\0\0\0\0");
+            assert_eq!(runtime.command_bytes(), b"RVN4\0\0\0\0");
             assert_eq!(runtime.dispatch(id, 42), Err(BrowserError::InvalidHandle));
         }
         assert_eq!(runtime.mount(1, counter(1)), Err(BrowserError::Limit));
@@ -618,5 +800,119 @@ mod tests {
         runtime.dispose(id).unwrap();
         runtime.clear_commands();
         assert_eq!(runtime.live_signals(), 0);
+    }
+    fn remote() -> ComponentProps {
+        ComponentProps::new(demo::REMOTE_TASKS, InitialState::Number(0)).unwrap()
+    }
+    fn empty_tasks() -> ActionReply {
+        let mut data = ruvane::ActionData::default();
+        data.insert("count", ruvane::ActionValue::Number(0))
+            .unwrap();
+        ActionReply::success(data)
+    }
+    #[test]
+    fn action_tokens_staging_and_late_results_are_bound_to_live_owners() {
+        let mut runtime = BrowserRuntime::new(demo::create);
+        let id = runtime.mount(1, remote()).unwrap();
+        let (token, _) = runtime.instances[&id].action.unwrap();
+        runtime.clear_commands();
+        assert_eq!(
+            runtime.begin_reply(id, token + 1, 0),
+            Err(BrowserError::InvalidAction)
+        );
+        assert_eq!(
+            runtime.begin_reply(id, token, 65537),
+            Err(BrowserError::InvalidPayload)
+        );
+        runtime.begin_reply(id, token, 7).unwrap();
+        assert_eq!(runtime.dispose(id), Err(BrowserError::Busy));
+        assert_eq!(
+            runtime.reply_chunk(256, 1),
+            Err(BrowserError::InvalidPayload)
+        );
+        runtime.begin_reply(id, token, 7).unwrap();
+        runtime.reply_chunk(0, 1).unwrap();
+        assert_eq!(runtime.complete_wire(id, token, 0), Ok(false));
+        runtime.clear_commands();
+        assert_eq!(runtime.live_instances(), 1);
+        assert!(
+            runtime.instances[&id]
+                .view
+                .render()
+                .unwrap()
+                .as_str()
+                .contains("Invalid server response")
+        );
+        assert_eq!(
+            runtime.complete_action(id, token, Ok(empty_tasks())),
+            Err(BrowserError::InvalidAction)
+        );
+        runtime.dispatch(id, 4).unwrap();
+        let (next, _) = runtime.instances[&id].action.unwrap();
+        assert!(next > token);
+        runtime.clear_commands();
+        runtime
+            .complete_action(id, next, Ok(empty_tasks()))
+            .unwrap();
+        runtime.clear_commands();
+        runtime.dispatch(id, 4).unwrap();
+        let (last, _) = runtime.instances[&id].action.unwrap();
+        runtime.clear_commands();
+        runtime.dispose(id).unwrap();
+        runtime.clear_commands();
+        let other = runtime.mount(1, remote()).unwrap();
+        runtime.clear_commands();
+        assert_eq!(
+            runtime.complete_action(id, last, Ok(empty_tasks())),
+            Err(BrowserError::InvalidAction)
+        );
+        assert_eq!(
+            runtime.complete_action(other, last, Ok(empty_tasks())),
+            Err(BrowserError::InvalidAction)
+        );
+        let (current, _) = runtime.instances[&other].action.unwrap();
+        runtime.begin_reply(other, current, 0).unwrap();
+        runtime.clear_commands();
+        runtime
+            .complete_action(other, current, Err(ActionFailure::Network))
+            .unwrap();
+        runtime.clear_commands();
+        assert!(
+            runtime.instances[&other]
+                .view
+                .render()
+                .unwrap()
+                .as_str()
+                .contains("Network error")
+        );
+    }
+    #[test]
+    fn thousand_action_lifecycles_do_not_reuse_tokens_or_retain_components() {
+        let mut runtime = BrowserRuntime::new(demo::create);
+        let mut previous = 0;
+        for _ in 0..1000 {
+            let id = runtime.mount(1, remote()).unwrap();
+            let (token, _) = runtime.instances[&id].action.unwrap();
+            assert!(token > previous);
+            previous = token;
+            runtime.clear_commands();
+            runtime
+                .complete_action(id, token, Ok(empty_tasks()))
+                .unwrap();
+            runtime.clear_commands();
+            runtime.dispose(id).unwrap();
+            runtime.clear_commands();
+            assert_eq!(
+                (
+                    runtime.live_instances(),
+                    runtime.live_signals(),
+                    runtime.live_effects()
+                ),
+                (0, 0, 0)
+            );
+        }
+        runtime.next_action = u32::MAX;
+        assert_eq!(runtime.mount(1, remote()), Err(BrowserError::Limit));
+        assert_eq!(runtime.live_instances(), 0);
     }
 }

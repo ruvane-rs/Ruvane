@@ -2398,3 +2398,65 @@ fn server_task_store_is_bounded_and_handles_concurrent_submissions() {
             .contains("Tasks (0)")
     );
 }
+
+#[test]
+fn typed_actions_share_origin_validation_and_the_native_task_store() {
+    use ruvane::{ACTION_MEDIA_TYPE, ActionReply};
+    let server = Running::start(server_tasks::router().unwrap(), ServerConfig::default());
+    let invalid = post(&server, "/actions/tasks/create", b"title=&notes=kept");
+    assert_eq!(status(&invalid), 400);
+    assert!(
+        parts(&invalid)
+            .0
+            .lines()
+            .any(|line| line == format!("Content-Type: {ACTION_MEDIA_TYPE}"))
+    );
+    let reply = ActionReply::decode(parts(&invalid).1).unwrap();
+    assert!(reply.is_validation());
+    assert_eq!(reply.data().text("field"), Some("title"));
+    let forbidden = post_wire(
+        &server,
+        "/actions/tasks/create",
+        "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: 8\r\n",
+        b"title=no",
+    );
+    assert_eq!(status(&forbidden), 403);
+    let created = post(
+        &server,
+        "/actions/tasks/create",
+        b"title=From+Wasm&notes=%3Cscript%3E%0D%0A%F0%9F%A6%80",
+    );
+    assert_eq!(status(&created), 200);
+    let reply = ActionReply::decode(parts(&created).1).unwrap();
+    assert!(!reply.is_validation());
+    assert_eq!(reply.data().number("count"), Some(1));
+    assert_eq!(reply.data().text("notes_0"), Some("<script>\n🦀"));
+    let page = server.request("GET", "/tasks");
+    let html = std::str::from_utf8(parts(&page).1).unwrap();
+    assert!(html.contains("From Wasm") && html.contains("&lt;script&gt;"));
+    let native = post(&server, "/tasks/1/status", b"done=on");
+    assert_eq!(status(&native), 303);
+    let list = post(&server, "/actions/tasks/list", b"");
+    assert_eq!(
+        ActionReply::decode(parts(&list).1)
+            .unwrap()
+            .data()
+            .boolean("done_0"),
+        Some(true)
+    );
+    let removed = post(&server, "/actions/tasks/remove", b"id=1");
+    assert_eq!(
+        ActionReply::decode(parts(&removed).1)
+            .unwrap()
+            .data()
+            .number("count"),
+        Some(0)
+    );
+    let error = post(&server, "/actions/tasks/remove", b"id=1");
+    assert_eq!(status(&error), 400);
+    assert!(
+        ActionReply::decode(parts(&error).1)
+            .unwrap()
+            .is_validation()
+    );
+}

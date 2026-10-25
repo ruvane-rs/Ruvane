@@ -1,8 +1,8 @@
-//! RVN3 browser command encoding.
+//! RVN4 browser command encoding.
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 4;
+pub const BROWSER_ABI_VERSION: u32 = 5;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.
@@ -81,10 +81,27 @@ impl Default for BrowserCommands {
 }
 
 impl BrowserCommands {
-    /// Creates an empty batch with an RVN3 header.
+    /// Queues a validated POST action after this batch's DOM updates.
+    pub fn action(
+        &mut self,
+        view: u32,
+        request: u32,
+        action: &crate::ActionRequest,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, request, action.action()])?;
+        let url = action.url().as_str().as_bytes();
+        let body = action.body().as_bytes();
+        let mut data = Vec::new();
+        data.extend_from_slice(&(url.len() as u32).to_le_bytes());
+        data.extend_from_slice(url);
+        data.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        data.extend_from_slice(body);
+        self.push(11, &[view, request, action.action()], &data)
+    }
+    /// Creates an empty batch with an RVN4 header.
     pub fn new() -> Self {
         Self {
-            bytes: b"RVN3\0\0\0\0".to_vec(),
+            bytes: b"RVN4\0\0\0\0".to_vec(),
             count: 0,
         }
     }

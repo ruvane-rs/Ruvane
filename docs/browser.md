@@ -47,13 +47,14 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="4" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="5" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
 canonical decimal spelling, with no sign, spaces or leading zeros. Factories
 check the component ID, state kind and domain range. The demo registry uses
-1=counter, 2=toggle, 3=item list and 4=task form. Component 5 is a field lifecycle test fixture.
+1=counter, 2=toggle, 3=item list and 4=task form. Component 5 is a field lifecycle test fixture; 6 is the remote task model and
+7 is an action transport fixture.
 State is public page data; no arbitrary JSON, source code,
 function name or input pointer is accepted.
 
@@ -113,7 +114,8 @@ an uninspectable trap, native counts are null/unknown and the instance reference
 is released. Explicit runtime disposal removes both client and hydrated views.
 
 `stats()` returns state, views, DOM handles, event listeners and native instance,
-signal and effect counts. `decodeCommands`, `planCommands`, `validateProps` and
+signal and effect counts, plus pendingActions. Controllers expose whenIdle()
+for transport completion. `decodeCommands`, `planCommands`, `validateProps` and
 `validateExports` are exported for integration tests. The pure planner validates
 decoded commands against copied metadata; framing and byte caps are checked by
 the decoder before the planner runs.
@@ -138,19 +140,22 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v4
+## Browser ABI v5
 
-Alpha.15 adds typed payloads and uses RVN3 command frames. Rebuild the Wasm and use its
-matching bridge together. The module exports memory and these thirteen functions,
+Alpha.17 adds action completions and uses RVN4 command frames. Rebuild the Wasm and use its
+matching bridge together. The module exports memory and these sixteen functions,
 with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 4 |
+| `ruvane_abi_version()` | Returns 5 |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
 | `ruvane_dispatch(view, node, event, kind, value)` | Commit an event; 1 on success, zero on error |
 | `ruvane_event_begin(view, node, event, length)` | Start one text payload of 0..=1024 bytes |
 | `ruvane_event_chunk(word, count)` | Append 1..=4 little-endian bytes |
+| `ruvane_action_begin(view, request, length)` | Stage at most 64 KiB for a live action |
+| `ruvane_action_chunk(word, count)` | Append 1..=4 little-endian reply bytes |
+| `ruvane_action_complete(view, request, kind)` | Commit RVA1 (0) or failure (1..=4); 1 handled, 2 handled malformed RVA1, 0 ABI error |
 | `ruvane_dispose(view)` | 1 on success, zero for a stale/invalid view |
 | `ruvane_commands_ptr()` | Borrowed output offset |
 | `ruvane_commands_len()` | Output bytes including the frame header |
@@ -162,7 +167,8 @@ with no host imports:
 
 Errors are 1=invalid/duplicate root, 2=limit, 3=unknown view, 4=unknown event,
 5=busy/unacknowledged batch, 6=reactive failure, 7=invalid props, 8=invalid
-view/patch and 9=invalid payload. Mutations refuse a pending batch or text payload.
+view/patch, 9=invalid payload and 10=expired action request. Mutations refuse a
+pending batch or staged input. An action awaiting network I/O does not hold the ABI busy.
 Root/view IDs are numeric;
 view IDs increase with checked arithmetic and never wrap or get reused.
 
@@ -186,9 +192,9 @@ memory view, checks ranges and copies the bounded batch before acknowledging
 it. Signed JavaScript i32 results are interpreted as u32 bit patterns; public
 JavaScript inputs are validated before crossing the ABI.
 
-## RVN3 command frames
+## RVN4 command frames
 
-Integers are little-endian. The header is `RVN3` plus a u32 count, with no trailing
+Integers are little-endian. The header is `RVN4` plus a u32 count, with no trailing
 bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 
 | Opcode | Remaining fields | Operation |
@@ -203,6 +209,7 @@ bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 | 8 | node u32, epoch u32, byte length u32, UTF-8 bytes | Set a text field's live value |
 | 9 | node u32, epoch u32, boolean u8 | Set a checkbox's live checked state |
 | 10 | node u32, boolean u8 | Set a field's aria-invalid state |
+| 11 | request u32, action u32, URL length u32 + UTF-8, body length u32 + ASCII | Queue an internal POST action |
 
 Tags are section=1, h2=2, p=3, span=4, output=5, button=6, ul=7, li=8,
 form=9, label=10, text input=11, checkbox=12, textarea=13 and submit button=14. New
@@ -223,7 +230,11 @@ The planner rejects cross-view references, unknown or reused handles, duplicate
 keys, invalid parents, list nesting, sibling targets and incomplete nodes before
 DOM changes. Removal is recursive; placing a node cannot reparent it or form a
 cycle. Native patches remove obsolete subtrees first, create replacements, then
-order siblings. Text remains inert. No arbitrary HTML, URL or attribute is encoded.
+order siblings. Text remains inert. Action URLs must pass the internal path profile;
+no arbitrary HTML or DOM attributes are encoded. At most one opcode-11 command
+is allowed per batch and per pending owner. Action metadata is checked before
+DOM changes, then extracted before the structural planner runs. Fetch starts
+after that batch has been applied. See [actions](actions.md) for RVA1 and lifecycle rules.
 DOM-application failures stop the runtime; validated batches do not promise a
 transactional rollback of arbitrary application state or host side effects.
 
@@ -239,13 +250,16 @@ transactional rollback of arbitrary application state or host side effects.
 | Logical event bindings per view | 16 |
 | DOM listeners per view | At most 48; text fields use 3 per binding |
 | Command frame | 64 KiB including header, 256 commands |
-| One text leaf, field value or staged payload | 1024 UTF-8 bytes |
+| One text leaf, field value or event payload | 1024 UTF-8 bytes |
+| Pending actions | 1 per view |
+| Action URL / request body / reply | 1024 bytes / 16 KiB / 64 KiB |
 | Reported signals/effects per component | 1024 each |
 
 Factories and components are trusted Rust code. These limits do not bound all
 CPU, allocations or reference cycles, and a fetch timeout cannot preempt Wasm.
-The browser adapter does not call HTTP actions. Native [POST forms](post-forms.md)
-are a separate server API. Sessions and cryptography remain outside this profile.
+The adapter calls typed [actions](actions.md) through the same native POST
+origin/body policy. Ordinary [POST forms](post-forms.md) retain their native flow.
+Sessions and cryptography remain outside this profile.
 Nested islands and richer initial props remain future work.
 
 Python 3.9+, Node 18+ built-ins and a real browser are test tools; no npm or Python

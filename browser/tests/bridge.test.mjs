@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { decodeCommands, validateExports, validateProps, planCommands, LIMITS } from "../../web/bridge.mjs";
 
 function frame(payload = [], count = 0) {
-  return new Uint8Array([82, 86, 78, 51, ...word(count), ...payload]);
+  return new Uint8Array([82, 86, 78, 52, ...word(count), ...payload]);
 }
 const word = n => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
 
@@ -52,7 +52,7 @@ test("compiled Rust module has no host imports and executes the real reactor", a
     assert.equal(e.ruvane_commands_clear(), 1);
     return commands;
   };
-  assert.equal(e.ruvane_abi_version(), 4);
+  assert.equal(e.ruvane_abi_version(), 5);
   assert.equal(e.ruvane_mount(0, 1, 1, 0), 0);
   assert.equal(e.ruvane_last_error(), 1);
   for (const args of [[1, 1, 2, 1], [1, 2, 2, 2], [1, 1, 1, 1001], [1, 99, 1, 0]]) {
@@ -250,4 +250,49 @@ test("compiled forms validate staged UTF-8, typed events and stale field handles
   assert.equal(e.ruvane_live_signals(), 3); assert.ok(model.nodes.size <= 33);
   assert.equal(e.ruvane_dispose(id), 1); e.ruvane_commands_clear();
   assert.deepEqual([e.ruvane_live_instances(), e.ruvane_live_signals(), e.ruvane_live_effects()], [0, 0, 0]);
+});
+
+test("action commands reject external routes, invalid paths, oversized bodies and truncation", () => {
+  const encode = (url, body = "q=1") => {
+    const path = new TextEncoder().encode(url), bytes = new TextEncoder().encode(body);
+    return frame([11, ...word(1), ...word(2), ...word(99), ...word(path.length), ...path, ...word(bytes.length), ...bytes], 1);
+  };
+  const bytes = encode("/actions/tasks/create", "q=Rust%20%2B%20HTML");
+  assert.deepEqual(decodeCommands(bytes), [{ op: 11, view: 1, request: 2, action: 99, url: "/actions/tasks/create", body: "q=Rust%20%2B%20HTML" }]);
+  for (let n = 0; n < bytes.length; n++) assert.throws(() => decodeCommands(bytes.slice(0, n)));
+  for (const url of ["", "https://evil.example/a", "//evil.example/a", "/a/../b", "/a/%2e%2e/b", "/%2fother", "/%5cother", "/%FF", "/a?b=1", "/a#b", "/a\nb", "/" + "x".repeat(1024)]) assert.throws(() => decodeCommands(encode(url)));
+  for (const body of ["q=raw space", "q=\r\n", "x".repeat(16385)]) assert.throws(() => decodeCommands(encode("/actions", body)));
+});
+
+test("compiled action callbacks validate bytes, recover from malformed replies and retire request tokens", async () => {
+  const file = process.env.RUVANE_WASM_FILE || new URL("../../target/wasm32-unknown-unknown/release/ruvane_browser.wasm", import.meta.url);
+  const { instance } = await WebAssembly.instantiate(await readFile(file), {}); const e = validateExports(instance.exports);
+  const drain = () => { const batch = decodeCommands(new Uint8Array(e.memory.buffer, e.ruvane_commands_ptr() >>> 0, e.ruvane_commands_len() >>> 0).slice()); e.ruvane_commands_clear(); return batch; };
+  const id = e.ruvane_mount(1, 6, 1, 0), initial = drain();
+  const request = initial.find(command => command.op === 11);
+  assert.equal(request.url, "/actions/tasks/list"); assert.equal(request.body, "");
+  assert.equal(e.ruvane_action_begin(id, request.request + 1, 0), 0); assert.equal(e.ruvane_last_error(), 10);
+  assert.equal(e.ruvane_action_begin(id, request.request, 65537), 0); assert.equal(e.ruvane_last_error(), 9);
+  const complete = (token, bytes) => {
+    assert.equal(e.ruvane_action_begin(id, token, bytes.length), 1);
+    assert.equal(e.ruvane_dispose(id), 0); assert.equal(e.ruvane_last_error(), 5);
+    for (let offset = 0; offset < bytes.length; offset += 4) {
+      const count = Math.min(4, bytes.length - offset); let word = 0;
+      for (let n = 0; n < count; n++) word |= bytes[offset + n] << (8 * n);
+      assert.equal(e.ruvane_action_chunk(word >>> 0, count), 1);
+    }
+    return e.ruvane_action_complete(id, token, 0);
+  };
+  assert.equal(complete(request.request, new Uint8Array([82,86,65,49,0,1,0,1,97,3,2])), 2);
+  const failed = drain(); assert.ok(failed.some(command => command.text?.includes("Invalid server response")));
+  const refresh = initial.find(command => command.op === 3 && command.event === 4).node;
+  assert.equal(e.ruvane_dispatch(id, refresh, 4, 0, 0), 1);
+  const next = drain().find(command => command.op === 11); assert.ok(next.request > request.request);
+  const reply = new Uint8Array([82,86,65,49,0,1,0,5,99,111,117,110,116,2,0,0,0,0,0,0,0,0]);
+  assert.equal(complete(next.request, reply), 1); drain();
+  assert.equal(e.ruvane_action_complete(id, next.request, 2), 0); assert.equal(e.ruvane_last_error(), 10);
+  assert.equal(e.ruvane_dispatch(id, refresh, 4, 0, 0), 1); const last = drain().find(command => command.op === 11);
+  assert.equal(e.ruvane_dispose(id), 1); drain();
+  assert.equal(e.ruvane_action_complete(id, last.request, 0), 0); assert.equal(e.ruvane_last_error(), 10);
+  assert.deepEqual([e.ruvane_live_instances(), e.ruvane_live_signals(), e.ruvane_live_effects()], [0,0,0]);
 });

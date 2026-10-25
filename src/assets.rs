@@ -25,6 +25,8 @@ pub enum MediaType {
     JavaScript,
     /// A trusted WebAssembly module.
     WebAssembly,
+    /// An RVA1 action response. The receiving runtime validates its bytes.
+    Action,
     /// An already encoded PNG image.
     Png,
     /// An already encoded JPEG image.
@@ -43,6 +45,7 @@ impl MediaType {
             Self::Css => "text/css; charset=utf-8",
             Self::JavaScript => "text/javascript; charset=utf-8",
             Self::WebAssembly => "application/wasm",
+            Self::Action => crate::ACTION_MEDIA_TYPE,
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",
             Self::WebP => "image/webp",

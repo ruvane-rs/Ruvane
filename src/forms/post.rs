@@ -63,6 +63,42 @@ pub struct FormData {
 }
 
 impl FormData {
+    /// Adds a unique field to an outgoing request.
+    pub fn field(mut self, name: &str, value: &str) -> Result<Self, FormError> {
+        valid_name(name)?;
+        if self.pairs.len() == MAX_QUERY_PAIRS {
+            return Err(FormError::TooManyFields);
+        }
+        if self.pairs.iter().any(|(key, _)| key == name) {
+            return Err(FormError::DuplicateName);
+        }
+        if value.len() > MAX_COMPONENT_BYTES {
+            return Err(FormError::TooLarge);
+        }
+        if value
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+        {
+            return Err(FormError::InvalidText);
+        }
+        self.pairs.push((name.to_owned(), value.to_owned()));
+        Ok(self)
+    }
+    /// Serializes fields without changing their values or encoding them twice.
+    pub fn encode(&self) -> Result<String, FormError> {
+        let mut output = String::new();
+        for (name, value) in &self.pairs {
+            let pair = format!("{}={}", crate::url::encode(name), crate::url::encode(value));
+            if output.len() + usize::from(!output.is_empty()) + pair.len() > MAX_POST_BODY_BYTES {
+                return Err(FormError::TooLarge);
+            }
+            if !output.is_empty() {
+                output.push('&');
+            }
+            output.push_str(&pair);
+        }
+        Ok(output)
+    }
     /// Parses this framework's URL-encoded form profile without a leading `?`.
     ///
     /// ```

@@ -535,6 +535,18 @@ impl From<ViewError> for ComponentError {
 
 /// A reusable component. Dropping it must release its owned resources.
 pub trait Component {
+    /// Takes one queued action. Only one action per live component may be pending.
+    fn take_action(&mut self) -> Option<crate::ActionRequest> {
+        None
+    }
+    /// Receives an action completion after its view/request identity is checked.
+    fn action_result(
+        &mut self,
+        _action: u32,
+        _outcome: crate::ActionOutcome,
+    ) -> Result<(), ComponentError> {
+        Err(ComponentError::InvalidEvent)
+    }
     /// Describes the current view without changing state.
     fn view(&self) -> Result<View, ComponentError>;
     /// Handles a declared event.

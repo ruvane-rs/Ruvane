@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.0-alpha.17 — Unreleased
+
+- Connect Rust/Wasm components to explicit `Router::post_action` routes. Queue
+  one request per component, use fixed same-origin POST through native fetch,
+  and deliver success, validation or transport failures to the Rust model.
+- Add bounded ActionRequest, ActionData, ActionValue and RVA1 reply encoding,
+  with strict field names, UTF-8, booleans and exact u64 transport. Reuse native
+  form origin/body validation without accepting HTML as an action result.
+- Introduce browser ABI v5 and RVN4 opcode 11. Add numeric reply staging and
+  completion exports with no input pointers or host imports. Reject stale
+  request tokens, abort on disposal and ignore late replies after remount.
+- Add fetch/read deadlines, response caps, MIME/status checks, per-view shared
+  idle promises and pending-action statistics. Local transport failures keep
+  the component usable; no automatic retries or mutation rollback are implied.
+- Add interactive server tasks with validation, pending controls, pagination
+  and shared native/Wasm state. Keep native form fallback when enhancement fails
+  or a native field is already focused. Test frames, lifetimes and real requests.
+- Keep only the two first-party Cargo packages, forbid unsafe core code and
+  add no third-party build, test or browser dependencies.
+
 ## 0.1.0-alpha.16 — Unreleased
 
 - Add explicit `Router::post_form` mutations, separate from GET/HEAD routes,
