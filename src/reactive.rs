@@ -1,4 +1,4 @@
-//! Explicit, owner-scoped, single-threaded reactive computations.
+//! Single-threaded reactivity with scoped lifetimes.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -6,7 +6,7 @@ use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::{Rc, Weak};
 
-/// Resource and propagation budgets for one independent reactive runtime.
+/// Resource limits for one reactive runtime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReactiveLimits {
     /// Live owners; defaults to 256, supported range 1..=4096.
@@ -36,7 +36,7 @@ impl Default for ReactiveLimits {
     }
 }
 
-/// A reactive failure, with no application values or callback messages.
+/// Reactive runtime errors. Messages contain no application data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ReactiveError {
@@ -84,7 +84,7 @@ impl fmt::Display for ReactiveError {
 
 impl std::error::Error for ReactiveError {}
 
-/// Live resources and scheduler state; does not contain application values.
+/// Resource counts and scheduler state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReactiveStats {
     /// Live owner scopes.
@@ -116,8 +116,7 @@ struct Value<T>(RefCell<Option<T>>);
 
 impl<T> ErasedValue for Value<T> {
     fn clear(&self) {
-        // A custom Clone can dispose its own scope while a snapshot is borrowed.
-        // In that case the in-progress reader is the final temporary strong owner.
+        // If Clone disposes this scope mid-read, the reader releases the value.
         let previous = self.0.try_borrow_mut().ok().and_then(|mut v| v.take());
         drop(previous);
     }
@@ -265,8 +264,7 @@ impl Inner {
                 }
             }
         }
-        // User values and captured closures may have reentrant destructors.
-        // Never destroy them while borrowing scheduler metadata.
+        // Drop outside the state borrow: destructors may call back into the runtime.
         for value in values {
             value.clear();
         }
@@ -359,11 +357,11 @@ impl Inner {
     }
 }
 
-/// An independent, single-threaded reactive graph with explicit dependencies.
+/// A single-threaded reactive graph with explicit dependencies.
 ///
-/// There is no global runtime or implicit read tracking. Scope-owned values and
-/// callbacks are released on disposal; signal and effect handles are weak.
-/// Callbacks are trusted Rust code, not CPU or memory sandboxed.
+/// Scopes own values and callbacks; signal and effect handles are weak.
+/// Dependencies are declared at registration. Reads do not subscribe.
+/// Callback CPU and memory use are not limited.
 ///
 /// ```
 /// use ruvane::{ReactiveError, ReactiveRuntime};
@@ -379,7 +377,7 @@ impl Inner {
 /// # Ok::<(), ReactiveError>(())
 /// ```
 ///
-/// A runtime must be created inside its worker, rather than sent across threads:
+/// Create the runtime in the thread that uses it:
 ///
 /// ```compile_fail
 /// use ruvane::ReactiveRuntime;
@@ -397,7 +395,7 @@ impl Default for ReactiveRuntime {
 }
 
 impl ReactiveRuntime {
-    /// Creates an independent runtime with default budgets.
+    /// Creates a runtime with default limits.
     pub fn new() -> Self {
         Self::configured(ReactiveLimits::default())
     }
@@ -421,7 +419,7 @@ impl ReactiveRuntime {
         }
     }
 
-    /// Creates a runtime after checking all budgets against supported ranges.
+    /// Creates a runtime with validated limits.
     pub fn with_limits(limits: ReactiveLimits) -> Result<Self, ReactiveError> {
         if !(1..=4096).contains(&limits.max_scopes)
             || !(1..=65536).contains(&limits.max_signals)
@@ -472,12 +470,12 @@ impl ReactiveRuntime {
         }
     }
 
-    /// Explicitly settles queued work; rejects calls from batches or callbacks.
+    /// Runs queued work. Cannot be called inside a batch or callback.
     pub fn flush(&self) -> Result<(), ReactiveError> {
         self.inner.flush()
     }
 
-    /// Returns live metadata counts without exposing application data.
+    /// Returns resource counts and scheduler state.
     pub fn stats(&self) -> ReactiveStats {
         let state = self.inner.0.borrow();
         ReactiveStats {
@@ -492,13 +490,13 @@ impl ReactiveRuntime {
         }
     }
 
-    /// Returns the first failure; a faulted runtime can only be inspected/disposed.
+    /// Returns the first failure. A failed runtime only supports inspection and disposal.
     pub fn failure(&self) -> Option<ReactiveError> {
         self.inner.0.borrow().failure
     }
 }
 
-/// A non-cloneable owner of values, computations, and child scopes.
+/// Owns values, computations and child scopes. Cannot be cloned.
 #[must_use = "dropping the scope immediately disposes its reactive resources"]
 pub struct Scope {
     inner: Rc<Inner>,
@@ -534,7 +532,7 @@ impl Scope {
         })
     }
 
-    /// Creates a child which is also disposed when this owner is disposed.
+    /// Creates a child scope that shares this scope's lifetime.
     pub fn child(&self) -> Result<Self, ReactiveError> {
         Self::create(&self.inner, Some(self.id))
     }
@@ -712,7 +710,7 @@ impl Drop for Scope {
     }
 }
 
-/// A non-generic dependency token. It neither reads values nor retains them.
+/// A dependency ID that does not keep its value alive.
 #[derive(Clone)]
 pub struct Source {
     inner: Weak<Inner>,
@@ -753,7 +751,7 @@ impl<T> Clone for Signal<T> {
 }
 
 impl<T> Signal<T> {
-    /// Returns an explicit dependency token; reads do not register dependencies.
+    /// Returns the dependency ID. Reading a value does not subscribe.
     pub fn source(&self) -> Source {
         self.source.clone()
     }
@@ -785,7 +783,7 @@ impl<T> Signal<T> {
 }
 
 impl<T: Clone> Signal<T> {
-    /// Clones the current value without implicitly subscribing a computation.
+    /// Clones the current value without subscribing.
     pub fn get(&self) -> Result<T, ReactiveError> {
         self.source.checked(false)?;
         let value = self.value.upgrade().ok_or(ReactiveError::Disposed)?;
@@ -826,7 +824,7 @@ impl<T: Clone> Memo<T> {
     }
 }
 
-/// A weak computation handle. Its scope retains it until explicit disposal.
+/// A weak effect handle. The scope owns the computation.
 #[derive(Clone)]
 pub struct Effect {
     inner: Weak<Inner>,

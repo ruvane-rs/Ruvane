@@ -16,7 +16,7 @@ fn fingerprint(root: &Path, path: &Path, result: &mut Snapshot, bytes: &mut usiz
         .checked_add(body.len())
         .filter(|size| *size <= MAX_BYTES)
         .ok_or("watch byte budget exceeded")?;
-    // Change detection only: this deterministic hash is not a security digest.
+    // For change detection, not integrity checks.
     let hash = body.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
     });
@@ -74,7 +74,7 @@ pub(super) fn snapshot(root: &Path) -> Result<Snapshot> {
             &mut bytes,
         )?;
     }
-    // Content/build scripts are optional for projects generated before alpha.10.
+    // Projects created before alpha.10 may lack content and build scripts.
     if fs::symlink_metadata(root.join("content")).is_ok() {
         visit(
             root,

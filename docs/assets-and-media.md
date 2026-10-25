@@ -10,11 +10,14 @@ into one). It preserves every byte, including NUL, non-UTF-8 data, and CRLF.
 `Response::text` and `Response::html` still produce UTF-8 bodies, with the
 renderer's escaping rules unchanged.
 
-`MediaType` is a fixed enum: `PlainText`, `Css`, `Png`, `Jpeg`, `WebP`, and
-`OctetStream`. Each variant supplies a static Content-Type value. Text types
-declare UTF-8. HTML is available only through `Response::html`; the raw byte
-enum has no HTML, SVG, or JavaScript variant. A type declaration is not file
-inspection, content sanitization, or validation of the format.
+`MediaType` is a fixed enum: `PlainText`, `Css`, `Png`, `Jpeg`, `WebP`,
+`OctetStream`, and (since alpha.12) `JavaScript` and `WebAssembly`. Each variant
+supplies a static Content-Type value. Text types declare UTF-8. HTML is available
+only through the typed HTML response constructors; the raw byte enum has no
+HTML or SVG variant. JS/Wasm bytes are trusted application programs, never
+sanitized uploads. A type declaration is not file inspection or validation.
+Their execution requires an explicitly interactive document response; see
+[browser](browser.md) for the fixed policy and module helper.
 
 Content-Length is calculated from body bytes. HEAD produces the same status,
 type, and length as GET without sending the body. The serializer retains

@@ -96,8 +96,7 @@ impl From<ExportError> for AppError {
     }
 }
 
-/// A deliberate page result mapped to a fixed HTTP error status.
-/// Detailed errors belong in trusted local diagnostics, not in this value.
+/// A page error mapped to an HTTP status. Keep details in local diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PageError {
     /// The page's application-level input is invalid (400).

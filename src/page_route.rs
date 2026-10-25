@@ -17,12 +17,11 @@ pub(crate) fn valid_name(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
 }
 
-/// A named page pattern used for registration and checked URL construction.
+/// A named page pattern for registration and URL construction.
 ///
-/// Captures occupy complete segments, as in `Router`. Names are ASCII identifiers;
-/// literal segments also pass `InternalUrl` validation. Patterns have at most
-/// 16 segments and 4096 bytes. This value alone does not prove registration:
-/// use `App::url` or `PageContext::url` to also check the application's namespace.
+/// Captures take whole segments, as in `Router`. Names must be ASCII identifiers;
+/// literal segments must pass `InternalUrl` validation. Limits: 16 segments and
+/// 4096 bytes. Use `App::url` or `PageContext::url` to check that a route is registered.
 #[derive(Clone, Debug)]
 pub struct PageRoute {
     name: String,
@@ -36,8 +35,8 @@ impl PageRoute {
     ///
     /// ```
     /// let article = ruvane::PageRoute::new("article", "/articles/{slug}/").unwrap();
-    /// assert_eq!(article.url(&[("slug", "été & Rust")]).unwrap().as_str(),
-    ///            "/articles/%C3%A9t%C3%A9%20%26%20Rust/");
+    /// assert_eq!(article.url(&[("slug", "🦀 & Rust")]).unwrap().as_str(),
+    ///            "/articles/%F0%9F%A6%80%20%26%20Rust/");
     /// assert!(article.url(&[]).is_err());
     /// ```
     pub fn new(name: &str, pattern: &str) -> Result<Self, AppError> {

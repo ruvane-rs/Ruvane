@@ -84,6 +84,10 @@ HEAD, assets, framing/Host errors, timeouts, and handler failures. It blocks
 scripts, base elements, and frame embedding while allowing same-origin CSS,
 images, and form actions. No request field can override this policy. See
 [metadata and CSP](metadata-and-csp.md) for the full value and scope.
+Since alpha.12, an application can explicitly construct an interactive HTML
+response with a second fixed policy for same-origin modules/Wasm. The default
+profile, errors and assets still block scripts; no arbitrary policy is accepted.
+See [browser](browser.md).
 405 also includes Allow. Application strings cannot become header names,
 header values, or reason phrases. No custom headers, response compression,
 trailers, or streaming are supported. No CORS permissions are emitted.

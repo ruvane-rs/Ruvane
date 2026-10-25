@@ -17,7 +17,7 @@ fn collection(text: &str) -> Result<ContentCollection, ruvane::ContentError> {
 #[test]
 fn strict_headers_produce_typed_metadata_and_sorted_unique_collections() {
     let first = document("first", "First **body**.");
-    let second = document("second", "Deuxième article.");
+    let second = document("second", "Second article.");
     let collection = ContentCollection::new(&[
         ContentSource::new("02-second.md", &second),
         ContentSource::new("01-first.md", &first),
@@ -87,7 +87,7 @@ fn names_and_slugs_refuse_traversal_aliases_devices_and_nonportable_forms() {
         "/post.md",
         "a/b.md",
         "post.MD",
-        "é.md",
+        "λ.md",
         "con.md",
         "nul.md",
         "a.md.exe",
@@ -100,7 +100,7 @@ fn names_and_slugs_refuse_traversal_aliases_devices_and_nonportable_forms() {
         assert!(!error.to_string().contains(name) || name.is_empty());
     }
     for slug in [
-        "", ".", "..", "../x", "a/b", "a\\b", "%2e", "Été", "UPPER", "con", "com1", "_post", "a.b",
+        "", ".", "..", "../x", "a/b", "a\\b", "%2e", "🦀", "UPPER", "con", "com1", "_post", "a.b",
         "a?b", "a#b", "a\0b",
     ] {
         assert!(ContentSlug::new(slug).is_err(), "{slug:?}");
@@ -160,10 +160,10 @@ fn markdown_links_use_internal_url_validation_and_html_attribute_escaping() {
         let error = markdown(&format!("[click]({target})")).unwrap_err();
         assert_eq!(error.kind(), Kind::InvalidLink, "{target}");
     }
-    let html = markdown("[A <B>](/articles/%C3%A9t%C3%A9/) and [Q](/%22/) and [percent](/%252F/)")
-        .unwrap();
+    let html =
+        markdown("[A <B>](/articles/%F0%9F%A6%80/) and [Q](/%22/) and [percent](/%252F/)").unwrap();
     assert!(html.as_str().contains("A &lt;B&gt;"));
-    assert!(html.as_str().contains("href=\"/articles/%C3%A9t%C3%A9/\""));
+    assert!(html.as_str().contains("href=\"/articles/%F0%9F%A6%80/\""));
     assert!(!html.as_str().contains("javascript:"));
     assert_eq!(
         markdown("![image](/image.png)").unwrap_err().kind(),
@@ -288,8 +288,8 @@ fn pathological_unmatched_delimiters_and_nested_inputs_hit_work_budgets() {
 #[test]
 fn unicode_and_byte_mutations_never_panic_or_create_raw_script_markup() {
     assert_eq!(
-        markdown("Été **日本語** 🌱").unwrap().as_str(),
-        "<p>Été <strong>日本語</strong> 🌱</p>"
+        markdown("Rust **日本語** 🌱").unwrap().as_str(),
+        "<p>Rust <strong>日本語</strong> 🌱</p>"
     );
     let seed = b"[hello](/articles/) **safe**";
     for i in 0..seed.len() {

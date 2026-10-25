@@ -19,7 +19,7 @@ fn existing_entities_are_treated_as_literal_input() {
 
 #[test]
 fn unicode_text_is_preserved() {
-    assert_eq!(text("Été 🦀 日本語").as_str(), "Été 🦀 日本語");
+    assert_eq!(text("Rust 🦀 日本語").as_str(), "Rust 🦀 日本語");
 }
 
 #[test]
@@ -94,12 +94,12 @@ fn empty_fragments_and_default_html_are_empty() {
 
 #[test]
 fn document_contains_a_doctype_and_utf8_declaration() {
-    let page = Document::new("Ruvane", element(Tag::H1).child("Bonjour"))
-        .language("fr")
+    let page = Document::new("Ruvane", element(Tag::H1).child("Hello"))
+        .language("en-GB")
         .render();
     assert_eq!(
         page.as_str(),
-        "<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\"><title>Ruvane</title><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body><h1>Bonjour</h1></body></html>"
+        "<!doctype html><html lang=\"en-GB\"><head><meta charset=\"utf-8\"><title>Ruvane</title><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body><h1>Hello</h1></body></html>"
     );
 }
 
@@ -116,11 +116,11 @@ fn document_title_cannot_break_out_of_its_element() {
 #[test]
 fn document_language_cannot_add_an_attribute() {
     let page = Document::new("", "")
-        .language("fr\" onload=\"alert(1)")
+        .language("en-GB\" onload=\"alert(1)")
         .render();
     assert!(
         page.as_str()
-            .starts_with("<!doctype html><html lang=\"fr&quot; onload=&quot;alert(1)\">")
+            .starts_with("<!doctype html><html lang=\"en-GB&quot; onload=&quot;alert(1)\">")
     );
 }
 
@@ -168,7 +168,7 @@ fn text_output_has_no_raw_markup_delimiters_or_nulls() {
     for scalar in 0..=0x7f {
         input.push(char::from_u32(scalar).expect("ASCII scalar"));
     }
-    input.push_str("é🦀<script>&#0;\"'");
+    input.push_str("λ🦀<script>&#0;\"'");
     let output = text(input).into_string();
     assert!(!output.contains(['<', '>', '"', '\'', '\0']));
 }

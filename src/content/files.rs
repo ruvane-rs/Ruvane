@@ -10,10 +10,9 @@ fn invalid() -> ContentError {
     ContentError::new(ContentErrorKind::InvalidFile, None)
 }
 
-/// A validated, bounded snapshot of flat local .md files for build-time embedding.
-/// Directory parents must be trusted and protected from concurrent hostile
-/// mutation. Observed symlinks/special files and all subdirectories are refused.
-/// No filesystem sandbox or integrity signature is provided.
+/// A snapshot of local .md files for build-time embedding.
+/// Rejects symlinks, special files and subdirectories. Directory parents must be
+/// trusted and protected from concurrent changes; this is not a filesystem sandbox.
 #[derive(Clone, Debug)]
 pub struct ContentBundle {
     sources: Vec<(String, String)>,

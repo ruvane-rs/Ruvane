@@ -207,7 +207,7 @@ fn memo_callbacks_cannot_write_register_or_start_batches() {
         .unwrap();
     assert_eq!(memo.get(), Ok(1));
     assert_eq!(n.get(), Ok(1));
-    // Explicit cleanup also breaks user-created strong captures of their owner.
+    // Disposal breaks the callback's strong reference to its owner.
     scope.dispose();
 }
 

@@ -4,7 +4,8 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
-/// The fixed browser policy sent on every local HTTP response, including errors.
+/// The default browser policy, including errors, assets and ordinary HTML.
+/// Explicitly interactive HTML uses INTERACTIVE_CONTENT_SECURITY_POLICY instead.
 ///
 /// Scripts and unspecified resource types are blocked. CSS and images may
 /// load from the same origin; forms may submit there. Base elements and frame
@@ -12,6 +13,11 @@ use std::sync::Arc;
 /// unsafe-inline/eval allowances, or nonces. It supplements HTML escaping;
 /// it does not provide authorization, CSRF protection, or a handler sandbox.
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+/// Opt-in page policy for trusted same-origin modules and Wasm compilation.
+/// No inline JavaScript or general JavaScript eval is enabled. This policy
+/// grants no authentication, authorization, or execution sandbox.
+pub const INTERACTIVE_CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 /// A read-only request method supported by the local server.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -166,7 +172,7 @@ impl fmt::Display for StatusCode {
     }
 }
 
-/// A text or binary response with a fixed, injection-resistant header set.
+/// A text or binary response with fixed headers.
 ///
 /// Body lengths are serialized in bytes. HEAD sends the same content length
 /// as GET, but no body. There is no arbitrary header or raw HTML constructor.
@@ -176,6 +182,7 @@ pub struct Response {
     status: StatusCode,
     content_type: &'static str,
     body: Body,
+    csp: &'static str,
 }
 
 #[derive(Clone, Debug)]
@@ -200,6 +207,7 @@ impl Response {
             status: StatusCode::Ok,
             content_type: "text/plain; charset=utf-8",
             body: Body::Bytes(Cow::Owned(body.into().into_bytes())),
+            csp: CONTENT_SECURITY_POLICY,
         }
     }
 
@@ -209,7 +217,15 @@ impl Response {
             status: StatusCode::Ok,
             content_type: "text/html; charset=utf-8",
             body: Body::Bytes(Cow::Owned(body.into_string().into_bytes())),
+            csp: CONTENT_SECURITY_POLICY,
         }
+    }
+
+    /// Enables same-origin modules and Wasm for this page. Other constructors block scripts.
+    pub fn interactive_html(body: Html) -> Self {
+        let mut response = Self::html(body);
+        response.csp = INTERACTIVE_CONTENT_SECURITY_POLICY;
+        response
     }
 
     /// Creates a successful owned byte response with an explicit MIME type.
@@ -228,6 +244,7 @@ impl Response {
             status: StatusCode::Ok,
             content_type: media_type.as_str(),
             body: Body::Bytes(Cow::Owned(body.into())),
+            csp: CONTENT_SECURITY_POLICY,
         }
     }
 
@@ -236,6 +253,7 @@ impl Response {
             status: StatusCode::Ok,
             content_type: media_type.as_str(),
             body: Body::Bytes(Cow::Borrowed(body)),
+            csp: CONTENT_SECURITY_POLICY,
         }
     }
 
@@ -250,6 +268,7 @@ impl Response {
             status: StatusCode::Ok,
             content_type,
             body: Body::Shared(body),
+            csp: CONTENT_SECURITY_POLICY,
         }
     }
 
@@ -277,6 +296,11 @@ impl Response {
         self.content_type
     }
 
+    /// Returns the fixed policy selected by the response constructor.
+    pub fn content_security_policy(&self) -> &'static str {
+        self.csp
+    }
+
     pub(crate) fn error(status: StatusCode) -> Self {
         Self::text(format!("{}\n", status.reason())).with_status(status)
     }
@@ -292,7 +316,7 @@ impl Response {
             self.status,
             self.content_type,
             self.body().len(),
-            CONTENT_SECURITY_POLICY,
+            self.csp,
             allow
         )
     }
@@ -346,7 +370,7 @@ pub(crate) fn parse(
     if !bytes.ends_with(b"\r\n\r\n") {
         return Err(BadRequest);
     }
-    // Reject non-ASCII bytes and controls before constructing any strings.
+    // Check bytes before decoding them.
     if bytes.iter().any(|&byte| {
         !(byte == b'\r' || byte == b'\n' || byte == b'\t' || (32..=126).contains(&byte))
     }) {
@@ -450,8 +474,7 @@ pub(crate) fn parse(
         target: target.to_owned(),
         headers,
         params: Vec::new(),
-        // Semantic query decoding happens after route selection. The transport
-        // validates raw URI syntax and framing without choosing a convention.
+        // The route selects query decoding later; check raw URI syntax here.
         query_params: Query::default(),
     })
 }
@@ -535,7 +558,7 @@ mod tests {
             "/%",
             "/%gg",
             "/?a=%z1",
-            "/é",
+            "/λ",
         ] {
             let input = format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n");
             assert!(parse(input.as_bytes(), 4096, 64).is_err(), "{target}");

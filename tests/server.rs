@@ -74,8 +74,7 @@ impl Drop for Running {
 
 fn read_closed(stream: &mut TcpStream) -> Vec<u8> {
     let mut output = Vec::new();
-    // A reset is permitted when closing a socket containing unread pipelined
-    // data. Preserve any response already received before that reset.
+    // Unread pipelined data can cause a reset; keep any response already received.
     match stream.read_to_end(&mut output) {
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::ConnectionReset => {}
@@ -90,8 +89,7 @@ fn parts(output: &[u8]) -> (&str, &[u8]) {
         .position(|bytes| bytes == b"\r\n\r\n")
         .expect("complete headers");
     let headers = std::str::from_utf8(&output[..end]).unwrap();
-    // Every network regression, including framing/timeout/panic failures,
-    // checks that the policy survives the shared response serializer.
+    // Check CSP on every response, including errors.
     let policies: Vec<_> = headers
         .lines()
         .filter_map(|line| line.strip_prefix("Content-Security-Policy: "))
@@ -145,7 +143,7 @@ fn serves_rendered_html_utf8_lengths_and_fixed_headers() {
     let mut router = Router::new();
     router
         .get("/", |_| {
-            Response::html(Document::new("Été", element(Tag::P).child("<script> & 🦀")).render())
+            Response::html(Document::new("Rust", element(Tag::P).child("<script> & 🦀")).render())
         })
         .unwrap();
     let server = Running::start(router, ServerConfig::default());
@@ -168,7 +166,7 @@ fn head_has_get_headers_but_no_body_including_errors() {
     router
         .get("/", |request| {
             assert!(matches!(request.method(), Method::Get | Method::Head));
-            Response::text("Bonjour 🦀")
+            Response::text("Hello 🦀")
         })
         .unwrap();
     let server = Running::start(router, ServerConfig::default());
@@ -570,8 +568,7 @@ fn bounded_queue_closes_excess_connections_and_shutdown_drains_workers() {
         .write_all(format!("GET / HTTP/1.1\r\nHost: {}\r\n\r\n", server.address).as_bytes())
         .unwrap();
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    // The first idle socket occupies the sole queue slot. A batch of additional
-    // sockets must be closed promptly while the handler is still blocked.
+    // Fill the only queue slot, then check that excess connections close promptly.
     let mut queued = server.connect();
     let mut excess: Vec<_> = (0..4).map(|_| server.connect()).collect();
     for stream in &mut excess {
@@ -796,8 +793,8 @@ fn captures_multiple_segments_and_distinguishes_typed_parameter_errors() {
         .unwrap();
     let server = Running::start(router, ServerConfig::default());
     assert_eq!(
-        parts(&server.request("GET", "/users/%C3%A9t%C3%A9/posts/42")).1,
-        "été:42".as_bytes()
+        parts(&server.request("GET", "/users/%F0%9F%A6%80/posts/42")).1,
+        "🦀:42".as_bytes()
     );
     for path in ["/users/a/posts/no", "/users/a/posts/4294967296"] {
         assert_eq!(status(&server.request("GET", path)), 400);
@@ -849,12 +846,12 @@ fn decoded_path_values_are_bounded_by_utf8_bytes_and_never_decoded_twice() {
         .unwrap();
     let server = Running::start(router, ServerConfig::default());
     assert_eq!(parts(&server.request("GET", "/value/%252F")).1, b"%2F");
-    let maximum = "%C3%A9".repeat(ruvane::MAX_COMPONENT_BYTES / 2);
+    let maximum = "%CE%BB".repeat(ruvane::MAX_COMPONENT_BYTES / 2);
     let output = server.request("GET", &format!("/value/{maximum}"));
     assert_eq!(status(&output), 200);
     assert_eq!(parts(&output).1.len(), ruvane::MAX_COMPONENT_BYTES);
     assert_eq!(
-        status(&server.request("GET", &format!("/value/{maximum}%C3%A9"))),
+        status(&server.request("GET", &format!("/value/{maximum}%CE%BB"))),
         400
     );
 }
@@ -931,13 +928,13 @@ fn blog_has_pagination_unicode_articles_static_precedence_and_escaped_text() {
         "/articles?page=2",
         "/articles?search=Rust&page=2",
         "/articles/about",
-        "/articles/%C3%A9t%C3%A9-rust",
+        "/articles/summer-%F0%9F%A6%80",
     ] {
         assert_eq!(status(&server.request("GET", path)), 200, "{path}");
     }
     let second = server.request("GET", "/articles?page=2");
     let second_html = std::str::from_utf8(parts(&second).1).unwrap();
-    assert!(second_html.contains("href=\"/articles/%C3%A9t%C3%A9-rust\""));
+    assert!(second_html.contains("href=\"/articles/summer-%F0%9F%A6%80\""));
     assert!(second_html.contains("Rendering &lt;text&gt; safely"));
     assert!(second_html.contains("Previous page"));
     let article = server.request("GET", "/articles/escaping");
@@ -1471,10 +1468,10 @@ fn blog_native_search_retains_values_resets_page_and_preserves_pagination() {
     let html = std::str::from_utf8(parts(&output).1).unwrap();
     assert!(html.contains("href=\"/articles?page=1&amp;search=Rust\">Previous page</a>"));
     assert!(html.contains("name=\"page\" value=\"1\""));
-    let output = server.request("GET", "/articles?search=%C3%A9t%C3%A9+en+Rust");
+    let output = server.request("GET", "/articles?search=summer+in+Rust");
     let html = std::str::from_utf8(parts(&output).1).unwrap();
-    assert!(html.contains("value=\"été en Rust\""));
-    assert!(html.contains("Été en Rust"));
+    assert!(html.contains("value=\"summer in Rust\""));
+    assert!(html.contains("Summer in Rust"));
 }
 
 #[test]
@@ -1553,8 +1550,8 @@ fn configured_blog_metadata_is_specific_and_pagination_does_not_collapse() {
         ),
         ("/articles/about", "/articles/about", "A small publication"),
         (
-            "/articles/%C3%A9t%C3%A9-rust",
-            "/articles/%C3%A9t%C3%A9-rust",
+            "/articles/summer-%F0%9F%A6%80",
+            "/articles/summer-%F0%9F%A6%80",
             "UTF-8 slugs travel",
         ),
         (
@@ -1658,7 +1655,7 @@ fn static_preview_serves_only_declared_bytes_with_head_csp_and_query_validation(
     let mut site = StaticSite::new();
     site.page(
         StaticPath::new("/hello/").unwrap(),
-        Document::new("Static", "é🦀").render(),
+        Document::new("Static", "λ🦀").render(),
     )
     .unwrap();
     site.asset(
@@ -1677,7 +1674,7 @@ fn static_preview_serves_only_declared_bytes_with_head_csp_and_query_validation(
     let server = Running::start(router, ServerConfig::default());
     let get = server.request("GET", "/hello/");
     assert_eq!(status(&get), 200);
-    assert!(std::str::from_utf8(parts(&get).1).unwrap().contains("é🦀"));
+    assert!(std::str::from_utf8(parts(&get).1).unwrap().contains("λ🦀"));
     assert_eq!(
         parts(&server.request("GET", "/hello/?page=2")).1,
         parts(&get).1
@@ -1758,8 +1755,8 @@ fn exported_blog_preview_has_complete_internal_links_assets_and_canonicals() {
     }
     let page2 = server.request("GET", "/articles/page/2/");
     let html = std::str::from_utf8(parts(&page2).1).unwrap();
-    assert!(html.contains("Été en Rust"));
-    assert!(html.contains("href=\"/articles/ete-rust/\""));
+    assert!(html.contains("Summer in Rust"));
+    assert!(html.contains("href=\"/articles/summer-rust/\""));
     assert!(html.contains("href=\"/articles/\">Previous page"));
     assert!(html.contains("href=\"/articles/page/3/\">Next page"));
     assert_eq!(
@@ -1869,7 +1866,7 @@ fn blog_common_application_pages_match_export_and_keep_legacy_server_routes() {
     }
     assert_eq!(status(&server.request("GET", "/articles?search=Rust")), 200);
     assert_eq!(
-        status(&server.request("GET", "/articles/%C3%A9t%C3%A9-rust")),
+        status(&server.request("GET", "/articles/summer-%F0%9F%A6%80")),
         200
     );
     assert_eq!(status(&preview.request("GET", "/articles")), 404);

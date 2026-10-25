@@ -16,9 +16,9 @@ fn binary_responses_preserve_every_byte_and_offer_fallible_utf8() {
     assert!(response.body_text().is_err());
     assert_eq!(response.content_type(), "application/octet-stream");
     assert_eq!(response.status(), StatusCode::NotFound);
-    let text = Response::text("Été 🦀");
-    assert_eq!(text.body(), "Été 🦀".as_bytes());
-    assert_eq!(text.body_text().unwrap(), "Été 🦀");
+    let text = Response::text("Rust 🦀");
+    assert_eq!(text.body(), "Rust 🦀".as_bytes());
+    assert_eq!(text.body_text().unwrap(), "Rust 🦀");
     let html = Response::html(element(Tag::P).child("<text>").render());
     assert_eq!(html.body_text().unwrap(), "<p>&lt;text&gt;</p>");
     assert_eq!(
@@ -106,7 +106,7 @@ fn individual_and_total_asset_byte_limits_are_exact_and_atomic() {
         router.asset("/overflow", b"x", MediaType::PlainText),
         Err(AssetError::TotalTooLarge)
     );
-    // The failed registrations did not reserve a route or consume byte budget.
+    // Failed registrations leave the route and byte budget available.
     router
         .asset("/overflow", b"", MediaType::PlainText)
         .unwrap();

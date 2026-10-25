@@ -195,7 +195,7 @@ fn generator_refuses_path_and_shell_payloads_without_creating_destinations() {
         "../escape",
         "a/b",
         "A",
-        "é",
+        "λ",
         "a;touch owned",
         "x$(touch owned)",
         "con",

@@ -1,0 +1,14 @@
+[package]
+name = "ruvane-browser"
+version = "0.1.0-alpha.12"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "First-party bounded Wasm browser adapter for Ruvane"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ruvane = { path = ".." }

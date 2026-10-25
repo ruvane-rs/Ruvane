@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0-alpha.12 — Unreleased
+
+- Add a first-party ruvane-browser workspace crate using the existing reactor,
+  with bounded counter instances, numeric events and checked monotonic handles.
+- Define the RVN1 typed little-endian DOM protocol: whitelisted elements, inert
+  text, button click tokens, disabled state and view removal, with byte/count caps.
+- Add our dependency-free ES module bridge: same-origin bounded Wasm fetch,
+  version checks, copied memory batches, full prevalidation, scoped DOM handles,
+  event cleanup and fail-stop behavior on protocol/trap/ownership failures.
+- Isolate reviewed Rust 2024 export attributes in the browser ABI module; keep
+  forbid(unsafe_code) in the core, with no unsafe blocks or input pointers.
+- Add trusted JS/Wasm media types, an external module helper and explicitly
+  interactive HTML responses. Default responses and static hosts retain the
+  script-blocking CSP; interactive policy permits same-origin modules/Wasm only.
+- Add native protocol/CSP tests, compiled-Wasm/decoder tests using Node built-ins,
+  and a real-browser counter and lifecycle harness, including 1,000 mount cycles.
+- Extend CI to both first-party packages, the complete dependency graph and Wasm
+  compilation/execution. Shared-view hydration remains the next separate step.
+
 ## 0.1.0-alpha.11 — Unreleased
 
 - Add a single-threaded, explicitly owned ReactiveRuntime without global state,

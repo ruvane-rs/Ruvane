@@ -24,7 +24,7 @@ pub const STATIC_HEADERS_PATH: &str = "_ruvane/headers.txt";
 pub const STATIC_COMPLETE_PATH: &str = "_ruvane/complete";
 
 const MANIFEST_HEADER: &str = "ruvane-static\t1\nkind\turl\tfile\tcontent-type\tbytes\n";
-// 256 rows of bounded paths, MIME tokens and lengths fit below this cap.
+// Enough space for 256 manifest rows at their maximum size.
 const MAX_MANIFEST_BYTES: usize = 160 * 1024;
 
 /// A bounded static-plan or export failure, with no reflected path or content.
@@ -193,6 +193,8 @@ pub(crate) fn valid_suffix(path: &str, kind: MediaType) -> bool {
     match kind {
         MediaType::PlainText => path.ends_with(".txt"),
         MediaType::Css => path.ends_with(".css"),
+        MediaType::JavaScript => path.ends_with(".js") || path.ends_with(".mjs"),
+        MediaType::WebAssembly => path.ends_with(".wasm"),
         MediaType::Png => path.ends_with(".png"),
         MediaType::Jpeg => path.ends_with(".jpg") || path.ends_with(".jpeg"),
         MediaType::WebP => path.ends_with(".webp"),
@@ -455,6 +457,8 @@ impl StaticSite {
                     let kind = match fields[3] {
                         "text/plain; charset=utf-8" => MediaType::PlainText,
                         "text/css; charset=utf-8" => MediaType::Css,
+                        "text/javascript; charset=utf-8" => MediaType::JavaScript,
+                        "application/wasm" => MediaType::WebAssembly,
                         "image/png" => MediaType::Png,
                         "image/jpeg" => MediaType::Jpeg,
                         "image/webp" => MediaType::WebP,
@@ -484,7 +488,7 @@ impl StaticSite {
         if declared.is_empty() || canonical != manifest {
             return Err(ExportError::InvalidExport);
         }
-        // All manifest rows pass validation before reading any declared content.
+        // Validate the whole manifest before reading files.
         for (path, content_type, size) in declared {
             let body = read_export_file(&root, path.output_path(), size)?;
             if body.len() != size || path.is_page() && std::str::from_utf8(&body).is_err() {
@@ -547,7 +551,7 @@ impl StaticSite {
         }
         write(&destination.join(STATIC_HEADERS_PATH), headers.as_bytes())?;
         write(&destination.join(STATIC_MANIFEST_PATH), manifest.as_bytes())?;
-        // No fallible work remains after exclusive creation of the empty marker.
+        // Create the completion marker only after every write succeeds.
         OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -682,7 +686,7 @@ mod tests {
         .unwrap();
         let result = site.export_with(&destination, |path, bytes| {
             if path.ends_with("manifest.tsv") {
-                // Model an interrupted write, not just a pre-write failure.
+                // Simulate a write that fails midway.
                 write_new(path, &bytes[..3])?;
                 return Err(ExportError::Io(io::ErrorKind::WriteZero));
             }

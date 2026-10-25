@@ -19,7 +19,7 @@ fn query_splits_before_decoding_and_preserves_plus_and_equals() {
 
 #[test]
 fn queries_reject_duplicate_decoded_keys_and_empty_fields() {
-    for raw in ["a=1&a=2", "a=1&%61=2", "%C3%A9=1&%c3%a9=2"] {
+    for raw in ["a=1&a=2", "a=1&%61=2", "%CE%BB=1&%ce%bb=2"] {
         assert_eq!(Query::parse(raw), Err(UrlError::DuplicateKey), "{raw}");
     }
     for raw in ["&", "a=1&", "a=1&&b=2", "=value"] {
@@ -60,14 +60,14 @@ fn malformed_escapes_utf8_and_controls_are_rejected() {
         "%0D%0A",
         "%7f",
         "%C2%85",
-        "é",
+        "λ",
         "a b",
     ] {
         assert!(Query::parse(&format!("q={value}")).is_err(), "{value}");
     }
     assert_eq!(
-        Query::parse("q=%C3%A9%F0%9F%A6%80").unwrap().get("q"),
-        Some("é🦀")
+        Query::parse("q=%CE%BB%F0%9F%A6%80").unwrap().get("q"),
+        Some("λ🦀")
     );
 }
 
@@ -123,7 +123,7 @@ fn internal_urls_reject_schemes_authorities_and_browser_path_aliases() {
     ] {
         assert!(InternalUrl::new(path).is_err(), "{path:?}");
     }
-    for path in ["/", "/articles/", "/articles/%C3%A9t%C3%A9", "/%61", "/x:y"] {
+    for path in ["/", "/articles/", "/articles/%F0%9F%A6%80", "/%61", "/x:y"] {
         assert_eq!(InternalUrl::new(path).unwrap().as_str(), path);
     }
 }
@@ -132,7 +132,7 @@ fn internal_urls_reject_schemes_authorities_and_browser_path_aliases() {
 fn link_builder_encodes_data_then_escapes_html_attributes_and_text() {
     let url = InternalUrl::new("/articles")
         .unwrap()
-        .segment("été & Rust")
+        .segment("🦀 & Rust")
         .unwrap()
         .query("search", "\"><script>&#x22;")
         .unwrap()
@@ -140,7 +140,7 @@ fn link_builder_encodes_data_then_escapes_html_attributes_and_text() {
         .unwrap();
     assert_eq!(
         url.as_str(),
-        "/articles/%C3%A9t%C3%A9%20%26%20Rust?search=%22%3E%3Cscript%3E%26%23x22%3B&page=2"
+        "/articles/%F0%9F%A6%80%20%26%20Rust?search=%22%3E%3Cscript%3E%26%23x22%3B&page=2"
     );
     let html = link(&url, "<img onerror='x'>");
     assert!(html.as_str().contains("&amp;page=2\""));
@@ -230,7 +230,7 @@ fn url_query_roundtrips_printable_ascii_unicode_and_percent_data() {
     let ascii: String = (32..=126).map(char::from).collect();
     for value in [
         ascii.as_str(),
-        "é🦀日本語",
+        "λ🦀日本語",
         "%252F",
         "a+b c&d=e",
         "\"'><script>",

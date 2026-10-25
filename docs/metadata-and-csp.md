@@ -103,8 +103,8 @@ filter-preserving pagination links, and local assets keep their existing behavio
 
 ## Fixed HTTP Content Security Policy
 
-Every server response, including assets, HEAD, protocol errors, timeouts,
-and handler failures, carries this `CONTENT_SECURITY_POLICY` value:
+By default, server responses including assets, HEAD, protocol errors, timeouts
+and handler failures carry this `CONTENT_SECURITY_POLICY` value:
 
 ```text
 default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'
@@ -138,9 +138,11 @@ path-based pagination canonicals from its explicit static paths. See
 All rendered documents now include the fixed viewport, so exact HTML snapshots
 change. Optional metadata is otherwise opt-in. HTTP responses gain one fixed
 header; their status, body bytes, content length, and HEAD behavior are preserved.
-The policy currently has no opt-out and blocks browser scripts and external
-resources. Applications adding such features will need a future typed policy
-design rather than injecting metadata or arbitrary headers.
+Since alpha.12, `Response::interactive_html` explicitly selects a second fixed
+profile for trusted same-origin modules and Wasm compilation. It adds no inline
+code or general JavaScript eval. All other constructors and the static hosting
+contract retain the blocking profile. Request fields cannot provide or select
+an arbitrary policy. See [browser](browser.md) for the full interactive contract.
 
 Dependency-free Rust tests cover description and origin boundaries, control
 characters, escaping, numeric-host aliases, singleton replacement, canonical

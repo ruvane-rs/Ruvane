@@ -88,8 +88,7 @@ pub(super) fn compile(
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    // A revision forces the generated build script to rerun for equal-mtime
-    // edits detected by content polling. It is not an integrity token.
+    // Force a rebuild when content changes without a new mtime. This is not a hash.
     command.env(
         "RUVANE_CONTENT_REVISION",
         format!(

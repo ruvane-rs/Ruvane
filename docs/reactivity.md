@@ -172,7 +172,7 @@ deferred initialization, reentrant writes and destruction, cycle budgets,
 foreign/disposed sources, registration rollback, panic cleanup, monotonic IDs
 and 1,000 owner mount/unmount cycles with stale handles and captured values.
 
-This version does not attach DOM events or make server-rendered HTML reactive
-in the browser. Browser assets, a small explicit Wasm ABI, an interactive CSP
-profile and shared-view hydration are separate next steps. The existing server
-and static-export script-blocking CSP is unchanged.
+The reactive engine itself does not attach DOM events or hydrate server HTML.
+Alpha.12 adds the separate [browser adapter](browser.md), an explicit Wasm ABI
+and opt-in interactive responses. Shared-view hydration remains a next step.
+Default server responses and static exports retain the script-blocking CSP.

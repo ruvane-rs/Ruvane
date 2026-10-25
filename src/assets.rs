@@ -9,12 +9,11 @@ pub const MAX_ASSETS: usize = 64;
 /// Registering the same slice at different paths counts its length each time.
 pub const MAX_TOTAL_ASSET_BYTES: usize = 8 * 1024 * 1024;
 
-/// A fixed MIME type for an opaque byte body or trusted embedded asset.
+/// MIME types for byte responses and embedded assets.
 ///
-/// Types are explicitly declared, never inferred from a path or file contents.
-/// Ruvane does not decode images, validate CSS, or sanitize asset bytes. CSS is
-/// trusted application code. HTML requires the renderer and `Response::html`;
-/// there is no raw HTML, SVG, or JavaScript variant in this byte API.
+/// Types are declared by the application; bytes are not validated or sanitized.
+/// CSS, JavaScript and Wasm must come from trusted sources. HTML uses the renderer
+/// and `Response::html`; this API has no raw HTML or SVG type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum MediaType {
@@ -22,6 +21,10 @@ pub enum MediaType {
     PlainText,
     /// UTF-8 CSS, supplied by the application as trusted source.
     Css,
+    /// Trusted JavaScript module source; execution requires an interactive page.
+    JavaScript,
+    /// A trusted WebAssembly module.
+    WebAssembly,
     /// An already encoded PNG image.
     Png,
     /// An already encoded JPEG image.
@@ -38,6 +41,8 @@ impl MediaType {
         match self {
             Self::PlainText => "text/plain; charset=utf-8",
             Self::Css => "text/css; charset=utf-8",
+            Self::JavaScript => "text/javascript; charset=utf-8",
+            Self::WebAssembly => "application/wasm",
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",
             Self::WebP => "image/webp",
@@ -46,7 +51,7 @@ impl MediaType {
     }
 }
 
-/// An embedded asset registration failure, without reflected path or contents.
+/// Asset registration errors. Messages contain no paths or file contents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AssetError {
     /// The URL is not a valid, fixed internal path.

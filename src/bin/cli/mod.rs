@@ -143,8 +143,7 @@ fn dev(args: &[OsString]) -> Result<()> {
                     .downcast_ref::<std::io::Error>()
                     .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
             {
-                // Editors may temporarily remove a file/directory while saving.
-                // Keep the last server until a complete bounded scan succeeds.
+                // Editors may remove files while saving. Keep serving until the scan succeeds.
                 std::thread::sleep(Duration::from_millis(150));
                 continue;
             }
@@ -163,7 +162,7 @@ fn dev(args: &[OsString]) -> Result<()> {
                     if quit.load(Ordering::SeqCst) {
                         break;
                     }
-                    // Keep the previous executable until the replacement has started.
+                    // Keep the old executable until the new one starts.
                     let mut previous = running.take();
                     if let Some(app) = &mut previous {
                         app.stop();
@@ -201,9 +200,7 @@ fn dev(args: &[OsString]) -> Result<()> {
                 }
                 Err(_) => break,
             }
-            // Cargo may create/update only the lockfile itself. Do not rebuild
-            // just for that write; retain other pre-build fingerprints so edits
-            // during compilation are still detected on the next pass.
+            // Ignore Cargo's lockfile write, but keep edits made during compilation.
             watch::refresh_lock(&project.root, &mut observed)?;
         }
         if let Some(app) = &mut running {

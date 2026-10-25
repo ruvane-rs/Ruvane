@@ -44,7 +44,7 @@ fn site() -> StaticSite {
     let mut site = StaticSite::new();
     site.page(
         path("/"),
-        Document::new("Été & Rust", "<script> is text").render(),
+        Document::new("🦀 & Rust", "<script> is text").render(),
     )
     .unwrap();
     site.page(
@@ -123,9 +123,9 @@ fn paths_reject_traversal_aliases_unicode_case_and_windows_special_names() {
         "/%61/",
         "/A/",
         "/Assets/site.css",
-        "/été/",
+        "/🦀/",
         "/e\u{301}/",
-        "/é.png",
+        "/λ.png",
         "/a b/",
         "/a\\b/",
         "/c:/a/",
@@ -288,8 +288,7 @@ fn total_byte_limit_includes_metadata_and_rejects_without_mutation() {
     );
     assert_eq!(site.planned_bytes(), before);
     assert_eq!(site.manifest(), manifest_before);
-    // The last row length depends on its decimal byte count; solve that small
-    // fixed point to exercise the aggregate limit exactly, including metadata.
+    // Include the decimal length field to hit the total byte limit exactly.
     let mut size = MAX_STATIC_TOTAL_BYTES - before;
     loop {
         let row = format!("asset\t/last.bin\tlast.bin\tapplication/octet-stream\t{size}\n");
@@ -327,7 +326,7 @@ fn exports_preserve_bytes_and_manifest_counts_and_finish_with_a_marker() {
     );
     assert!(output[STATIC_COMPLETE_PATH].is_empty());
     let html = std::str::from_utf8(&output["index.html"]).unwrap();
-    assert!(html.contains("Été &amp; Rust"));
+    assert!(html.contains("🦀 &amp; Rust"));
     assert!(html.contains("&lt;script&gt; is text"));
     assert!(!html.contains("<script>"));
     assert!(site.required_headers().contains(CONTENT_SECURITY_POLICY));
@@ -342,7 +341,7 @@ fn exports_are_identical_across_destinations_and_registration_orders() {
         forward
             .page(
                 path(&format!("/p{index}/")),
-                Document::new(format!("P{index}"), "é🦀").render(),
+                Document::new(format!("P{index}"), "λ🦀").render(),
             )
             .unwrap();
     }
@@ -350,7 +349,7 @@ fn exports_are_identical_across_destinations_and_registration_orders() {
         reverse
             .page(
                 path(&format!("/p{index}/")),
-                Document::new(format!("P{index}"), "é🦀").render(),
+                Document::new(format!("P{index}"), "λ🦀").render(),
             )
             .unwrap();
     }

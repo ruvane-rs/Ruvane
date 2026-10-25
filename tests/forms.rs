@@ -44,7 +44,7 @@ fn duplicate_detection_uses_only_the_selected_decoding_mode() {
         [("a b", "1"), ("a+b", "2")]
     );
     for mode in [QueryMode::Uri, QueryMode::Form] {
-        for raw in ["a=1&%61=2", "%C3%A9=1&%c3%a9=2"] {
+        for raw in ["a=1&%61=2", "%CE%BB=1&%ce%bb=2"] {
             assert_eq!(
                 Query::parse_with_mode(raw, mode),
                 Err(UrlError::DuplicateKey)
@@ -68,7 +68,7 @@ fn form_query_is_strict_about_encoding_controls_and_empty_keys() {
         "q=%0D%0A",
         "q=%7F",
         "q=%C2%85",
-        "q=é",
+        "q=λ",
         "q=a b",
         "q=\t",
         "q=1&",
@@ -83,8 +83,8 @@ fn form_query_is_strict_about_encoding_controls_and_empty_keys() {
             );
         }
     }
-    let query = Query::parse_with_mode("q=%C3%A9t%C3%A9+%F0%9F%A6%80", QueryMode::Form).unwrap();
-    assert_eq!(query.get("q"), Some("été 🦀"));
+    let query = Query::parse_with_mode("q=%F0%9F%A6%80+%F0%9F%A6%80", QueryMode::Form).unwrap();
+    assert_eq!(query.get("q"), Some("🦀 🦀"));
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn both_modes_enforce_exact_pair_decoded_and_encoded_byte_budgets() {
         );
         for component in [
             "+".repeat(MAX_COMPONENT_BYTES),
-            "%C3%A9".repeat(MAX_COMPONENT_BYTES / 2),
+            "%CE%BB".repeat(MAX_COMPONENT_BYTES / 2),
         ] {
             assert_eq!(
                 Query::parse_with_mode(&format!("q={component}"), mode)
@@ -158,7 +158,7 @@ fn both_modes_enforce_exact_pair_decoded_and_encoded_byte_budgets() {
 #[test]
 fn internal_url_query_encoding_roundtrips_in_both_modes() {
     let ascii: String = (32..=126).map(char::from).collect();
-    for value in [ascii.as_str(), "été 🦀 日本語", "a+b c&d=e", "%252B"] {
+    for value in [ascii.as_str(), "🦀 🦀 日本語", "a+b c&d=e", "%252B"] {
         let url = InternalUrl::new("/articles")
             .unwrap()
             .query("search", value)
@@ -237,7 +237,7 @@ fn get_actions_cannot_silently_discard_queries_or_escape_the_site() {
 #[test]
 fn field_names_are_bounded_identifiers_unique_across_control_types() {
     for name in [
-        "", "1q", "q[]", "q.x", "q x", "q\"", "é", "q\n", "q=1", "q&x",
+        "", "1q", "q[]", "q.x", "q x", "q\"", "λ", "q\n", "q=1", "q&x",
     ] {
         assert_eq!(
             form().search(name, "Label", "").unwrap_err(),
@@ -321,7 +321,7 @@ fn form_text_rejects_controls_empty_labels_and_byte_overflow() {
     }
     for exact in [
         "x".repeat(MAX_COMPONENT_BYTES),
-        "é".repeat(MAX_COMPONENT_BYTES / 2),
+        "λ".repeat(MAX_COMPONENT_BYTES / 2),
     ] {
         assert!(
             form()

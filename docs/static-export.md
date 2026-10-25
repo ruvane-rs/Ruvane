@@ -183,7 +183,7 @@ images with the server edition. It declares the home page, About, five article
 pages, three listing pages, and four assets: 14 content files plus three metadata
 files. Pagination uses `/articles/`, `/articles/page/2/`, and `/articles/page/3/`,
 with distinct canonical URLs and complete internal navigation. Static slugs
-are authored explicitly; `ete-rust` is used for the article titled “Été en Rust”.
+are authored explicitly; `summer-rust` is used for the article titled “Summer in Rust”.
 No transliteration or decoding is guessed by the exporter.
 
 The server edition retains its UTF-8 slugs, GET search form, typed query

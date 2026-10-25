@@ -18,18 +18,22 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
       - name: Check zero dependencies for every target and feature
-        run: test "$(cargo tree --offline --locked --all-features --target all --edges normal,build,dev --prefix none | wc -l | tr -d ' ')" = 1
+        run: python3 tools/check_first_party.py
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Test library, network behavior, examples and documentation
         run: |
-          cargo test --offline --locked --all-targets
-          cargo test --offline --locked --doc
+          cargo test --workspace --offline --locked --all-targets
+          cargo test --workspace --offline --locked --doc
       - name: Clippy
-        run: cargo clippy --offline --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --offline --locked --all-targets -- -D warnings
+      - name: Build and execute first-party Wasm
+        run: |
+          cargo build --offline --locked -p ruvane-browser --target wasm32-unknown-unknown --release
+          node --test browser/tests/bridge.test.mjs
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --offline --locked --no-deps
+        run: cargo doc --workspace --offline --locked --no-deps

@@ -1,4 +1,4 @@
-//! Bounded local content and an explicitly limited Markdown profile.
+//! Local content and a small Markdown renderer.
 mod files;
 mod markdown;
 
@@ -31,7 +31,7 @@ pub const MAX_MARKDOWN_WORK: usize = 1024 * 1024;
 /// Maximum bytes in an escaped generated Rust content module (16 MiB).
 pub const MAX_CONTENT_MODULE_BYTES: usize = 16 * 1024 * 1024;
 
-/// A bounded content failure category. Messages never include source text.
+/// Content errors. Messages contain no source text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ContentErrorKind {
@@ -88,8 +88,8 @@ impl fmt::Display for ContentErrorKind {
     }
 }
 
-/// A diagnostic with a validated basename and one-based line, never raw content
-/// or an arbitrary filesystem path. Standalone errors may have no source/line.
+/// A content error with a basename and one-based line, when available.
+/// Messages contain no source text or full filesystem paths.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContentError {
     kind: ContentErrorKind,

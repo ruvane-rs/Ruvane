@@ -15,8 +15,10 @@ and static builds, with bounded nested layouts and private error pages.
 Typed local content collections add a bounded Markdown profile and embedded
 articles shared by the server and static export. The independent reactive
 runtime provides owner-scoped signals, derived memo values, explicit effects,
-batching, cleanup and bounded propagation. Browser bindings, hydration and server
-actions are planned for future versions.
+batching, cleanup and bounded propagation. A first-party Wasm adapter and small
+JavaScript bridge now run a bounded reactive counter in the browser. Interactive
+HTTP pages explicitly opt into a fixed module/Wasm CSP. Shared-view hydration
+and server actions are planned for future versions.
 
 ## Principles
 
@@ -24,7 +26,29 @@ actions are planned for future versions.
 - **Explicit composition** through typed elements and attributes.
 - **Escaped text by default**, with no raw HTML constructor.
 - **Bounded local transport**, with explicit limits and absolute I/O deadlines.
-- **No unsafe code** in the crate.
+- **No unsafe code in the core crate**. The browser crate isolates reviewed
+  `unsafe(no_mangle)` export attributes, with no unsafe blocks or pointer inputs.
+
+## Rust in the browser
+
+From a repository checkout with the Wasm target installed:
+
+```sh
+cargo build --offline --locked -p ruvane-browser --target wasm32-unknown-unknown --release
+cargo run --offline --locked -p ruvane --example browser
+```
+
+Open the printed address. The counter, derived value, event handling and cleanup
+are implemented in Rust; our bridge applies bounded typed DOM commands. The
+demo's `/tests` page runs the actual module and DOM lifecycle checks. It is a
+client mount, not hydration of existing server-rendered controls.
+
+The workspace contains only two explicit first-party packages. The browser crate
+depends locally on Ruvane; no registry, Git, build or test dependency is added.
+No wasm-bindgen, web-sys or npm package is required. Run
+`python3 tools/check_first_party.py` to check the complete Cargo graph and ABI
+attribute boundary. Node's built-in test runner validates the bridge and compiled
+Wasm; a real browser validates DOM and CSP. See [browser](docs/browser.md).
 
 ## Reactive state
 
@@ -57,9 +81,9 @@ external side effects are trusted application code, without rollback or a
 resource sandbox.
 
 Run `cargo run --example reactivity --offline --locked` for a native counter,
-derived state, batched notifications and explicit cleanup. This is the reactive
-foundation, without a browser runtime or changes to the current script-blocking
-CSP. See [reactivity](docs/reactivity.md) for ordering, lifetimes, budgets,
+derived state, batched notifications and explicit cleanup. This native example
+exercises the engine directly without loading the browser adapter or selecting
+the interactive CSP. See [reactivity](docs/reactivity.md) for ordering, lifetimes, budgets,
 failure behavior and the complete example.
 
 ## CLI and generated projects
@@ -68,8 +92,8 @@ From a source checkout:
 
 ```sh
 cargo install --path . --locked
-ruvane new mon-site --framework-path .
-cd mon-site
+ruvane new my-site --framework-path .
+cd my-site
 ruvane dev
 ```
 
@@ -280,12 +304,12 @@ untrusted, visible URL data. GET handlers must be read-only. See
 use ruvane::{InternalUrl, link};
 
 let url = InternalUrl::new("/articles").unwrap()
-    .segment("été & Rust").unwrap()
+    .segment("🦀 & Rust").unwrap()
     .query("page", "2").unwrap();
 let anchor = link(&url, "Read <article>");
 
 assert_eq!(anchor.as_str(),
-    "<a href=\"/articles/%C3%A9t%C3%A9%20%26%20Rust?page=2\">Read &lt;article&gt;</a>");
+    "<a href=\"/articles/%F0%9F%A6%80%20%26%20Rust?page=2\">Read &lt;article&gt;</a>");
 ```
 
 `InternalUrl::new` validates an encoded path. `segment` and `query` accept
@@ -394,8 +418,8 @@ links or HTTP headers. Preview reads the existing export without rewriting it;
 
 The static edition exports the home page, five articles, three listing pages,
 About, CSS, images, and metadata: 17 files. Pagination uses paths such as
-`/articles/page/2/`. The explicitly authored static slug `ete-rust` retains
-the article's UTF-8 title and text. GET search belongs to the server edition;
+`/articles/page/2/`. The static slug `summer-rust` uses the same article title
+and text as the server edition. GET search belongs to the server edition;
 the static edition uses lists and pagination without a search form. Alpha.9
 registers those portable pages once for both modes. The original search and
 Unicode article URLs remain explicit server-only pages.

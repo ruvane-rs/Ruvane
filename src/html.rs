@@ -1,11 +1,8 @@
 use crate::{InternalUrl, Metadata};
 use std::fmt;
 
-/// An already rendered HTML fragment produced by Ruvane.
-///
-/// Construct text with [`text`] or compose markup with [`element`] and
-/// [`fragment`]. Converting a string into `Html` always treats it as text and
-/// escapes it. There is deliberately no raw HTML constructor.
+/// Rendered HTML. Build it with [`text`], [`element`] and [`fragment`].
+/// Strings are escaped as text; raw HTML is not supported.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 #[must_use]
 pub struct Html {
@@ -94,6 +91,15 @@ pub fn link(destination: &InternalUrl, label: impl Into<Html>) -> Html {
     markup.push_str(label.into().as_str());
     markup.push_str("</a>");
     Html { markup }
+}
+
+/// Adds an external module script from an internal URL.
+/// Requires `Response::interactive_html`; other pages and static exports block scripts.
+pub fn module_script(source: &InternalUrl) -> Html {
+    let mut markup = String::from("<script type=\"module\" src=\"");
+    escape_into(&mut markup, source.as_str());
+    markup.push_str("\"></script>");
+    Html::rendered(markup)
 }
 
 /// Largest supported width or height attribute for the typed image helper.
@@ -371,7 +377,7 @@ impl Document {
         }
     }
 
-    /// Sets the document language, for example `fr` or `en-GB`.
+    /// Sets the document language, for example `en` or `en-GB`.
     pub fn language(mut self, language: impl Into<String>) -> Self {
         self.language = language.into();
         self

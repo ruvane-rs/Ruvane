@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-/// The explicitly selected convention for decoding a query string.
+/// How to decode a query string.
 ///
 /// Route registration chooses this mode; request fields cannot change it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -23,7 +23,7 @@ pub const MAX_PATH_PARAMS: usize = 16;
 /// Maximum encoded bytes in an internal URL or a raw query string.
 pub const MAX_INTERNAL_URL_BYTES: usize = 4096;
 
-/// A URL validation error that never includes untrusted input in its message.
+/// URL validation errors. Messages contain no input values.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum UrlError {
@@ -124,7 +124,7 @@ pub(crate) fn decode(value: &str) -> Result<String, UrlError> {
 }
 
 fn decode_with_mode(value: &str, mode: QueryMode) -> Result<String, UrlError> {
-    // At most three encoded bytes can contribute to one decoded byte.
+    // Each decoded byte takes at most three percent-encoded bytes.
     if value.len() > MAX_COMPONENT_BYTES * 3 {
         return Err(UrlError::TooLarge);
     }
@@ -322,8 +322,8 @@ impl InternalUrl {
     ///
     /// ```
     /// let url = ruvane::InternalUrl::new("/articles").unwrap()
-    ///     .segment("été & Rust").unwrap();
-    /// assert_eq!(url.as_str(), "/articles/%C3%A9t%C3%A9%20%26%20Rust");
+    ///     .segment("🦀 & Rust").unwrap();
+    /// assert_eq!(url.as_str(), "/articles/%F0%9F%A6%80%20%26%20Rust");
     /// ```
     pub fn segment(mut self, value: &str) -> Result<Self, UrlError> {
         if !self.query_keys.is_empty() {

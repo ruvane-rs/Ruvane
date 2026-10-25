@@ -11,14 +11,17 @@ static CONTENT: std::sync::OnceLock<Result<ContentCollection, ruvane::ContentErr
     std::sync::OnceLock::new();
 const SOURCES: &[ContentSource<'static>] = &[
     ContentSource::new(
-        "01-bonjour-rust.md",
-        include_str!("../content/01-bonjour-rust.md"),
+        "01-hello-rust.md",
+        include_str!("../content/01-hello-rust.md"),
     ),
     ContentSource::new(
         "02-typed-urls.md",
         include_str!("../content/02-typed-urls.md"),
     ),
-    ContentSource::new("03-ete-rust.md", include_str!("../content/03-ete-rust.md")),
+    ContentSource::new(
+        "03-summer-rust.md",
+        include_str!("../content/03-summer-rust.md"),
+    ),
     ContentSource::new("04-escaping.md", include_str!("../content/04-escaping.md")),
     ContentSource::new(
         "05-bounded-server.md",
@@ -39,7 +42,7 @@ fn articles() -> &'static ContentCollection {
 
 fn legacy_slug(article: &ContentEntry) -> &str {
     match article.slug().as_str() {
-        "ete-rust" => "été-rust",
+        "summer-rust" => "summer-🦀",
         slug => slug,
     }
 }
@@ -421,8 +424,7 @@ fn static_listing(context: &PageContext<'_>, number: usize) -> Result<Page, Page
     ))
 }
 
-/// Declares common pages/assets once. Legacy Unicode URLs and the GET search
-/// are explicit server-only pages, retained alongside the portable common URLs.
+/// Shared pages and assets. Search and legacy Unicode URLs are server-only.
 pub fn application() -> Result<App, Box<dyn std::error::Error>> {
     let collection = content()?.clone();
     let mut app = App::new();
@@ -549,12 +551,12 @@ pub fn application() -> Result<App, Box<dyn std::error::Error>> {
     Ok(app)
 }
 
-/// Builds the read-only example blog, shared with the integration tests.
+/// Builds the example router used by integration tests.
 pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
     build_router(None)
 }
 
-/// Builds the blog with a trusted public origin for canonical metadata.
+/// Builds the router with a public origin for canonical URLs.
 pub fn router_with_origin(origin: SiteOrigin) -> Result<Router, Box<dyn std::error::Error>> {
     build_router(Some(origin))
 }
@@ -565,7 +567,7 @@ fn build_router(origin: Option<SiteOrigin>) -> Result<Router, Box<dyn std::error
     Ok(router)
 }
 
-/// Renders the common pages from the same declaration as the server.
+/// Exports the shared pages as a static site.
 pub fn static_site(origin: SiteOrigin) -> Result<StaticSite, Box<dyn std::error::Error>> {
     let app = application()?;
     for name in app.server_only_routes() {

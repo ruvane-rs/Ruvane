@@ -46,7 +46,7 @@ fn origins_reject_credentials_paths_controls_and_ambiguous_hosts() {
         "https://example.com@evil.test",
         "https://example.com\\evil",
         "https://%65xample.com",
-        "https://é.example",
+        "https://λ.example",
         "https://xn--bcher-kva.example",
         "https://XN--a.example",
         "https://example.com.",
@@ -102,7 +102,7 @@ fn origin_dns_label_and_total_length_budgets_are_exact() {
 fn canonical_urls_preserve_encoded_data_and_do_not_reinterpret_paths() {
     let path = InternalUrl::new("/articles")
         .unwrap()
-        .segment("été & %2F")
+        .segment("🦀 & %2F")
         .unwrap()
         .query("page", "2")
         .unwrap()
@@ -111,7 +111,7 @@ fn canonical_urls_preserve_encoded_data_and_do_not_reinterpret_paths() {
     let canonical = origin().canonical(&path);
     assert_eq!(
         canonical.as_str(),
-        "https://journal.example/articles/%C3%A9t%C3%A9%20%26%20%252F?page=2&q=a%2Bb%20c%26d%3De"
+        "https://journal.example/articles/%F0%9F%A6%80%20%26%20%252F?page=2&q=a%2Bb%20c%26d%3De"
     );
     assert_eq!(canonical.to_string(), canonical.as_str());
     let html = Document::new("Canonical", "")
@@ -251,7 +251,7 @@ fn description_limits_are_utf8_bytes_and_reject_controls_or_empty_text() {
     }
     for exact in [
         "x".repeat(MAX_METADATA_TEXT_BYTES),
-        "é".repeat(MAX_METADATA_TEXT_BYTES / 2),
+        "λ".repeat(MAX_METADATA_TEXT_BYTES / 2),
     ] {
         assert!(Metadata::new().description(&exact).is_ok());
         let error = Metadata::new().description(exact + "x").unwrap_err();

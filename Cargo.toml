@@ -1,6 +1,6 @@
 [package]
 name = "ruvane"
-version = "0.1.0-alpha.11"
+version = "0.1.0-alpha.12"
 edition = "2024"
 rust-version = "1.85"
 description = "A dependency-free Rust web framework with typed rendering, routing, embedded assets, and local serving."
@@ -21,7 +21,13 @@ include = [
     "/tests/**",
     "/examples/**",
     "/docs/**",
+    "/web/**",
 ]
+
+[workspace]
+members = ["browser"]
+default-members = ["."]
+resolver = "2"
 
 [lib]
 path = "src/lib.rs"

@@ -194,8 +194,7 @@ impl Server {
                 }
             }
         }
-        // Do not keep the channel alive if every worker exits. A weak reference
-        // still lets shutdown discard queued sockets before joining handlers.
+        // A weak reference lets shutdown clear the queue without keeping workers alive.
         let pending = Arc::downgrade(&receiver);
         drop(receiver);
         if outcome.is_ok() {
@@ -264,7 +263,7 @@ fn serve(
         job.accepted_at,
         stopped,
     );
-    // Suppress error bodies too when a HEAD request line was recognizable.
+    // HEAD omits error bodies too, if its request line was readable.
     let mut head = bytes.starts_with(b"HEAD ");
     let response = match received.and_then(|end| {
         http::parse(
@@ -368,8 +367,7 @@ fn read_headers(
         };
         let old_length = bytes.len();
         bytes.extend_from_slice(&chunk[..count]);
-        // Scan only newly received bytes plus the delimiter overlap. This
-        // remains linear even when a client sends one byte per read.
+        // Include only the delimiter overlap; do not rescan the whole buffer.
         for end in old_length.saturating_sub(3)..bytes.len() {
             if first_line_end.is_none() && end >= 1 && &bytes[end - 1..=end] == b"\r\n" {
                 first_line_end = Some(end - 1);

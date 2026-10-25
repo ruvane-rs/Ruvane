@@ -8,8 +8,8 @@ applications depend only on the first-party Ruvane library.
 
 ```sh
 cargo install --path . --locked
-ruvane new mon-site --framework-path .
-cd mon-site
+ruvane new my-site --framework-path .
+cd my-site
 ruvane dev
 ```
 

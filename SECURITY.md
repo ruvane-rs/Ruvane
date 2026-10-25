@@ -1,5 +1,37 @@
 # Security
 
+Starting with alpha.12, the core can encode a bounded RVN1 browser command batch
+and explicitly serve trusted JavaScript/Wasm. Response::interactive_html opts
+one HTML response into the fixed same-origin script/Wasm/connect CSP. It enables
+neither inline JavaScript nor general JavaScript eval. All existing constructors,
+errors, assets and static-hosting exports keep their default blocking policy.
+Request headers and query data cannot supply arbitrary policies. Module URLs
+use InternalUrl and quoted attribute escaping. Assets are application-owned code,
+not sanitized uploads. A CSP is not an authentication or sandbox boundary.
+
+The first-party browser crate has a capped per-Wasm-instance registry and weak
+reactive handles. Only reviewed no_mangle export attributes are allowed in its
+ABI module; there are no unsafe blocks, foreign imports or input pointers. The
+core still forbids unsafe code. Numeric handles never wrap or reuse identities.
+The output buffer is borrowed only until the next mutation; our bridge validates
+pointer/length bounds against fresh memory and copies before acknowledging it.
+
+The bridge rejects unsupported versions, oversized/truncated/invalid UTF-8
+frames, unknown tags/opcodes, cross-view references, invalid DOM ownership and
+duplicate events before applying a complete batch. Only explicit empty host
+roots and plain tags are used; textContent never interprets command text as HTML.
+There is no arbitrary selector, attribute, URL, function name, eval or HTML sink.
+Protocol, DOM-application or trap failures stop the bridge and remove its DOM
+resources. Rust cleanup is attempted; after a trap that prevents cleanup, native
+counts are reported unknown and the instance reference is released, not claimed
+to be zero. Ordinary disposal removes listeners, handles and reactive scopes.
+
+Only trusted same-origin modules load, with redirect refusal, a fetch deadline
+and a decoded-byte cap. Wasm application code itself is trusted: byte and command
+limits do not preempt an infinite computation or sandbox all its allocations.
+Tests use Node/Python standard tools and a real browser, without installed npm
+or Python packages. See [browser](docs/browser.md) for the exact ABI and limits.
+
 Starting with alpha.11, each ReactiveRuntime owns independent single-threaded
 metadata without global or thread-local graph state. Scopes own values and
 callbacks; public signal, memo and effect handles are weak. Monotonic checked
@@ -132,9 +164,10 @@ a restricted, explicitly configured SiteOrigin with an InternalUrl; no origin
 is inferred from Host or forwarding headers. The parser performs no network
 I/O, IDNA conversion, or TLS. Robots hints do not restrict access.
 
-Every server response includes a fixed Content-Security-Policy, including
+Default server responses include a fixed Content-Security-Policy, including
 assets, HEAD, parse errors, and handler failures. Scripts are blocked; CSS,
-images, and form submissions are limited to the same origin. Base elements
+images, and form submissions are limited to the same origin. Alpha.12 adds the
+explicit interactive response profile described above. Base elements
 and frame embedding are explicitly blocked. Standalone HTML rendering does
 not emit an HTTP policy. CSP supplements escaping and does not sandbox server
 code or add authorization or CSRF protection. See

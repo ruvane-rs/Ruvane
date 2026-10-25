@@ -83,10 +83,10 @@ fn named_routes_encode_data_once_and_require_exact_parameter_names() {
     let article = route("article", "/articles/{slug}/{id}/");
     assert_eq!(
         article
-            .url(&[("id", "42"), ("slug", "été & %2F")])
+            .url(&[("id", "42"), ("slug", "🦀 & %2F")])
             .unwrap()
             .as_str(),
-        "/articles/%C3%A9t%C3%A9%20%26%20%252F/42/"
+        "/articles/%F0%9F%A6%80%20%26%20%252F/42/"
     );
     for values in [
         vec![],
@@ -109,7 +109,7 @@ fn named_routes_encode_data_once_and_require_exact_parameter_names() {
 
 #[test]
 fn route_and_capture_names_patterns_and_segment_budgets_are_checked() {
-    for name in ["", "_name", "1name", "a/b", "a\nb", "é", "a b"] {
+    for name in ["", "_name", "1name", "a/b", "a\nb", "λ", "a b"] {
         assert!(PageRoute::new(name, "/").is_err());
     }
     assert!(PageRoute::new(&"a".repeat(MAX_PAGE_NAME_BYTES), "/").is_ok());
@@ -226,7 +226,7 @@ fn static_parameter_sets_are_complete_portable_unique_and_bounded() {
         PageMode::Static(vec![]),
         PageMode::Static(vec![PageParams::default()]),
         PageMode::Static(vec![params("one"), params("one")]),
-        PageMode::Static(vec![params("Été")]),
+        PageMode::Static(vec![params("🦀")]),
         PageMode::Static(vec![params("CON")]),
         PageMode::Static(vec![params("a.b")]),
     ] {
