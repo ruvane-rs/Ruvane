@@ -3,7 +3,9 @@ use crate::{
     ActionData, Component, ComponentError, ComponentProps, InitialState, NavigationMatch,
     NavigationPage, NavigationRoutes,
 };
+mod boundaries;
 mod layouts;
+pub use boundaries::ClientBoundary;
 pub(super) use layouts::ClientLayout;
 pub use layouts::ClientLayoutData;
 
@@ -133,6 +135,7 @@ pub(super) struct ClientRoute {
     cache: crate::NavigationCachePolicy,
     state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
     layout: Option<usize>,
+    boundary: Option<ClientBoundary>,
 }
 
 impl App {
@@ -191,6 +194,7 @@ impl App {
             state,
             cache: crate::NavigationCachePolicy::no_store(),
             layout: None,
+            boundary: None,
         });
         candidate.validate()?;
         *self = candidate;
@@ -250,6 +254,9 @@ impl App {
             return false;
         }
         if page.status() != StatusCode::Ok {
+            if page.failed_segment().is_some() {
+                return self.validate_boundary_page(page);
+            }
             return matches!(page.status(), StatusCode::BadRequest | StatusCode::NotFound)
                 && page.layouts().is_empty()
                 && page.data().is_empty()
@@ -259,6 +266,9 @@ impl App {
                         InitialState::Number(page.status().as_u16() as u32),
                     )
                     .unwrap();
+        }
+        if page.failed_segment().is_some() {
+            return false;
         }
         self.client_props(page.url())
             .is_ok_and(|props| props == page.props())
@@ -375,32 +385,9 @@ impl App {
         context: &PageContext<'_>,
         request: &Request,
     ) -> Response {
-        let result = (|| {
-            let url = Self::target(request)?;
-            let props = self.client_props(&url)?;
-            let page = (self.pages[index].render)(context)?;
-            let (layouts, layout_policy) = self.load_layouts(index, &url, context)?;
-            let packet = NavigationPage::new(
-                url,
-                &page.title,
-                props,
-                page.client_data.ok_or(PageError::InternalServerError)?,
-                StatusCode::Ok,
-            )
-            .and_then(|packet| packet.with_layouts(layouts))
-            .map_err(|_| PageError::InternalServerError)?;
-            let policy = if page.client_no_store
-                || request.header("cookie").is_some()
-                || request.header("authorization").is_some()
-            {
-                crate::NavigationCachePolicy::no_store()
-            } else {
-                Self::combine_cache(self.pages[index].client.unwrap().cache, layout_policy)
-            };
-            self.client_finish(&packet, page.body, request, policy)
-        })();
-        result.unwrap_or_else(|error| self.client_failure(request, error))
+        self.client_branch_response(index, context, request)
     }
+
     pub(super) fn client_missing(&self, request: &Request) -> Response {
         self.client_failure(request, PageError::NotFound)
     }
@@ -437,6 +424,30 @@ impl App {
         )
         .unwrap_or_else(|_| Response::error(StatusCode::InternalServerError))
     }
+    fn client_view(
+        factory: ComponentFactory,
+        props: ComponentProps,
+        data: &ActionData,
+        read_only: bool,
+    ) -> Result<Html, PageError> {
+        let mut component = factory(props).map_err(|_| PageError::InternalServerError)?;
+        component
+            .page_data(data.clone())
+            .map_err(|_| PageError::InternalServerError)?;
+        let view = component
+            .view()
+            .map_err(|_| PageError::InternalServerError)?;
+        if read_only && view.event_count() != 0 {
+            return Err(PageError::InternalServerError);
+        }
+        view.snapshot()
+            .map_err(|_| PageError::InternalServerError)?;
+        if component.take_action().is_some() {
+            return Err(PageError::InternalServerError);
+        }
+        view.hydratable(props)
+            .map_err(|_| PageError::InternalServerError)
+    }
     fn client_finish(
         &self,
         packet: &NavigationPage,
@@ -445,23 +456,13 @@ impl App {
         policy: crate::NavigationCachePolicy,
     ) -> Result<Response, PageError> {
         let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
-        let render = |props, data: &ActionData| -> Result<Html, PageError> {
-            let mut component = factory(props).map_err(|_| PageError::InternalServerError)?;
-            component
-                .page_data(data.clone())
-                .map_err(|_| PageError::InternalServerError)?;
-            let view = component
-                .view()
-                .map_err(|_| PageError::InternalServerError)?;
-            view.snapshot()
-                .map_err(|_| PageError::InternalServerError)?;
-            if component.take_action().is_some() {
-                return Err(PageError::InternalServerError);
-            }
-            view.hydratable(props)
-                .map_err(|_| PageError::InternalServerError)
-        };
-        let mut page_html = render(packet.props(), packet.data())?;
+        let render = |props, data: &ActionData| Self::client_view(factory, props, data, false);
+        let mut page_html = Self::client_view(
+            factory,
+            packet.props(),
+            packet.data(),
+            packet.failed_segment().is_some(),
+        )?;
         for layout in packet.layouts().iter().rev() {
             let own = render(layout.props(), layout.data())?;
             page_html = Self::layout_html(layout.name(), own, page_html);
@@ -502,6 +503,7 @@ impl App {
             return Err(PageError::InternalServerError);
         }
         body.push_str(wrapped.as_str());
+        body.push_str(self.boundary_manifest().as_str());
         body.push_str("</div>");
         let native = request.query_params().get("native") == Some("yes");
         if !native {

@@ -67,6 +67,25 @@ pub fn application() -> App {
         },
     )
     .unwrap();
+    app.client_page(
+        PageRoute::new("project", "/tasks/project").unwrap(),
+        components::PROJECT,
+        zero,
+        |context| {
+            let query = context.request().unwrap().query_params();
+            if query.get("delay") == Some("yes") {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            if query.get("unavailable") == Some("yes") {
+                return Err(PageError::InternalServerError);
+            }
+            if query.get("missing") == Some("yes") {
+                return Err(PageError::NotFound);
+            }
+            Ok(ClientPageData::new("Project / Ruvane", store::snapshot()?))
+        },
+    )
+    .unwrap();
     app.client_layout(
         PageRoute::new("workspace", "/tasks").unwrap(),
         None,
@@ -83,7 +102,7 @@ pub fn application() -> App {
         |_| Ok(ruvane::ClientLayoutData::new(ruvane::ActionData::default())),
     )
     .unwrap();
-    for name in ["tasks", "settings"] {
+    for name in ["tasks", "settings", "project"] {
         app.client_page_layout(name, Some("workspace")).unwrap();
     }
     app.client_page_layout("task", Some("context")).unwrap();
@@ -91,10 +110,16 @@ pub fn application() -> App {
         app.client_layout_cache(name, ruvane::NavigationCachePolicy::public(30).unwrap())
             .unwrap();
     }
-    for name in ["home", "tasks", "task", "settings"] {
+    for name in ["home", "tasks", "task", "settings", "project"] {
         app.client_page_cache(name, ruvane::NavigationCachePolicy::public(30).unwrap())
             .unwrap();
     }
+    let boundary =
+        ruvane::ClientBoundary::new(components::LOADING, components::BOUNDARY_ERROR).unwrap();
+    app.client_layout_boundary("workspace", Some(boundary))
+        .unwrap();
+    app.client_page_boundary("task", Some(boundary)).unwrap();
+    app.client_page_boundary("project", Some(boundary)).unwrap();
     app
 }
 pub fn shell(children: Html) -> Html {

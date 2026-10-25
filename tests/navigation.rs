@@ -158,11 +158,15 @@ fn page_packets_roundtrip_and_reject_every_truncation_or_trailing_byte() {
             "Title",
             page.props(),
             page.data().clone(),
-            StatusCode::InternalServerError
+            StatusCode::SeeOther
         )
         .is_err()
     );
-    for status in [StatusCode::BadRequest, StatusCode::NotFound] {
+    for status in [
+        StatusCode::BadRequest,
+        StatusCode::NotFound,
+        StatusCode::InternalServerError,
+    ] {
         let page = NavigationPage::new(
             page.url().clone(),
             "Error",

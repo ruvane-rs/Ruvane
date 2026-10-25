@@ -93,3 +93,36 @@ fn layout_counts_names_statuses_and_total_wire_bytes_are_bounded() {
     assert!(page().with_layouts(vec![large, other]).is_err());
     assert!(page().encode().starts_with(b"RVP1"));
 }
+
+#[test]
+fn failure_packets_round_trip_and_bound_status_scope_and_parent_count() {
+    let page = NavigationPage::new(
+        InternalUrl::new("/tasks/1").unwrap(),
+        "Unavailable",
+        props(500),
+        ActionData::default(),
+        StatusCode::InternalServerError,
+    )
+    .unwrap();
+    let packet = page.clone().with_failure(2, vec![layout("root")]).unwrap();
+    let bytes = packet.encode();
+    assert!(bytes.starts_with(b"RVP3"));
+    let decoded = NavigationPage::decode(&bytes).unwrap();
+    assert_eq!(decoded.failed_segment(), Some(2));
+    assert_eq!(decoded.layouts().len(), 1);
+    for length in 0..bytes.len() {
+        assert!(NavigationPage::decode(&bytes[..length]).is_err());
+    }
+    assert!(page.clone().with_failure(0, vec![layout("root")]).is_err());
+    assert!(page.with_failure(7, vec![]).is_err());
+    assert!(self::page().with_failure(0, vec![]).is_err());
+    let mut bad = bytes.clone();
+    bad[5] = 0;
+    assert!(NavigationPage::decode(&bad).is_err());
+    let mut bad = bytes.clone();
+    bad[4] = 2;
+    assert!(NavigationPage::decode(&bad).is_err());
+    let mut bad = bytes;
+    bad.push(0);
+    assert!(NavigationPage::decode(&bad).is_err());
+}

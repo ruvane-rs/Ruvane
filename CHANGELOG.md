@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-alpha.22 — Unreleased
+
+- Add page/layout loading and error declarations with bounded public manifests,
+  read-only transient components and accessible feedback outside live view roots.
+- Keep the displayed branch during loading/transport failures and prepare typed
+  400/404/500 errors with only validated ancestors at the nearest configured scope.
+- Add explicit fresh-GET retry, safe history replacement and delegated retry
+  controls. Retire feedback on navigation, invalidation, mutations and disposal.
+- Add RVP3 error branches, ABI v10 and a numeric read-only boundary mount export.
+  Keep existing command/seed formats, cache safeguards and uncertain-action latch.
+- Generate delayed/unavailable project examples and cover failures, SSR, retry,
+  late replies, schema checks and resource cleanup without third-party packages.
+
 ## 0.1.0-alpha.21 — Unreleased
 
 - Add shared client layout declarations, prefix contexts and bounded root-first

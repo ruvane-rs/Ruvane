@@ -26,9 +26,9 @@ pub use actions::{
     MAX_ACTION_REQUEST_BYTES,
 };
 pub use app::{
-    App, AppError, ClientLayoutData, ClientPageData, ClientRuntime, ComponentFactory,
-    MAX_APP_LAYOUTS, MAX_APP_ROUTES, MAX_LAYOUT_DEPTH, MAX_PAGE_STYLESHEETS, Page, PageContext,
-    PageError, PageMode, application_revision,
+    App, AppError, ClientBoundary, ClientLayoutData, ClientPageData, ClientRuntime,
+    ComponentFactory, MAX_APP_LAYOUTS, MAX_APP_ROUTES, MAX_LAYOUT_DEPTH, MAX_PAGE_STYLESHEETS,
+    Page, PageContext, PageError, PageMode, application_revision,
 };
 pub use assets::{AssetError, MAX_ASSET_BYTES, MAX_ASSETS, MAX_TOTAL_ASSET_BYTES, MediaType};
 pub use browser::{

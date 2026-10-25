@@ -164,6 +164,13 @@ impl View {
         self.nodes[id as usize - 1].prefetch = true;
         Ok(id)
     }
+    /// Number of logical event bindings in this view.
+    pub fn event_count(&self) -> usize {
+        self.nodes
+            .iter()
+            .filter(|node| node.event.is_some())
+            .count()
+    }
     /// Creates an empty view.
     pub fn new() -> Self {
         Self::default()

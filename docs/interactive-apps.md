@@ -58,11 +58,12 @@ The same `App` declaration supplies native GET/HEAD handlers, named URLs and
 `App::validate_navigation`. The latter checks ownership and props without running
 loaders. The browser runtime then checks the seed with `Component::page_data`.
 SSR performs the same schema/view checks. Seeds cannot queue initial actions.
-An invalid loader seed returns 500 before serving HTML or a packet.
+An invalid loader seed returns 500. A configured segment boundary can render
+its validated parents and a typed error; otherwise the global error applies.
 
 The error component must accept Number(400) and Number(404), with an empty seed.
 Bad state resolves to 400; missing data and unknown URLs resolve to 404. Server
-failures remain ordinary 500 responses. Error component IDs are public registry
+failures use a configured segment boundary or an ordinary 500 response. Error component IDs are public registry
 values, not authorization. GET loaders and state resolvers must be bounded,
 read-only trusted Rust code. Enforce resource access in loaders and actions.
 
@@ -98,7 +99,7 @@ those islands, then prepares the current page with the navigator. The page title
 and outlet change during navigation; the shell and its islands retain state.
 Route-dependent nested client layouts use [persistent client branches](client-layouts.md).
 
-The framework reserves `ruvane-application`, `ruvane-status`, `ruvane-outlet` and
+The framework reserves `ruvane-boundaries`, `ruvane-application`, `ruvane-status`, `ruvane-outlet` and
 `ruvane-fallback` element IDs. Application shells must not duplicate them. The
 bootstrap declines initial replacement when a native fallback field has focus
 or a changed value, so it does not discard a native draft. It releases listeners
@@ -117,7 +118,7 @@ ruvane_browser::export_application!(
 );
 ```
 
-Invoke this macro once in a Wasm cdylib. It isolates the twenty-one reviewed numeric
+Invoke this macro once in a Wasm cdylib. It isolates the twenty-two reviewed numeric
 exports in one module. It adds no input pointers, unsafe blocks or host imports.
 The core continues to forbid unsafe code. The optional adapter `demo` feature is
 only for repository examples; generated applications disable it.

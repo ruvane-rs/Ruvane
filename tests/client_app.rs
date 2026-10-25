@@ -47,6 +47,12 @@ fn factory(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> 
             error: false,
             value: String::new(),
         })),
+        (4, InitialState::Number(0 | 408 | 400 | 404 | 500)) | (5, InitialState::Number(0)) => {
+            Ok(Box::new(Model {
+                error: true,
+                value: "Local boundary".into(),
+            }))
+        }
         (3, InitialState::Number(400 | 404)) => Ok(Box::new(Model {
             error: true,
             value: "Error page".into(),
@@ -553,4 +559,136 @@ fn invalid_layout_seeds_and_conditional_no_store_apply_to_the_entire_response() 
             .0
             .contains("Cache-Control: no-store")
     );
+}
+
+fn boundary_app() -> App {
+    let mut app = nested();
+    app.client_page(
+        PageRoute::new("failure", "/items/{id}/failure").unwrap(),
+        2,
+        id,
+        |context| match context.request().unwrap().query_params().get("mode") {
+            Some("panic") => panic!("private diagnostic"),
+            Some("schema") => Ok(ClientPageData::new("Bad seed", ActionData::default())),
+            Some("bad") => Err(PageError::BadRequest),
+            Some("missing") => Err(PageError::NotFound),
+            _ => Err(PageError::InternalServerError),
+        },
+    )
+    .unwrap();
+    app.client_page_layout("failure", Some("item_context"))
+        .unwrap();
+    app.client_layout_boundary("root", Some(ruvane::ClientBoundary::new(5, 4).unwrap()))
+        .unwrap();
+    app
+}
+#[test]
+fn local_errors_keep_only_validated_ancestors_with_real_status_and_no_store() {
+    let app = boundary_app();
+    let server = Running::new(app.clone());
+    for (mode, status) in [
+        ("error", 500),
+        ("panic", 500),
+        ("schema", 500),
+        ("bad", 400),
+        ("missing", 404),
+    ] {
+        let (headers, body) = server.get("GET", &format!("/items/7/failure?mode={mode}"), true);
+        assert!(headers.starts_with(&format!("HTTP/1.1 {status}")));
+        assert!(headers.contains("Cache-Control: no-store"));
+        let packet = NavigationPage::decode(&body).unwrap();
+        assert_eq!(packet.failed_segment(), Some(2));
+        assert_eq!(packet.layouts().len(), 1);
+        assert_eq!(packet.layouts()[0].name(), "root");
+        assert!(app.validate_navigation(&packet));
+        assert!(!String::from_utf8_lossy(&body).contains("private diagnostic"));
+    }
+    let (headers, body) = server.get("GET", "/items/7/failure?native=yes", false);
+    assert!(headers.starts_with("HTTP/1.1 500") && headers.contains("script-src 'none'"));
+    let html = String::from_utf8(body).unwrap();
+    assert!(html.contains("Root layout") && html.contains("Local boundary"));
+    assert!(!html.contains("Item layout"));
+}
+#[test]
+fn page_boundary_overrides_ancestors_and_forged_failure_scopes_are_rejected() {
+    let mut app = boundary_app();
+    let boundary = ruvane::ClientBoundary::new(5, 4).unwrap();
+    app.client_page_boundary("failure", Some(boundary)).unwrap();
+    let (_, body) = Running::new(app.clone()).get("GET", "/items/7/failure", true);
+    let packet = NavigationPage::decode(&body).unwrap();
+    assert_eq!(packet.layouts().len(), 2);
+    assert!(app.validate_navigation(&packet));
+    let forged = packet
+        .clone()
+        .with_failure(3, packet.layouts().to_vec())
+        .unwrap();
+    assert!(!app.validate_navigation(&forged));
+    let wrong = NavigationPage::new(
+        packet.url().clone(),
+        packet.title(),
+        ComponentProps::new(3, InitialState::Number(500)).unwrap(),
+        ActionData::default(),
+        StatusCode::InternalServerError,
+    )
+    .unwrap()
+    .with_failure(2, packet.layouts().to_vec())
+    .unwrap();
+    assert!(!app.validate_navigation(&wrong));
+    let mut forged = packet.layouts().to_vec();
+    forged[1] = ruvane::NavigationLayout::new(
+        "item_context",
+        InternalUrl::new("/items/8").unwrap(),
+        forged[1].props(),
+        forged[1].data().clone(),
+    )
+    .unwrap();
+    assert!(!app.validate_navigation(&packet.with_failure(2, forged).unwrap()));
+    assert!(app.client_page_boundary("unknown", Some(boundary)).is_err());
+    assert!(
+        app.client_layout_boundary("unknown", Some(boundary))
+            .is_err()
+    );
+    assert!(ruvane::ClientBoundary::new(0, 4).is_err());
+}
+#[test]
+fn a_layout_failure_uses_its_parent_boundary_and_an_invalid_boundary_fails_closed() {
+    let mut app = boundary_app();
+    app.client_layout(
+        PageRoute::new("broken", "/items/{id}").unwrap(),
+        Some("root"),
+        2,
+        id,
+        |_| Err(PageError::InternalServerError),
+    )
+    .unwrap();
+    app.client_layout_boundary("broken", Some(ruvane::ClientBoundary::new(5, 4).unwrap()))
+        .unwrap();
+    app.client_page_layout("item", Some("broken")).unwrap();
+    let (_, body) = Running::new(app.clone()).get("GET", "/items/7", true);
+    let packet = NavigationPage::decode(&body).unwrap();
+    assert_eq!(packet.failed_segment(), Some(1));
+    assert_eq!(packet.layouts().len(), 1);
+    assert!(app.validate_navigation(&packet));
+    app.client_layout_boundary("root", Some(ruvane::ClientBoundary::new(5, 999).unwrap()))
+        .unwrap();
+    let (headers, body) = Running::new(app).get("GET", "/items/7", true);
+    assert!(headers.starts_with("HTTP/1.1 500"));
+    assert!(NavigationPage::decode(&body).is_err());
+}
+#[test]
+fn public_boundary_manifest_declares_routes_without_running_other_loaders() {
+    let mut app = boundary_app();
+    app.client_page(
+        PageRoute::new("unused", "/unused").unwrap(),
+        1,
+        zero,
+        |_| panic!("must not run"),
+    )
+    .unwrap();
+    let (_, body) = Running::new(app).get("GET", "/", false);
+    let html = String::from_utf8(body).unwrap();
+    assert!(html.contains("id=\"ruvane-boundaries\""));
+    assert!(html.contains("data-rvn-name=\"failure\""));
+    assert!(html.contains("data-rvn-chain=\"root,item_context\""));
+    assert!(html.contains("data-rvn-loading=\"5\""));
 }

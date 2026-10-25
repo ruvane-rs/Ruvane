@@ -29,7 +29,7 @@ await test("a generated application ships an independent, revision-matched Wasm 
     assert.deepEqual(WebAssembly.Module.imports(module),[]);
     const e = validateExports(new WebAssembly.Instance(module,{}).exports);
     assert.equal(e.ruvane_application_revision(),BigInt(revision));
-    assert.equal(WebAssembly.Module.exports(module).filter(e=>e.kind === "function").length,21);
+    assert.equal(WebAssembly.Module.exports(module).filter(e=>e.kind === "function").length,22);
     const drain = () => { const commands = decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr() >>> 0,e.ruvane_commands_len() >>> 0).slice()); assert.equal(e.ruvane_commands_clear(),1); return commands; };
     const stage = (bytes,probe=false) => { assert.equal(e.ruvane_page_begin(bytes.length),1); for (let offset=0;offset<bytes.length;offset+=4) { const count=Math.min(4,bytes.length-offset); let word=0;for(let i=0;i<count;i++)word|=bytes[offset+i]<<(i*8);assert.equal(e.ruvane_page_chunk(word >>> 0,count),1); } return probe ? e.ruvane_page_validate() : e.ruvane_page_mount(2); };
     await t.test("the app owns its components instead of using the repository demo", () => {
@@ -54,6 +54,17 @@ await test("a generated application ships an independent, revision-matched Wasm 
       bytes[4]=1;const layout=stage(bytes);assert.ok(layout);assert.ok(drain().some(c=>c.op===2&&c.text==="Tasks workspace"));assert.equal(e.ruvane_dispose(layout),1);drain();
       bytes[4]=0;const leaf=stage(bytes);assert.ok(leaf);assert.ok(drain().some(c=>c.op===2&&c.text==="Server tasks / Rust + Wasm"));assert.equal(e.ruvane_dispose(leaf),1);drain();
       bytes[4]=2;assert.equal(stage(bytes),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),0);
+    });
+    await t.test("read-only presentation mounts and typed failures share the application schema",()=>{
+      const loading=e.ruvane_boundary_mount(8,15,1,0);assert.ok(loading);assert.ok(drain().some(c=>c.op===2&&c.text==="Loading page…"));assert.equal(e.ruvane_dispose(loading),1);drain();
+      assert.equal(e.ruvane_boundary_mount(8,12,1,0),0);assert.equal(e.ruvane_last_error(),8);assert.equal(e.ruvane_live_instances(),0);drain();
+      const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
+      const leaf=packet("/tasks/project",16,500,500,true),empty=[82,86,65,49,0,0,0];
+      const project=packet("/tasks/project",17,0),normal=new Uint8Array([82,86,80,50,0,...project.slice(4),1,...text("workspace"),...text("/tasks"),...word(12),...word(1),...word(0),...word(empty.length),...empty]);
+      const ready=stage(normal);assert.ok(ready);assert.ok(drain().some(c=>c.op===2&&c.text==="Project overview"));assert.equal(e.ruvane_dispose(ready),1);drain();
+      const bytes=new Uint8Array([82,86,80,51,0,1,...leaf.slice(4),1,...text("workspace"),...text("/tasks"),...word(12),...word(1),...word(0),...word(empty.length),...empty]);
+      const page=stage(bytes);assert.ok(page);assert.ok(drain().some(c=>c.op===2&&c.text==="Page unavailable"));assert.equal(e.ruvane_dispose(page),1);drain();
+      bytes[5]=0;assert.equal(stage(bytes),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),0);
     });
     await t.test("the generated Cargo graph has only project and framework packages", () => {
       const metadata=JSON.parse(run(process.env.CARGO || "cargo",["metadata","--offline","--locked","--format-version","1"],project));

@@ -27,7 +27,7 @@ export function cacheFreshness(response, ttlMs, startedAt) {
   return expires > performance.now() ? expires : null;
 }
 async function pageBytes(response, signal) {
-  if (![200, 400, 404].includes(response.status) || response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== NAVIGATION_MEDIA_TYPE || !response.body) throw failure();
+  if (![200, 400, 404, 500].includes(response.status) || response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== NAVIGATION_MEDIA_TYPE || !response.body) throw failure();
   const length = response.headers.get("content-length");
   if (length !== null && (!/^\d+$/.test(length) || Number(length) > 65536)) throw failure();
   const reader = response.body.getReader(), parts = []; let total = 0;
@@ -42,15 +42,58 @@ async function pageBytes(response, signal) {
   return bytes;
 }
 
+const identifier=value=>typeof value==="string"&&/^[A-Za-z][A-Za-z0-9_-]{0,47}$/.test(value);
+const pathParts=url=>url.split("?")[0]==="/"?[]:url.split("?")[0].slice(1).split("/").map(value=>decodeURIComponent(value));
+function patternParts(pattern){
+  if(typeof pattern!=="string"||pattern.length>4096)throw failure();
+  const names=new Set();
+  internalTarget(pattern.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g,(_,name)=>{if(names.has(name))throw failure();names.add(name);return "1";}));
+  return pattern==="/"?[]:pattern.slice(1).split("/").map(value=>/^\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)?null:decodeURIComponent(value));
+}
+function boundaryConfig(entries){
+  if(!Array.isArray(entries)||entries.length>160)throw failure();
+  const used=new Set(),records=entries.map(item=>{
+    if(!item||!["page","layout"].includes(item.kind)||!identifier(item.name)||!Array.isArray(item.chain)||item.chain.length>6||new Set(item.chain).size!==item.chain.length||!item.chain.every(identifier))throw failure();
+    for(const id of [item.loading,item.error])if(!Number.isInteger(id)||id<0||id>0xffffffff)throw failure();
+    if((item.loading===0)!==(item.error===0))throw failure();
+    const key=item.kind+":"+item.name;if(used.has(key))throw failure();used.add(key);
+    const parts=patternParts(item.pattern);if(parts.length>17)throw failure();
+    return Object.freeze({kind:item.kind,name:item.name,pattern:item.pattern,chain:Object.freeze([...item.chain]),parts:Object.freeze(parts),loading:item.loading,error:item.error});
+  });
+  const layouts=new Map(records.filter(item=>item.kind==="layout").map(item=>[item.name,item]));
+  for(const item of records){
+    if(item.kind==="layout"&&item.chain.at(-1)!==item.name)throw failure();
+    for(let n=0;n<item.chain.length;n++){
+      const parent=layouts.get(item.chain[n]);if(!parent||parent.chain.length!==n+1||!parent.chain.every((name,i)=>name===item.chain[i])||parent.parts.length>item.parts.length||!parent.parts.every((part,i)=>part===null||part===item.parts[i]))throw failure();
+    }
+  }
+  return Object.freeze(records);
+}
+/** Reads the application's bounded public presentation declarations. */
+export function readBoundaries(root){
+  const manifests=root.querySelectorAll("#ruvane-boundaries");if(!manifests.length)return [];
+  if(manifests.length!==1||manifests[0].children.length>160)throw failure();
+  const items=[...manifests[0].children].map(node=>{
+    if(node.localName!=="span")throw failure();
+    const value=name=>node.getAttribute("data-rvn-"+name);
+    const number=name=>{const raw=value(name);if(!/^(0|[1-9][0-9]{0,9})$/.test(raw??""))throw failure();return Number(raw);};
+    return {kind:value("kind"),name:value("name"),pattern:value("pattern"),chain:value("chain")?value("chain").split(","):[],loading:number("loading"),error:number("error")};
+  });
+  return boundaryConfig(items);
+}
+
 /** Keeps page data in a bounded cache; live views belong to the runtime. */
-export function createNavigator(runtime, { outlet, scope = document, status, timeoutMs = 10000, maxCacheEntries = 32, maxCacheBytes = 2097152, cacheTtlMs = 30000, prefetchConcurrency = 2 } = {}) {
+export function createNavigator(runtime, { outlet, scope = document, status, timeoutMs = 10000, maxCacheEntries = 32, maxCacheBytes = 2097152, cacheTtlMs = 30000, prefetchConcurrency = 2, boundaries = [] } = {}) {
   if (!runtime || !["mountPage", "mountPageSegment", "validatePage", "actionState", "subscribeActions"].every(name => typeof runtime[name] === "function") || !(outlet instanceof HTMLElement) || outlet.ownerDocument !== document || !(scope === document || scope instanceof HTMLElement && scope.ownerDocument === document) || !scope.contains(outlet) || OWNERS.has(window) || !(status instanceof HTMLElement) || status.ownerDocument !== document || outlet.contains(status) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000 || !["http:", "https:"].includes(location.protocol)) throw failure();
   for (const [value, min, max] of [[maxCacheEntries,0,32],[maxCacheBytes,0,2097152],[cacheTtlMs,1,300000],[prefetchConcurrency,1,2]]) if (!Number.isInteger(value) || value < min || value > max) throw failure();
+  const presentation=boundaryConfig(boundaries), layoutPresentation=new Map(presentation.filter(item=>item.kind==="layout").map(item=>[item.name,item]));
+  if(presentation.length&&typeof runtime.mountBoundary!=="function")throw failure();
   if (runtime.actionState().state !== "active") throw failure(); stateObject(history.state);
   const previousRestoration = history.scrollRestoration, previousRole = status.getAttribute("role"), previousLive = status.getAttribute("aria-live");
   const cache = new Map(), jobs = new Map(), activeJobs = new Set();
   const identity = `${location.origin}\n${runtime.applicationRevision ?? "unversioned"}\n`;
   let current = null, branch = [], pageHost = null, activeURL = target(), pending = null, disposed = false, started = false, frame = 0, idle = Promise.resolve("idle");
+  let feedback=null, retryButton=null, lastFailure=null;
   let generation = 0, bytesHeld = 0, blocked = false, pumpQueued = false, hits = 0, misses = 0;
   const key = url => identity + url;
   const eligible = () => !disposed && !blocked && generation !== null && maxCacheEntries > 0 && maxCacheBytes > 0 && runtime.actionState().state === "active" && runtime.actionState().epoch !== null && !runtime.actionState().uncertain && runtime.actionState().pending === 0;
@@ -76,11 +119,12 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   function invalidate(url, reason = "invalidated") {
     if (disposed) return;
     if (url !== undefined) safeURL(url);
+    if(lastFailure&&(url===undefined||lastFailure.url===url)){clearFeedback();lastFailure=null;}
     generation = generation === null || generation === Number.MAX_SAFE_INTEGER ? null : generation + 1;
     if (url === undefined) { cache.clear(); bytesHeld = 0; } else remove(url);
     cancelJobs(reason,url); cancelNavigation(reason,url);
   }
-  function updated() { blocked = true; invalidate(undefined,"invalidated"); status.textContent = "Application updated. Reload to continue."; }
+  function updated() { clearFeedback();lastFailure=null;blocked = true; invalidate(undefined,"invalidated"); status.textContent = "Application updated. Reload to continue."; }
   function schedule() { if (!pumpQueued) { pumpQueued = true; queueMicrotask(() => { pumpQueued = false; pump(); }); } }
   const headers = () => ({ Accept: NAVIGATION_MEDIA_TYPE, ...(runtime.applicationRevision ? { "Ruvane-Application-Revision": runtime.applicationRevision } : {}) });
   const request = (url, signal) => fetch(safeURL(url).href,{ method:"GET", mode:"same-origin", credentials:"same-origin", redirect:"error", headers:headers(), signal, cache:"no-cache" });
@@ -116,7 +160,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     if (jobs.size >= CACHE_LIMITS.jobs) return Promise.resolve("skipped");
     const job = { url, controller:null, finished:false, reason:null }; job.promise = new Promise(resolve => { job.resolve = resolve; }); jobs.set(url,job); pump(); return job.promise;
   }
-  function actionChanged(state) { invalidate(); if (state.state !== "active") cancelJobs("disposed"); schedule(); }
+  function actionChanged(state) { clearFeedback();lastFailure=null;invalidate(); if (state.state !== "active") cancelJobs("disposed"); schedule(); }
   const unsubscribe = runtime.subscribeActions(actionChanged);
   OWNERS.add(window); status.setAttribute("role","status"); status.setAttribute("aria-live","polite");
   function save() { if (!disposed && started && activeURL === target()) history.replaceState({ ...stateObject(history.state), [KEY]:entry(target()+location.hash,scrollX,scrollY) },"",location.href); }
@@ -136,13 +180,42 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     if(current && (slot.childNodes.length!==1 || slot.firstChild!==pageHost))throw failure();
   }
   function releaseBranch(items) { for(const item of [...items].reverse())item.controller.dispose(); }
-  function run(url,mode,point={x:0,y:0},accept,fresh=false) {
+  function feedbackConfig(url){
+    const parts=pathParts(url),matches=item=>item.kind==="page"&&item.parts.length===parts.length&&item.parts.every((part,n)=>part===null||part===parts[n]);
+    const pages=presentation.filter(matches);pages.sort((a,b)=>Number(a.parts.includes(null))-Number(b.parts.includes(null)));
+    const page=pages[0];if(!page)return null;
+    let declaration=page.loading?page:null,depth=page.chain.length;
+    if(!declaration)for(let n=page.chain.length-1;n>=0;n--){const parent=layoutPresentation.get(page.chain[n]);if(parent.loading){declaration=parent;depth=n+1;break;}}
+    if(!declaration)return null;
+    let shared=0;
+    while(shared<depth&&shared<branch.length&&branch[shared].descriptor.name===page.chain[shared]){
+      const old=pathParts(branch[shared].descriptor.key);if(!old.every((part,n)=>part===parts[n]))break;shared++;
+    }
+    return {declaration,slot:shared?branch[shared-1].outlet:outlet};
+  }
+  function clearFeedback(){
+    const previous=feedback;feedback=null;retryButton=null;if(!previous)return;
+    previous.host.remove();if(previous.busy) {if(previous.previousBusy===null)previous.slot.removeAttribute("aria-busy");else previous.slot.setAttribute("aria-busy",previous.previousBusy);}
+    if(previous.controller)try{previous.controller.dispose();}catch{queueMicrotask(()=>{try{previous.controller.dispose();}catch{ /* Runtime shutdown owns remaining views. */ }});}
+  }
+  function showFeedback(url,kind,component=true){
+    const config=feedbackConfig(url);if(!config)return;
+    const slot=component?config.slot:(branch.length?branch.at(-1).outlet:outlet),host=document.createElement("div"),own=document.createElement("div");
+    host.setAttribute("data-ruvane-feedback",kind);host.setAttribute("role",kind==="loading"?"status":"alert");host.setAttribute("aria-live",kind==="loading"?"polite":"assertive");host.append(own);
+    const previousBusy=slot.getAttribute("aria-busy");if(kind==="loading")slot.setAttribute("aria-busy","true");
+    let controller=null;
+    if(component)try{controller=runtime.mountBoundary(own,{component:kind==="loading"?config.declaration.loading:config.declaration.error,state:{kind:"number",value:kind==="timeout"?408:0}});}catch{own.textContent=kind==="loading"?"Loading…":"This page could not be loaded.";}
+    if(kind!=="loading") {retryButton=document.createElement("button");retryButton.type="button";retryButton.textContent="Try again";host.append(retryButton);}
+    slot.append(host);feedback={host,slot,controller,busy:kind==="loading",previousBusy,kind};
+  }
+  function run(url,mode,point={x:0,y:0},accept,fresh=false,resetLayouts=false) {
     if (disposed) return Promise.reject(new Error("Ruvane navigator disposed")); safeURL(url);
     if (mode !== "start" && !started) return Promise.reject(failure());
-    cancelNavigation("superseded"); cancelJobs("superseded");
+    cancelNavigation("superseded"); cancelJobs("superseded");clearFeedback();lastFailure=null;
     const operation = { url, mode, abort:new AbortController(), expired:false, updated:false, reason:null, committing:false }; pending = operation;
     const version = generation, epoch = runtime.actionState().epoch;
     status.textContent = "Loading…"; outlet.setAttribute("aria-busy","true");
+    showFeedback(url,"loading");
     const timer = setTimeout(() => { operation.expired = true; operation.abort.abort(); },timeoutMs);
     idle = (async () => {
       let prepared = null, preparedLayouts = [];
@@ -157,9 +230,9 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         }
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
         if (operation.reason || operation.abort.signal.aborted) { status.textContent = "Data changed. Try the link again."; if (mode === "pop") fallback(url); return operation.reason ?? "invalidated"; }
-        runtime.validatePage(bytes); checkBranch();
+        clearFeedback();runtime.validatePage(bytes); checkBranch();
         let shared=0;
-        if(!fresh)while(shared<branch.length && shared<page.layouts.length && sameLayout(branch[shared].descriptor,page.layouts[shared]))shared++;
+        if(!resetLayouts)while(shared<branch.length && shared<page.layouts.length && sameLayout(branch[shared].descriptor,page.layouts[shared]))shared++;
         const mountPoint = shared ? branch[shared-1].outlet : outlet;
         const fragment=document.createDocumentFragment();let slot=fragment;
         for(let index=shared;index<page.layouts.length;index++){
@@ -175,14 +248,19 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         current?.dispose(); releaseBranch(branch.slice(shared)); mountPoint.replaceChildren(fragment); branch=branch.slice(0,shared).concat(preparedLayouts);preparedLayouts=[];current=prepared;prepared=null;pageHost=host; activeURL = url; started = true; history.scrollRestoration = "manual";
         document.title = page.title; status.textContent = page.status === 200 ? "Ready." : `Page ${page.status}.`;
         if (mode !== "start") host.focus({ preventScroll:true }); restore(point);
-        if (!cached) store(url,bytes,expires,version,epoch); return "success";
+        if (!cached) store(url,bytes,expires,version,epoch);
+        if(page.failed!==null){lastFailure={url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(url,"error",false);}
+        return "success";
       } catch {
+        if(pending===operation)clearFeedback();
         remove(url); try { prepared?.dispose(); releaseBranch(preparedLayouts); } catch { fallback(url); }
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
         if (operation.reason && !operation.updated && runtime.actionState().state === "active") { status.textContent = "Data changed. Try the link again."; if (mode === "pop") fallback(url); return operation.reason; }
         status.textContent = operation.updated ? "Application updated. Reload to continue." : operation.expired ? "Navigation timed out. Try the link again." : "Navigation failed. Try the link again or reload.";
-        if (operation.committing || mode === "pop" || runtime.stats().state !== "active" || activeURL !== target()) fallback(url); return "failed";
-      } finally { operation.abort.abort(); clearTimeout(timer); if (pending === operation) { pending = null; outlet.removeAttribute("aria-busy"); } schedule(); }
+        if (operation.committing || mode === "pop" || runtime.stats().state !== "active" || activeURL !== target()) fallback(url);
+        else if(!operation.updated){lastFailure={url,mode,point,kind:operation.expired?"timeout":"network",accept};showFeedback(url,lastFailure.kind);}
+        return "failed";
+      } finally { operation.abort.abort(); clearTimeout(timer); if (pending === operation) { if(feedback?.kind==="loading")clearFeedback();pending = null; outlet.removeAttribute("aria-busy"); } schedule(); }
     })(); return idle;
   }
   function selected(event,marked=false) {
@@ -192,27 +270,34 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   }
   function click(event) {
     if (!started || disposed || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if(retryButton && (event.target===retryButton || retryButton.contains(event.target))){event.preventDefault();void retry();return;}
     const href = selected(event); if (href === null) return; event.preventDefault(); void run(href,"push").catch(() => { status.textContent = "Navigation failed. Reload to continue."; });
   }
   function intend(event) { if (!started || disposed || event.defaultPrevented) return; const href = selected(event,true); if (href !== null) void prefetch(href).catch(()=>{}); }
   function pop(event) {
     if (disposed || !started) return; if (frame) { cancelAnimationFrame(frame); frame = 0; }
     const url = target();
-    if (url === activeURL) { cancelNavigation("superseded"); pending = null; outlet.removeAttribute("aria-busy"); status.textContent = "Ready."; const point = saved(event.state,url+location.hash); if (point) restore(point); return; }
+    if (url === activeURL) { clearFeedback();lastFailure=null;cancelNavigation("superseded"); pending = null; outlet.removeAttribute("aria-busy"); status.textContent = "Ready."; const point = saved(event.state,url+location.hash); if (point) restore(point); return; }
     try { void run(url,"pop",saved(event.state,url+location.hash) ?? {x:0,y:0}).catch(()=>fallback(url)); } catch { fallback(url); }
+  }
+  function retry(){
+    if(disposed||pending||!lastFailure||blocked||runtime.actionState().state!=="active")return Promise.resolve("skipped");
+    const attempt=lastFailure;invalidate(attempt.url);return run(attempt.url,attempt.mode,attempt.point,attempt.accept,true,false);
   }
   scope.addEventListener("click",click); scope.addEventListener("pointerover",intend); scope.addEventListener("focusin",intend); window.addEventListener("popstate",pop); window.addEventListener("scroll",scroll,{passive:true});
   return Object.freeze({
     start({accept}={}) { if (started || pending || disposed || accept !== undefined && typeof accept !== "function") throw failure(); return run(target(),"start",{x:scrollX,y:scrollY},accept); },
     navigate(url,{replace=false}={}) { return run(url,replace ? "replace" : "push"); },
     prefetch,
+    retry,
+    failure() {return lastFailure?Object.freeze({url:lastFailure.url,kind:lastFailure.kind}):null;},
     invalidate(url) { invalidate(url); },
-    refresh() { if (!started || disposed) return Promise.reject(failure()); invalidate(activeURL); return run(activeURL,"refresh",{x:scrollX,y:scrollY},undefined,true); },
+    refresh() { if (!started || disposed) return Promise.reject(failure()); invalidate(activeURL); return run(activeURL,"refresh",{x:scrollX,y:scrollY},undefined,true,true); },
     current() { return current; },
     whenIdle() { return idle; },
-    stats() { sweep(); return Object.freeze({ state:disposed ? "disposed" : started ? "active" : "idle", pending:pending !== null, url:activeURL, listeners:disposed ? 0 : 5, layouts:branch.length, cachePaused:blocked || generation === null || runtime.actionState().uncertain || runtime.actionState().pending > 0, cacheEntries:cache.size, cacheBytes:bytesHeld, pendingPrefetches:activeJobs.size, queuedPrefetches:jobs.size-activeJobs.size, hits, misses }); },
+    stats() { sweep(); return Object.freeze({ state:disposed ? "disposed" : started ? "active" : "idle", pending:pending !== null, url:activeURL, listeners:disposed ? 0 : 5, layouts:branch.length, feedback:feedback?.kind??null, retryable:lastFailure!==null, cachePaused:blocked || generation === null || runtime.actionState().uncertain || runtime.actionState().pending > 0, cacheEntries:cache.size, cacheBytes:bytesHeld, pendingPrefetches:activeJobs.size, queuedPrefetches:jobs.size-activeJobs.size, hits, misses }); },
     dispose() {
-      if (disposed) return; try { save(); } catch { /* Continue cleanup. */ } disposed = true; unsubscribe(); cancelNavigation("disposed"); pending = null; cancelJobs("disposed"); cache.clear(); bytesHeld = 0; if (frame) cancelAnimationFrame(frame);
+      if (disposed) return; try { save(); } catch { /* Continue cleanup. */ } disposed = true;clearFeedback();lastFailure=null; unsubscribe(); cancelNavigation("disposed"); pending = null; cancelJobs("disposed"); cache.clear(); bytesHeld = 0; if (frame) cancelAnimationFrame(frame);
       scope.removeEventListener("click",click); scope.removeEventListener("pointerover",intend); scope.removeEventListener("focusin",intend); window.removeEventListener("popstate",pop); window.removeEventListener("scroll",scroll);
       for (const [name,value] of [["role",previousRole],["aria-live",previousLive]]) { if (value === null) status.removeAttribute(name); else status.setAttribute(name,value); }
       history.scrollRestoration = previousRestoration; OWNERS.delete(window); outlet.removeAttribute("aria-busy"); current?.dispose(); releaseBranch(branch); branch=[]; current = null;pageHost=null;

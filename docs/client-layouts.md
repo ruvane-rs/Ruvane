@@ -89,8 +89,7 @@ app.client_page_cache("project_settings", NavigationCachePolicy::public(30)?)?;
 The response uses the shortest lifetime, here 15 seconds. A no-store member or
 `ClientLayoutData::no_store()` disables storage of the whole packet. Cookie and
 Authorization guards remain in force. App prefetch links require an explicitly
-public page and every ancestor to be public. Errors contain no inherited branch
-and remain no-store. No partial public cache is built around a private layout.
+public page and every ancestor to be public. Typed error boundaries can retain validated parents and remain no-store. No partial public cache is built around a private layout.
 
 The cache stores complete packets and no owners. Prefetch validates every seed
 without consuming view IDs. A warm navigation reconciles the same descriptors as
@@ -99,7 +98,7 @@ layouts, without adding a history entry; local drafts can be discarded.
 
 ## Wire contract
 
-ABI v9 retains the 21 numeric exports, RVN6 commands and RVA1 seeds. RVP1 is still
+ABI v10 provides 22 numeric exports, RVN6 commands and RVA1 seeds. RVP1 is still
 used for pages with no layouts. RVP2 contains:
 
 1. Four magic bytes `RVP2`, then a selected-segment u8.
@@ -110,7 +109,8 @@ used for pages with no layouts. RVP2 contains:
 
 All integers are little-endian. Names are bounded ASCII identifiers. The entire
 packet, including every seed, stays within 64 KiB. Duplicate names, unknown
-segments, malformed seeds, trailing bytes and layout-bearing error pages fail.
+segments, malformed seeds and trailing bytes fail. RVP3 supports validated error
+branches; ordinary RVP1/RVP2 errors cannot inherit layouts.
 App validates the complete registered chain, canonical keys and resolved props;
 the runtime checks every component schema, view and resource limit.
 
@@ -134,6 +134,6 @@ credentials. Run it separately from the application task harness. It checks
 DOM/state preservation, parameter changes, history, failed partial preparation,
 100 branch switches, errors and cleanup.
 
-Per-segment loading/error boundaries, parallel outlets and streaming remain
-separate work. Existing server fragment layouts and static export keep their
+See [segment boundaries](segment-boundaries.md) for local loading, typed errors
+and GET retry. Parallel outlets and streaming remain separate work. Existing server fragment layouts and static export keep their
 existing APIs.

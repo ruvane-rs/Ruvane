@@ -166,7 +166,7 @@ impl BrowserRuntime {
 
     /// Creates a component on a unique nonzero host root and queues its DOM.
     pub fn mount(&mut self, root: u32, props: ComponentProps) -> Result<u32, BrowserError> {
-        self.mount_inner(root, props, None)
+        self.mount_inner(root, props, None, false)
     }
 
     /// Configures the shared application page validator.
@@ -183,14 +183,28 @@ impl BrowserRuntime {
     ) -> Result<u32, BrowserError> {
         self.validate_page(page)?;
         let (props, data) = page.segment();
-        self.mount_inner(root, props, Some(data))
+        self.mount_inner(
+            root,
+            props,
+            Some(data),
+            page.failed_segment().is_some() && page.selected_segment() == 0,
+        )
     }
 
+    /// Mounts a read-only loading/error component with an empty seed.
+    pub fn mount_boundary(
+        &mut self,
+        root: u32,
+        props: ComponentProps,
+    ) -> Result<u32, BrowserError> {
+        self.mount_inner(root, props, Some(&ruvane::ActionData::default()), true)
+    }
     fn mount_inner(
         &mut self,
         root: u32,
         props: ComponentProps,
         seed: Option<&ruvane::ActionData>,
+        transient: bool,
     ) -> Result<u32, BrowserError> {
         self.ready()?;
         if root == 0 || self.instances.values().any(|c| c.root == root) {
@@ -209,6 +223,9 @@ impl BrowserRuntime {
         }
         Self::resources(component.as_ref())?;
         let view = component.view()?;
+        if transient && view.event_count() != 0 {
+            return Err(BrowserError::InvalidView);
+        }
         let snapshot = view.snapshot().map_err(|_| BrowserError::InvalidView)?;
         let mut commands = snapshot
             .commands(id)
@@ -284,19 +301,24 @@ impl BrowserRuntime {
         if !self.page_validator.is_some_and(|validate| validate(page)) {
             return Err(BrowserError::InvalidPage);
         }
-        for (props, data) in std::iter::once((page.props(), page.data())).chain(
-            page.layouts()
-                .iter()
-                .map(|layout| (layout.props(), layout.data())),
-        ) {
+        for (index, (props, data)) in std::iter::once((page.props(), page.data()))
+            .chain(
+                page.layouts()
+                    .iter()
+                    .map(|layout| (layout.props(), layout.data())),
+            )
+            .enumerate()
+        {
             let mut component = (self.factory)(props).map_err(|_| BrowserError::InvalidPage)?;
             component
                 .page_data(data.clone())
                 .map_err(|_| BrowserError::InvalidPage)?;
             Self::resources(component.as_ref())?;
-            component
-                .view()?
-                .snapshot()
+            let view = component.view()?;
+            if page.failed_segment().is_some() && index == 0 && view.event_count() != 0 {
+                return Err(BrowserError::InvalidPage);
+            }
+            view.snapshot()
                 .map_err(|_| BrowserError::InvalidView)?
                 .commands(1)
                 .map_err(|_| BrowserError::InvalidView)?;
@@ -1236,6 +1258,68 @@ mod tests {
             runtime.clear_commands();
         }
         assert_eq!(runtime.live_signals(), 0);
+    }
+    #[test]
+    fn boundary_mounts_reject_interaction_and_actions_and_release_temporary_owners() {
+        struct Presentation(u32);
+        impl Component for Presentation {
+            fn page_data(&mut self, data: ruvane::ActionData) -> Result<(), ComponentError> {
+                if data.is_empty() {
+                    Ok(())
+                } else {
+                    Err(ComponentError::InvalidProps)
+                }
+            }
+            fn view(&self) -> Result<View, ComponentError> {
+                let mut view = View::new();
+                view.leaf(0, ruvane::BrowserTag::Heading, "Boundary")?;
+                if self.0 == 1 {
+                    view.button(0, "Forbidden", 1, false)?;
+                }
+                Ok(view)
+            }
+            fn dispatch(&mut self, _: u32) -> Result<(), ComponentError> {
+                Err(ComponentError::InvalidEvent)
+            }
+            fn take_action(&mut self) -> Option<ruvane::ActionRequest> {
+                (self.0 == 2).then(|| {
+                    ruvane::ActionRequest::new(
+                        1,
+                        ruvane::InternalUrl::new("/actions/forbidden").unwrap(),
+                        ruvane::FormData::default(),
+                    )
+                    .unwrap()
+                })
+            }
+        }
+        let mut runtime = BrowserRuntime::new(|props| match props.state() {
+            InitialState::Number(value) => Ok(Box::new(Presentation(value))),
+            _ => Err(ComponentError::InvalidProps),
+        });
+        let props = |value| ComponentProps::new(15, InitialState::Number(value)).unwrap();
+        let base = runtime.mount_boundary(1, props(0)).unwrap();
+        runtime.clear_commands();
+        for (value, error) in [
+            (1, BrowserError::InvalidView),
+            (2, BrowserError::InvalidPage),
+        ] {
+            assert_eq!(runtime.mount_boundary(2, props(value)), Err(error));
+            assert_eq!(runtime.live_instances(), 1);
+            assert!(runtime.buffer.is_empty());
+        }
+        for _ in 0..1000 {
+            let id = runtime.mount_boundary(2, props(0)).unwrap();
+            runtime.clear_commands();
+            assert_eq!(runtime.dispatch(id, 1), Err(BrowserError::InvalidEvent));
+            runtime.dispose(id).unwrap();
+            runtime.clear_commands();
+            assert_eq!(runtime.live_instances(), 1);
+        }
+        runtime.dispose(base).unwrap();
+        runtime.clear_commands();
+        assert_eq!(runtime.live_instances(), 0);
+        assert_eq!(runtime.live_signals(), 0);
+        assert_eq!(runtime.next_action, 0);
     }
 }
 

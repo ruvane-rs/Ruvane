@@ -62,6 +62,12 @@ impl Component for Workspace {
             &InternalUrl::new("/tasks/settings").unwrap(),
             "Settings",
         )?;
+        view.link(
+            root,
+            3,
+            &InternalUrl::new("/tasks/project").unwrap(),
+            "Project",
+        )?;
         Ok(view)
     }
     fn dispatch(&mut self, event: u32) -> Result<(), ComponentError> {
@@ -72,7 +78,70 @@ impl Component for Workspace {
         Ok(())
     }
 }
+pub const LOADING: u32 = 15;
+pub const BOUNDARY_ERROR: u32 = 16;
+pub const PROJECT: u32 = 17;
+struct Presentation {
+    loading: bool,
+    code: u32,
+}
+impl Component for Presentation {
+    fn page_data(&mut self, data: ActionData) -> Result<(), ComponentError> {
+        if data.is_empty() {
+            Ok(())
+        } else {
+            Err(ComponentError::InvalidProps)
+        }
+    }
+    fn view(&self) -> Result<View, ComponentError> {
+        let mut view = View::new();
+        let root = view.element(0, Section)?;
+        let label = if self.loading {
+            "Loading page…"
+        } else {
+            match self.code {
+                404 => "Page not found",
+                400 => "Invalid page request",
+                500 => "Page unavailable",
+                408 => "Loading timed out",
+                _ => "Could not load this page",
+            }
+        };
+        view.leaf(root, Heading, label)?;
+        if !self.loading {
+            view.leaf(
+                root,
+                Span,
+                "You can keep using the workspace or try the request again.",
+            )?;
+            view.link(
+                root,
+                1,
+                &InternalUrl::new("/tasks").unwrap(),
+                "Back to tasks",
+            )?;
+        }
+        Ok(view)
+    }
+    fn dispatch(&mut self, _: u32) -> Result<(), ComponentError> {
+        Err(ComponentError::InvalidEvent)
+    }
+}
 pub fn create_component(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
+    if let (LOADING, InitialState::Number(0)) = (props.component(), props.state()) {
+        return Ok(Box::new(Presentation {
+            loading: true,
+            code: 0,
+        }));
+    }
+    if let (BOUNDARY_ERROR, InitialState::Number(code @ (0 | 408 | 400 | 404 | 500))) =
+        (props.component(), props.state())
+    {
+        return Ok(Box::new(Presentation {
+            loading: false,
+            code,
+        }));
+    }
     if let (WORKSPACE | CONTEXT, InitialState::Number(value)) = (props.component(), props.state()) {
         return Ok(Box::new(Workspace {
             value,
@@ -111,6 +180,22 @@ impl Component for Page {
         let mut view = View::new();
         let section = view.keyed_element(0, 1, Section)?;
         match self.kind {
+            PROJECT => {
+                view.keyed_leaf(section, 1, Heading, "Project overview")?;
+                view.keyed_leaf(section, 2, Span, "The project is ready.")?;
+                view.link(
+                    section,
+                    3,
+                    &InternalUrl::from_target("/tasks/project?delay=yes").unwrap(),
+                    "Load slowly",
+                )?;
+                view.link(
+                    section,
+                    4,
+                    &InternalUrl::from_target("/tasks/project?unavailable=yes").unwrap(),
+                    "Unavailable project",
+                )?;
+            }
             SETTINGS => {
                 view.keyed_leaf(section, 1, Heading, "Task settings")?;
                 view.keyed_leaf(
@@ -260,7 +345,7 @@ pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentErro
     }
     if !matches!(
         (props.component(), id),
-        (HOME, 0) | (SETTINGS, 0) | (DETAIL, 1..) | (ERROR, 400 | 404)
+        (HOME, 0) | (SETTINGS, 0) | (PROJECT, 0) | (DETAIL, 1..) | (ERROR, 400 | 404)
     ) {
         return Err(ComponentError::InvalidProps);
     }

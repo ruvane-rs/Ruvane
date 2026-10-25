@@ -40,7 +40,7 @@ macro_rules! export_application {
                 })
             }
 
-            // SAFETY: This module owns all twenty-one ruvane_ export names.
+            // SAFETY: This module owns all twenty-two ruvane_ export names.
             #[unsafe(no_mangle)]
             pub extern "C" fn ruvane_abi_version() -> u32 {
                 $crate::ABI_VERSION
@@ -164,6 +164,14 @@ macro_rules! export_application {
                 operation(|state| { state.validate_page_wire()?; Ok(1) })
             }
 
+            #[unsafe(no_mangle)]
+            pub extern "C" fn ruvane_boundary_mount(root: u32, component: u32, kind: u32, value: u32) -> u32 {
+                operation(|state| {
+                    let initial=$crate::InitialState::from_wire(kind,value).map_err(|_|BrowserError::InvalidProps)?;
+                    let props=$crate::ExportComponentProps::new(component,initial).map_err(|_|BrowserError::InvalidProps)?;
+                    state.mount_boundary(root,props)
+                })
+            }
             #[unsafe(no_mangle)]
             pub extern "C" fn ruvane_application_revision() -> u64 { $revision }
         }

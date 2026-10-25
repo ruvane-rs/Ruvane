@@ -148,11 +148,11 @@ code; even then, in-flight server side effects are not a transaction.
 
 ## ABI and verification
 
-Browser ABI v9 adds `ruvane_page_validate() -> u32` after normal bounded page
+Browser ABI v10 adds `ruvane_page_validate() -> u32` after normal bounded page
 staging. It checks framing, registered route/props, application seed schema,
 view/resource budgets and absence of initial actions, then drops temporary state.
 It emits no commands, consumes no view IDs and retains no instances or scopes.
-The core still forbids unsafe code and the adapter isolates 21 numeric exports.
+The core still forbids unsafe code and the adapter isolates 22 numeric exports.
 
 RVN6 adds opcode 13: view u32, node u32, boolean u8. Every initial link includes
 its prefetch eligibility; updates can toggle it while keeping the keyed node.

@@ -64,7 +64,7 @@ pub fn invalid_patch() -> Vec<u8> {
         &mut output,
         3,
         vec![
-            21, 3, 0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 0, 4, 5, 4, 5, 2, 4, 2, 6, 3,
+            22, 3, 0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 0, 4, 5, 4, 5, 2, 4, 2, 6, 3, 0,
         ],
     );
     section(&mut output, 5, vec![1, 0, 1]);
@@ -91,8 +91,9 @@ pub fn invalid_patch() -> Vec<u8> {
         "ruvane_page_mount",
         "ruvane_application_revision",
         "ruvane_page_validate",
+        "ruvane_boundary_mount",
     ];
-    let mut exports = vec![22, 6];
+    let mut exports = vec![23, 6];
     exports.extend(b"memory");
     exports.extend([2, 0]);
     for (index, name) in names.iter().enumerate() {
@@ -131,8 +132,9 @@ pub fn invalid_patch() -> Vec<u8> {
         constant(1),
         vec![0x42, 0],
         constant(1),
+        constant(1),
     ];
-    let mut code = vec![21];
+    let mut code = vec![22];
     for body in bodies {
         code.extend(leb(body.len() as u32 + 2));
         code.push(0);

@@ -1,10 +1,10 @@
 use super::*;
-use crate::{MAX_CLIENT_LAYOUT_DEPTH, NavigationCachePolicy, NavigationLayout};
+use crate::{MAX_CLIENT_LAYOUT_DEPTH, NavigationCachePolicy};
 
 /// A layout's public seed. Layouts have no document title or native form fallback.
 pub struct ClientLayoutData {
-    data: ActionData,
-    no_store: bool,
+    pub(super) data: ActionData,
+    pub(super) no_store: bool,
 }
 impl ClientLayoutData {
     /// Creates a seed checked by the layout component.
@@ -22,12 +22,13 @@ impl ClientLayoutData {
 }
 #[derive(Clone)]
 pub(in crate::app) struct ClientLayout {
-    route: PageRoute,
+    pub(super) route: PageRoute,
     parent: Option<usize>,
-    component: u32,
-    state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
-    load: LayoutLoader,
+    pub(super) component: u32,
+    pub(super) state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
+    pub(super) load: LayoutLoader,
     pub(super) cache: NavigationCachePolicy,
+    pub(super) boundary: Option<ClientBoundary>,
 }
 type LayoutLoader =
     Arc<dyn Fn(&PageContext<'_>) -> Result<ClientLayoutData, PageError> + Send + Sync>;
@@ -51,7 +52,10 @@ fn prefix(parent: &PageRoute, child: &PageRoute) -> bool {
             })
 }
 impl App {
-    fn client_layout_index(&self, name: Option<&str>) -> Result<Option<usize>, AppError> {
+    pub(super) fn client_layout_index(
+        &self,
+        name: Option<&str>,
+    ) -> Result<Option<usize>, AppError> {
         name.map(|name| {
             self.client_layouts
                 .iter()
@@ -109,6 +113,7 @@ impl App {
             state,
             load: Arc::new(load),
             cache: NavigationCachePolicy::no_store(),
+            boundary: None,
         });
         Ok(())
     }
@@ -136,7 +141,7 @@ impl App {
         self.client_layouts[index].cache = policy;
         Ok(())
     }
-    fn layout_match(
+    pub(super) fn layout_match(
         &self,
         layout: &ClientLayout,
         url: &InternalUrl,
@@ -190,6 +195,13 @@ impl App {
         Ok((matched, key))
     }
     pub(super) fn validate_layouts(&self, packet: &NavigationPage) -> bool {
+        self.validate_layout_prefix(packet, None)
+    }
+    pub(super) fn validate_layout_prefix(
+        &self,
+        packet: &NavigationPage,
+        depth: Option<usize>,
+    ) -> bool {
         let path = packet.url().as_str().split('?').next().unwrap();
         let Some(name) = self.owner(path) else {
             return false;
@@ -201,20 +213,26 @@ impl App {
             return false;
         };
         let chain = self.layout_chain(client.layout);
-        chain.len() == packet.layouts().len()
-            && chain.iter().zip(packet.layouts()).all(|(index, seed)| {
-                let layout = &self.client_layouts[*index];
-                layout.route.name() == seed.name()
-                    && self
-                        .layout_match(layout, packet.url())
-                        .is_ok_and(|(matched, key)| {
-                            key == *seed.key()
-                                && (layout.state)(&matched).is_ok_and(|state| {
-                                    ComponentProps::new(layout.component, state)
-                                        .is_ok_and(|props| props == seed.props())
-                                })
-                        })
-            })
+        let depth = depth.unwrap_or(chain.len());
+        depth <= chain.len()
+            && depth == packet.layouts().len()
+            && chain
+                .iter()
+                .take(depth)
+                .zip(packet.layouts())
+                .all(|(index, seed)| {
+                    let layout = &self.client_layouts[*index];
+                    layout.route.name() == seed.name()
+                        && self
+                            .layout_match(layout, packet.url())
+                            .is_ok_and(|(matched, key)| {
+                                key == *seed.key()
+                                    && (layout.state)(&matched).is_ok_and(|state| {
+                                        ComponentProps::new(layout.component, state)
+                                            .is_ok_and(|props| props == seed.props())
+                                    })
+                            })
+                })
     }
     pub(super) fn combine_cache(
         a: NavigationCachePolicy,
@@ -224,35 +242,6 @@ impl App {
             (Some(a), Some(b)) => NavigationCachePolicy::public(a.min(b)).unwrap(),
             _ => NavigationCachePolicy::no_store(),
         }
-    }
-    pub(super) fn load_layouts(
-        &self,
-        page: usize,
-        url: &InternalUrl,
-        context: &PageContext<'_>,
-    ) -> Result<(Vec<NavigationLayout>, NavigationCachePolicy), PageError> {
-        let mut seeds = Vec::new();
-        let mut cache = NavigationCachePolicy::public(300).unwrap();
-        for index in self.layout_chain(self.pages[page].client.unwrap().layout) {
-            let layout = &self.client_layouts[index];
-            let (matched, key) = self.layout_match(layout, url)?;
-            let props = ComponentProps::new(layout.component, (layout.state)(&matched)?)
-                .map_err(|_| PageError::BadRequest)?;
-            let data = (layout.load)(context)?;
-            cache = Self::combine_cache(
-                cache,
-                if data.no_store {
-                    NavigationCachePolicy::no_store()
-                } else {
-                    layout.cache
-                },
-            );
-            seeds.push(
-                NavigationLayout::new(layout.route.name(), key, props, data.data)
-                    .map_err(|_| PageError::InternalServerError)?,
-            );
-        }
-        Ok((seeds, cache))
     }
     pub(super) fn layout_html(name: &str, own: Html, child: Html) -> Html {
         // Names are validated ASCII identifiers.

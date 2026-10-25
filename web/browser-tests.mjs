@@ -24,7 +24,7 @@ const load = () => createRuntime("/assets/app.wasm");
 await test("real Wasm ABI, props, invalid events and stale handles", async () => {
   const { instance } = await WebAssembly.instantiate(await (await fetch("/assets/app.wasm")).arrayBuffer(), {});
   const e = validateExports(instance.exports);
-  equal(e.ruvane_abi_version(), 9, "ABI");
+  equal(e.ruvane_abi_version(), 10, "ABI");
   equal(e.ruvane_mount(0, 1, 1, 0), 0, "invalid root");
   equal(e.ruvane_last_error(), 1, "root error");
   equal(e.ruvane_mount(1, 2, 2, 2), 0, "invalid boolean");

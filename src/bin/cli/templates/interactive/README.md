@@ -18,6 +18,13 @@ workspace and recreates the context. Leaving tasks releases both layouts.
 Declare these branches with `client_layout` and `client_page_layout` in pages.rs.
 Every layout and page must opt in before the complete branch can be cached.
 
+The project page demonstrates local loading and errors. Open `/tasks/project`,
+then its slow/unavailable variants. Parent counters stay usable while a GET is
+pending. Configure presentation with `ClientBoundary`, `client_page_boundary`
+and `client_layout_boundary`; the navigator owns the explicit GET retry button.
+`?native=yes` keeps real error statuses and renders the validated parents with
+scripts blocked. Error packets and transport feedback are never cached.
+
 `ruvane build --offline` creates a versioned server bundle under `dist/`.
 Run the printed executable with `--port 3000`. The executable embeds its matching
 Wasm, browser modules and stylesheet. The copied resources and manifest are useful

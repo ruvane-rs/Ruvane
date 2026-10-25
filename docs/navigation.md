@@ -122,14 +122,17 @@ to `idle`. `current()` exposes the current component controller, or null.
 `stats()` reports navigator state, pending status, current target and listener
 count. Only one navigator can own a window at a time.
 
-## RVP1 wire format and limits
+## Navigation wire format and limits
+
+RVP2 layout branches and RVP3 typed error scopes extend the leaf format below.
+See [client layouts](client-layouts.md) and [segment boundaries](segment-boundaries.md).
 
 All integers are little-endian. A complete packet contains:
 
 | Field | Encoding |
 | --- | --- |
 | Magic | Four bytes `RVP1` |
-| Actual status | u16, 200/400/404 |
+| Actual status | u16, 200/400/404/500; App validates the registered error scope |
 | Exact internal target | u32 byte length, encoded ASCII path and optional query |
 | Plain title | u32 byte length, strict UTF-8 |
 | Component props | component u32, state kind u32, value u32 |
@@ -149,7 +152,7 @@ page cache and two bounded speculative requests; no-store remains the default.
 At most two page owners overlap during preparation, within the runtime's
 16-view budget; reserve space for the prepared page alongside layout islands.
 
-Browser ABI v9 provides `ruvane_page_begin`, `ruvane_page_chunk`,
+Browser ABI v10 provides `ruvane_page_begin`, `ruvane_page_chunk`,
 `ruvane_page_mount` and `ruvane_page_validate`. Input arrives in exact-length
 chunks of 1..=4 bytes, without input pointers or imports. Error 11 means an invalid
 page/route/seed. RVN6 carries link tag 15, opcode 12 (node u32, target length u32,

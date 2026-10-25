@@ -1,4 +1,4 @@
-//! Shared client routes and bounded RVP1 page descriptions.
+//! Shared client routes and bounded typed page descriptions.
 use crate::{
     ActionData, ActionReply, ComponentProps, Html, InitialState, InternalUrl, PageRoute, Query,
     StatusCode,
@@ -252,9 +252,10 @@ pub struct NavigationPage {
     status: StatusCode,
     layouts: Vec<NavigationLayout>,
     selected: usize,
+    failed: Option<usize>,
 }
 impl NavigationPage {
-    /// Constructs a bounded page. Supported statuses are 200, 400 and 404.
+    /// Constructs a bounded page. Supported statuses are 200, 400, 404 and 500.
     pub fn new(
         url: InternalUrl,
         title: &str,
@@ -264,7 +265,10 @@ impl NavigationPage {
     ) -> Result<Self, NavigationError> {
         if !matches!(
             status,
-            StatusCode::Ok | StatusCode::BadRequest | StatusCode::NotFound
+            StatusCode::Ok
+                | StatusCode::BadRequest
+                | StatusCode::NotFound
+                | StatusCode::InternalServerError
         ) || title.trim().is_empty()
             || title.len() > 1024
             || title.chars().any(char::is_control)
@@ -279,6 +283,7 @@ impl NavigationPage {
             status,
             layouts: Vec::new(),
             selected: 0,
+            failed: None,
         };
         if page.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
             return Err(NavigationError::Limit);
@@ -298,12 +303,44 @@ impl NavigationPage {
                 return Err(NavigationError::InvalidData);
             }
         }
+        self.failed = None;
         self.layouts = layouts;
         self.selected = 0;
         if self.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
             return Err(NavigationError::Limit);
         }
         Ok(self)
+    }
+    /// Attaches a failed segment and the validated parents retained by its boundary.
+    /// Segment indices are root-first; the page follows its last layout.
+    pub fn with_failure(
+        mut self,
+        failed: usize,
+        layouts: Vec<NavigationLayout>,
+    ) -> Result<Self, NavigationError> {
+        if self.status == StatusCode::Ok
+            || failed > MAX_CLIENT_LAYOUT_DEPTH
+            || layouts.len() > failed
+            || !self.data.is_empty()
+        {
+            return Err(NavigationError::InvalidData);
+        }
+        for (index, layout) in layouts.iter().enumerate() {
+            if layouts[..index].iter().any(|old| old.name == layout.name) {
+                return Err(NavigationError::InvalidData);
+            }
+        }
+        self.layouts = layouts;
+        self.failed = Some(failed);
+        self.selected = 0;
+        if self.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
+            return Err(NavigationError::Limit);
+        }
+        Ok(self)
+    }
+    /// Failed root-first segment, or None for an ordinary page.
+    pub fn failed_segment(&self) -> Option<usize> {
+        self.failed
     }
     /// Root-first persistent layout descriptors.
     pub fn layouts(&self) -> &[NavigationLayout] {
@@ -351,7 +388,9 @@ impl NavigationPage {
         self.status
     }
     fn encode_unchecked(&self) -> Vec<u8> {
-        let mut bytes = if self.layouts.is_empty() {
+        let mut bytes = if let Some(failed) = self.failed {
+            vec![82, 86, 80, 51, self.selected as u8, failed as u8]
+        } else if self.layouts.is_empty() {
             b"RVP1".to_vec()
         } else {
             let mut bytes = b"RVP2".to_vec();
@@ -370,7 +409,7 @@ impl NavigationPage {
         let seed = ActionReply::success(self.data.clone()).encode();
         bytes.extend_from_slice(&(seed.len() as u32).to_le_bytes());
         bytes.extend(seed);
-        if !self.layouts.is_empty() {
+        if self.failed.is_some() || !self.layouts.is_empty() {
             bytes.push(self.layouts.len() as u8);
             for layout in &self.layouts {
                 for text in [layout.name.as_str(), layout.key.as_str()] {
@@ -388,7 +427,7 @@ impl NavigationPage {
         }
         bytes
     }
-    /// Encodes RVP1 for a leaf page, or RVP2 for a layout branch.
+    /// Encodes a leaf page (RVP1), layout branch (RVP2) or scoped error (RVP3).
     pub fn encode(&self) -> Vec<u8> {
         self.encode_unchecked()
     }
@@ -427,18 +466,24 @@ impl NavigationPage {
         }
         let mut reader = Reader { bytes, pos: 0 };
         let version = reader.take(4)?;
-        if version != b"RVP1" && version != b"RVP2" {
+        if version != b"RVP1" && version != b"RVP2" && version != b"RVP3" {
             return Err(NavigationError::InvalidData);
         }
-        let selected = if version == b"RVP2" {
+        let selected = if version != b"RVP1" {
             reader.take(1)?[0] as usize
         } else {
             0
+        };
+        let failed = if version == b"RVP3" {
+            Some(reader.take(1)?[0] as usize)
+        } else {
+            None
         };
         let status = match u16::from_le_bytes(reader.take(2)?.try_into().unwrap()) {
             200 => StatusCode::Ok,
             400 => StatusCode::BadRequest,
             404 => StatusCode::NotFound,
+            500 => StatusCode::InternalServerError,
             _ => return Err(NavigationError::InvalidData),
         };
         let url = InternalUrl::from_target(reader.text(crate::MAX_INTERNAL_URL_BYTES)?)
@@ -456,9 +501,9 @@ impl NavigationPage {
             return Err(NavigationError::InvalidData);
         }
         let mut layouts = Vec::new();
-        if version == b"RVP2" {
+        if version != b"RVP1" {
             let count = reader.take(1)?[0] as usize;
-            if count == 0 || count > MAX_CLIENT_LAYOUT_DEPTH {
+            if (count == 0 && version == b"RVP2") || count > MAX_CLIENT_LAYOUT_DEPTH {
                 return Err(NavigationError::Limit);
             }
             for _ in 0..count {
@@ -487,9 +532,13 @@ impl NavigationPage {
         if reader.pos != bytes.len() {
             return Err(NavigationError::InvalidData);
         }
-        Self::new(url, title, props, seed.data().clone(), status)?
-            .with_layouts(layouts)?
-            .select_segment(selected)
+        let page = Self::new(url, title, props, seed.data().clone(), status)?;
+        let page = if let Some(failed) = failed {
+            page.with_failure(failed, layouts)?
+        } else {
+            page.with_layouts(layouts)?
+        };
+        page.select_segment(selected)
     }
 }
 

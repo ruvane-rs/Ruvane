@@ -1,5 +1,18 @@
 # Security
 
+Alpha.22 adds local loading and typed error scopes. Read-only presentation mounts
+accept an empty seed and reject event bindings and initial actions. The public
+route manifest is bounded presentation metadata; it grants no access and cannot
+authorize parent reuse. Retained parents in RVP3 error responses must pass the
+shared declaration/key/props checks and every component schema. Only validated
+ancestors of a failed segment can be retained. Unwinding native callback panics
+produce generic 500 responses; Wasm traps still require document recovery.
+Errors remain no-store. Retry sends only an explicit fresh GET, never repeats
+POST actions and never resets the uncertain-mutation latch. Old requests cannot
+restore feedback after cancellation, mutation or disposal. See
+[segment boundaries](docs/segment-boundaries.md).
+
+
 Alpha.21 adds bounded client layout branches. The shared App validator checks the
 complete chain, canonical prefix keys and resolved props before the runtime
 checks every component seed, view and resource budget. HTTP packets select only
@@ -42,8 +55,8 @@ seeds and views before serving them, and refuses initial queued actions. Explici
 native forms retain the existing Origin, Host, framing and field checks.
 
 The server embeds one prepared module and serves resources under its build
-revision. Before hydration the bridge checks ABI v9 and the exact u64 revision.
-The export macro isolates twenty-one numeric exports, accepts no input pointers and
+revision. Before hydration the bridge checks ABI v10 and the exact u64 revision.
+The export macro isolates twenty-two numeric exports, accepts no input pointers and
 provides no host imports; only the reviewed no_mangle attributes allow unsafe
 code annotations. The core continues to forbid unsafe code.
 
@@ -96,7 +109,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v9/RVN6 isolate twenty-one reviewed numeric exports. The reply
+Browser ABI v10/RVN6 isolate twenty-two reviewed numeric exports. The reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts
