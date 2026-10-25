@@ -45,6 +45,8 @@ The initial App document now [hydrates from its embedded server snapshot](docs/i
 reusing page and layout nodes without another page GET.
 Opted-in pages can also [stream their initial App document](docs/document-streaming.md):
 the shell and layouts arrive first, followed by the leaf and final snapshot.
+Pages can also opt into [early layout hydration](docs/layout-hydration.md):
+local layout events work while the leaf loads, and final activation keeps their state.
 
 Create an interactive project from a local checkout:
 

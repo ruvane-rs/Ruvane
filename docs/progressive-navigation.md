@@ -139,7 +139,8 @@ refresh, view-budget exhaustion and 100 success/error cycles. Run it separately 
 harnesses. The stall fixture holds already received bytes to test client
 ownership deterministically; the native test separately gates server computation.
 
-[Initial App document streaming](document-streaming.md) is available separately.
+[Initial App document streaming](document-streaming.md) and opt-in
+[early layout hydration](layout-hydration.md) are available separately.
 Parallel loading, general
 asynchronous loaders, out-of-order replacement and public deployment remain
 separate work. The server retains its loopback development profile.

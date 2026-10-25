@@ -1,6 +1,8 @@
 use super::*;
 use crate::streaming::{BodyStream, ByteProducer};
-use crate::{NavigationLayout, NavigationSnapshot, StreamContext, StreamError, StreamLimits};
+use crate::{
+    LayoutSnapshot, NavigationLayout, NavigationSnapshot, StreamContext, StreamError, StreamLimits,
+};
 
 /// Resolves a document head and request errors before any HTML is sent.
 pub type ClientDocumentHead = fn(&PageContext<'_>) -> Result<ClientDocument, PageError>;
@@ -12,6 +14,7 @@ pub struct ClientDocument {
     language: String,
     metadata: Metadata,
     limits: StreamLimits,
+    hydrate_layouts: bool,
 }
 impl ClientDocument {
     /// Creates a fixed head with English language and the default stream budgets.
@@ -21,6 +24,7 @@ impl ClientDocument {
             language: "en".into(),
             metadata: Metadata::new(),
             limits: StreamLimits::default(),
+            hydrate_layouts: false,
         }
     }
     /// Sets the escaped document language.
@@ -31,6 +35,12 @@ impl ClientDocument {
     /// Sets typed metadata before the headers are committed.
     pub fn metadata(mut self, metadata: Metadata) -> Self {
         self.metadata = metadata;
+        self
+    }
+    /// Activates each validated layout while the initial document is still loading.
+    /// Server actions stay blocked until the complete page branch commits.
+    pub fn hydrate_layouts(mut self, enabled: bool) -> Self {
+        self.hydrate_layouts = enabled;
         self
     }
     /// Replaces the budgets, additionally constrained by the server configuration.
@@ -105,8 +115,31 @@ impl App {
                 return Err(PageError::InternalServerError);
             }
             let (before, after) = shell.split_once(SLOT).unwrap();
+            let script =
+                crate::module_script(&InternalUrl::new(&runtime.asset("application.mjs")).unwrap());
+            let (profile, early, bootstrap) = if head.hydrate_layouts {
+                (
+                    "segments",
+                    format!(
+                        "<script type=\"module\" async src=\"{}\"></script>",
+                        runtime.asset("application.mjs"),
+                    ),
+                    String::new(),
+                )
+            } else {
+                ("stream", String::new(), script.into_string())
+            };
+            let attributes = if head.hydrate_layouts {
+                format!(
+                    " data-ruvane-layouts=\"{}\" data-ruvane-timeout=\"{}\"",
+                    inputs.len(),
+                    head.limits.duration.as_millis()
+                )
+            } else {
+                String::new()
+            };
             let body = format!(
-                "<div id=\"ruvane-application\" data-ruvane-module=\"{}\" data-ruvane-revision=\"{}\" data-ruvane-document=\"stream\">{}<p id=\"ruvane-status\">Native links and forms are ready.</p><div id=\"ruvane-outlet\">",
+                "<div id=\"ruvane-application\" data-ruvane-module=\"{}\" data-ruvane-revision=\"{}\" data-ruvane-document=\"{profile}\"{attributes}>{early}{}<p id=\"ruvane-status\">Native links and forms are ready.</p><div id=\"ruvane-outlet\">",
                 runtime.asset("app.wasm"),
                 runtime.revision,
                 before,
@@ -118,11 +151,9 @@ impl App {
                 document = document.stylesheet(stylesheet.clone());
             }
             let prefix = document.stream_prefix().into_string().into_bytes();
-            let script =
-                crate::module_script(&InternalUrl::new(&runtime.asset("application.mjs")).unwrap());
             let suffix = format!(
                 "<div hidden id=\"ruvane-complete\"></div></div>{}</body></html>",
-                script.as_str(),
+                bootstrap,
             )
             .into_bytes();
             let tail = format!("{after}{}", self.boundary_manifest().as_str());
@@ -147,6 +178,8 @@ impl App {
                     pending: Vec::new(),
                     offset: 0,
                     done: false,
+                    hydrate_layouts: head.hydrate_layouts,
+                    opened: 0,
                 }) as Box<dyn ByteProducer>)
             });
             // Reject a head which cannot fit before executing any deferred loader.
@@ -174,6 +207,8 @@ struct DocumentProducer {
     pending: Vec<u8>,
     offset: usize,
     done: bool,
+    hydrate_layouts: bool,
+    opened: usize,
 }
 impl DocumentProducer {
     fn pull(&mut self, stream: &StreamContext) -> Result<Vec<u8>, PageError> {
@@ -196,7 +231,7 @@ impl DocumentProducer {
                 NavigationLayout::new(layout.route.name(), input.key.clone(), input.props, data)
                     .map_err(|_| PageError::InternalServerError)?;
             self.seeds.push(seed);
-            NavigationPage::new(
+            let prefix = NavigationPage::new(
                 self.url.clone(),
                 &self.title,
                 self.props,
@@ -205,9 +240,20 @@ impl DocumentProducer {
             )
             .and_then(|p| p.with_pending_layouts(self.inputs.len(), self.seeds.clone()))
             .map_err(|_| PageError::InternalServerError)?;
+            let record = if self.hydrate_layouts {
+                if !self.app.validate_navigation(&prefix) {
+                    return Err(PageError::InternalServerError);
+                }
+                LayoutSnapshot::new(self.app.client_runtime.as_ref().unwrap().revision, prefix)
+                    .map_err(|_| PageError::InternalServerError)?
+                    .html()
+            } else {
+                Html::default()
+            };
+            self.opened += 1;
             Ok(format!(
-                "<section data-ruvane-layout=\"{}\"><div data-ruvane-layout-view=\"\">{}</div><div data-ruvane-child-outlet=\"\">",
-                layout.route.name(), own.as_str(),
+                "<section data-ruvane-layout=\"{}\"><div data-ruvane-layout-view=\"\">{}{}</div><div data-ruvane-child-outlet=\"\">",
+                layout.route.name(), own.as_str(), record.as_str(),
             ).into_bytes())
         } else {
             let page = (self.app.pages[self.index].render)(&context)?;
@@ -253,8 +299,17 @@ impl ByteProducer for DocumentProducer {
             }
             self.pending.clear();
             self.offset = 0;
-            self.pending =
-                App::guarded(|| self.pull(context)).map_err(|_| StreamError::Producer)?;
+            self.pending = match App::guarded(|| self.pull(context)) {
+                Ok(bytes) => bytes,
+                Err(_) if self.hydrate_layouts => {
+                    self.done = true;
+                    format!(
+                        "<p data-ruvane-stream-error=\"\" role=\"alert\">This page could not be loaded. Native links remain available.</p>{}<div id=\"ruvane-fallback\"></div></div>{}",
+                        LAYOUT_END.repeat(self.opened), self.tail,
+                    ).into_bytes()
+                }
+                Err(_) => return Err(StreamError::Producer),
+            };
             if self.pending.len() > self.limits.body_bytes {
                 return Err(StreamError::Limit);
             }

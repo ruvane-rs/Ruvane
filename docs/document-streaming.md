@@ -3,7 +3,10 @@
 Alpha.26 can send an App shell and root-first layout HTML before its leaf loader
 finishes. This is an explicit option per page. The final public RVI1 snapshot
 activates the existing DOM without another page GET. Hydration starts after the
-document has been parsed; segments do not become interactive as they arrive.
+document has been parsed by default. Alpha.27 adds an explicit
+[early layout hydration](layout-hydration.md) option. The default stream profile
+described below keeps activation after parsing; the early-layout profile also
+has explicit abort HTML for caught application errors.
 
 ```rust,ignore
 use ruvane::{ClientDocument, PageContext, PageError};

@@ -1,4 +1,4 @@
-import { decodePage, decodeNavigationSnapshot, internalTarget, NAVIGATION_MEDIA_TYPE, NAVIGATION_STREAM_MEDIA_TYPE } from "./bridge.mjs";
+import { decodePage, decodeNavigationSnapshot, decodeLayoutSnapshot, internalTarget, NAVIGATION_MEDIA_TYPE, NAVIGATION_STREAM_MEDIA_TYPE } from "./bridge.mjs";
 
 export const CACHE_LIMITS = Object.freeze({ entries: 32, bytes: 2097152, prefetches: 2, jobs: 32, ttlMs: 300000 });
 const OWNERS = new WeakSet(), KEY = "__ruvane_navigation_v1";
@@ -131,13 +131,13 @@ export function readBoundaries(root){
 
 /** Reads only the document's inert, bounded RVI1 metadata. No loader is called. */
 export function readInitialSnapshot(root){
-  if(!(root instanceof HTMLElement)||root.ownerDocument!==document)throw failure();
+  if(!(root instanceof HTMLElement)||root.ownerDocument!==document||root.querySelector("[data-ruvane-stream-error]"))throw failure();
   const items=root.querySelectorAll("#ruvane-initial"),node=items[0];
   if(items.length!==1||document.querySelectorAll("#ruvane-initial").length!==1||node.parentNode!==root||node.localName!=="div"||node.attributes.length!==2||!node.hasAttribute("hidden")||node.childNodes.length!==1||node.firstChild.nodeType!==3)throw failure();
   const profile=root.getAttribute("data-ruvane-document");
   if(profile!==null){
     const markers=root.querySelectorAll("#ruvane-complete"),end=markers[0];
-    if(profile!=="stream"||document.readyState==="loading"||markers.length!==1||document.querySelectorAll("#ruvane-complete").length!==1||end.parentNode!==root||end!==root.lastElementChild||node.nextElementSibling!==end||end.localName!=="div"||end.attributes.length!==2||!end.hasAttribute("hidden")||end.childNodes.length!==0)throw failure();
+    if(!["stream","segments"].includes(profile)||document.readyState==="loading"||markers.length!==1||document.querySelectorAll("#ruvane-complete").length!==1||end.parentNode!==root||end!==root.lastElementChild||node.nextElementSibling!==end||end.localName!=="div"||end.attributes.length!==2||!end.hasAttribute("hidden")||end.childNodes.length!==0)throw failure();
   }
   const text=node.textContent;
   if(text.length>131104||text.length%2||!/^[0-9a-f]+$/.test(text))throw failure();
@@ -145,6 +145,74 @@ export function readInitialSnapshot(root){
   const snapshot=decodeNavigationSnapshot(bytes);
   if(snapshot.revision!==root.getAttribute("data-ruvane-revision")||snapshot.page.url!==target())throw failure();
   return bytes;
+}
+
+const DOCUMENT_OWNERS=new WeakSet();
+/** Reads one complete inert RVH1 record; the ready child is emitted after its bytes. */
+export function readLayoutSnapshot(root,node){
+  if(!(root instanceof HTMLElement)||root.ownerDocument!==document||root.getAttribute("data-ruvane-document")!=="segments"||!(node instanceof HTMLElement)||!root.contains(node))throw failure();
+  const ready=node.lastChild;
+  if(node.localName!=="div"||node.attributes.length!==2||!node.hasAttribute("hidden")||node.getAttribute("data-ruvane-segment")!==""||node.childNodes.length!==2||node.firstChild.nodeType!==3||ready.localName!=="br"||ready.attributes.length!==1||ready.getAttribute("data-ruvane-ready")!==""||ready.childNodes.length)throw failure();
+  const text=node.firstChild.data;
+  if(text.length>131104||text.length%2||!/^[0-9a-f]+$/.test(text))throw failure();
+  const bytes=new Uint8Array(text.length/2);for(let n=0;n<bytes.length;n++)bytes[n]=parseInt(text.slice(n*2,n*2+2),16);
+  const snapshot=decodeLayoutSnapshot(bytes);
+  if(snapshot.revision!==root.getAttribute("data-ruvane-revision")||snapshot.page.url!==target())throw failure();
+  return snapshot;
+}
+/** Owns early layout hydration until the complete branch adopts it or startup retires. */
+export function createDocumentHydration(runtime,root,{timeoutMs}={}){
+  if(!(root instanceof HTMLElement)||root.ownerDocument!==document||root.getAttribute("data-ruvane-document")!=="segments"||DOCUMENT_OWNERS.has(root)||typeof runtime?.hydrateLayout!=="function"||typeof runtime?.retireLayout!=="function")throw failure();
+  const raw=root.getAttribute("data-ruvane-layouts"),rawTime=root.getAttribute("data-ruvane-timeout");
+  if(!/^[0-6]$/.test(raw??"")||! /^[1-9][0-9]{0,4}$/.test(rawTime??"")||Number(rawTime)>60000)throw failure();
+  const expected=Number(raw),budget=timeoutMs??Number(rawTime);
+  if(!Number.isFinite(budget)||budget<1||budget>Number(rawTime)||runtime.applicationRevision!==root.getAttribute("data-ruvane-revision"))throw failure();
+  const url=target(),moduleURL=root.getAttribute("data-ruvane-module"),rows=[];let state="waiting",queued=false,title=null,resolve,reject;
+  const ready=new Promise((yes,no)=>{resolve=yes;reject=no;});
+  DOCUMENT_OWNERS.add(root);
+  const observer=new MutationObserver(schedule),timer=setTimeout(()=>retire(),budget);
+  function cleanup(final=false){observer.disconnect();clearTimeout(timer);document.removeEventListener("readystatechange",schedule);if(final){window.removeEventListener("pagehide",leave);window.removeEventListener("popstate",leave);DOCUMENT_OWNERS.delete(root);}}
+  function leave(){retire();}
+  function retire(){
+    if(state==="retired"||state==="committed")return false;state="retired";cleanup(true);
+    for(const row of rows.reverse())try{runtime.retireLayout(row.controller);}catch{ /* Runtime failure owns any remaining handles. */ }
+    rows.length=0;const status=root.querySelector("#ruvane-status");if(status)status.textContent="Interactive mode is unavailable. Native links and forms are ready.";
+    reject(failure());return true;
+  }
+  function shape(){
+    if(root.querySelector("[data-ruvane-stream-error]")||!root.isConnected||document.querySelectorAll("#ruvane-application").length!==1||document.getElementById("ruvane-application")!==root||root.getAttribute("data-ruvane-document")!=="segments"||root.getAttribute("data-ruvane-layouts")!==raw||root.getAttribute("data-ruvane-timeout")!==rawTime||root.getAttribute("data-ruvane-revision")!==runtime.applicationRevision||root.getAttribute("data-ruvane-module")!==moduleURL||target()!==url||runtime.actionState().state!=="active"||runtime.actionState().pending||runtime.actionState().uncertain)throw failure();
+    const outlet=root.querySelector("#ruvane-outlet"),status=root.querySelector("#ruvane-status");
+    if(root.querySelectorAll("#ruvane-outlet").length>1||root.querySelectorAll("#ruvane-status").length>1)throw failure();
+    return{outlet,status};
+  }
+  function pump(){
+    queued=false;if(state==="ready"){try{shape();}catch{retire();}return;}if(state!=="waiting")return;
+    try{
+      const {outlet,status}=shape();
+      if(!outlet||!status){if(document.readyState!=="loading")throw failure();return;}
+      let added=false;
+      for(const node of root.querySelectorAll("[data-ruvane-segment]")){
+        if(rows.length>=expected)throw failure();
+        const own=node.parentElement,host=own?.parentElement,slot=rows.at(-1)?.outlet??outlet,child=host?.lastChild;
+        if(!node.querySelector("[data-ruvane-ready]")||host?.childNodes.length===1){if(document.readyState!=="loading")throw failure();break;}
+        const snapshot=readLayoutSnapshot(root,node),page=snapshot.page,descriptor=page.layouts.at(-1);
+        if(page.pending!==expected||page.layouts.length!==rows.length+1||title!==null&&title!==page.title||!page.layouts.slice(0,-1).every((item,n)=>sameDescriptor(item,rows[n].descriptor)))throw failure();
+        if(slot.firstChild!==host||host.localName!=="section"||host.attributes.length!==1||host.getAttribute("data-ruvane-layout")!==descriptor.name||host.childNodes.length!==2||host.firstChild!==own||own.localName!=="div"||own.attributes.length!==1||!own.hasAttribute("data-ruvane-layout-view")||own.childNodes.length!==2||own.lastChild!==node||child.localName!=="div"||child.attributes.length!==1||!child.hasAttribute("data-ruvane-child-outlet"))throw failure();
+        title=page.title;node.remove();
+        const controller=runtime.hydrateLayout(own.firstChild,snapshot.bytes,rows.length+1);rows.push({descriptor,host,own,outlet:child,controller});added=true;
+      }
+      if(added)status.textContent="Layouts ready. Loading page…";
+      if(document.readyState!=="loading"){
+        const snapshot=readInitialSnapshot(root),page=decodeNavigationSnapshot(snapshot).page;
+        if(rows.length!==expected||page.layouts.length!==expected||title!==null&&title!==page.title||!page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor))||root.querySelector("[data-ruvane-segment]"))throw failure();
+        runtime.validatePage(decodeNavigationSnapshot(snapshot).bytes);
+        state="ready";resolve(Object.freeze({snapshot,parents:Object.freeze(rows.map(row=>row.controller))}));
+      }
+    }catch{retire();}
+  }
+  function schedule(){if(!["waiting","ready"].includes(state)||queued)return;queued=true;queueMicrotask(pump);}
+  observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true});document.addEventListener("readystatechange",schedule);window.addEventListener("pagehide",leave,{once:true});window.addEventListener("popstate",leave);schedule();
+  return Object.freeze({ready,retire,commit(){if(state!=="ready")throw failure();state="committed";cleanup(true);rows.length=0;}});
 }
 
 /** Keeps page data in a bounded cache; live views belong to the runtime. */
@@ -394,6 +462,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     const attempt=lastFailure;invalidate(attempt.url);return run(attempt.url,attempt.mode,attempt.point,attempt.accept,true,false);
   }
   function initialDOM(page){
+    if(!outlet.isConnected||!scope.contains(outlet))throw failure();
     const fallback=outlet.lastChild,layouts=[],roots=[];
     if(outlet.childNodes.length!==2||fallback.nodeType!==1||fallback.localName!=="div"||fallback.id!=="ruvane-fallback"||fallback.attributes.length!==1||outlet.querySelectorAll("#ruvane-fallback").length!==1)throw failure();
     let slot=outlet;
@@ -406,7 +475,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     if(slot.childNodes.length!==(slot===outlet?2:1)||host?.nodeType!==1||host.localName!=="div"||host.attributes.length!==2||!host.hasAttribute("data-ruvane-page")||host.getAttribute("tabindex")!=="-1"||host.childNodes.length!==1)throw failure();
     roots.push(host.firstChild);return{layouts,roots,host,fallback};
   }
-  function initialize(snapshotBytes,accept){
+  function initialize(snapshotBytes,accept,parents=[]){
     let transaction=null;
     try{
       const {revision,bytes,page}=decodeNavigationSnapshot(snapshotBytes),epoch=runtime.actionState().epoch;
@@ -414,12 +483,12 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
       runtime.validatePage(bytes);
       if(accept&&!accept()){status.textContent="Native forms are ready.";return "native";}
       if(disposed||pending||started)throw failure();
-      const server=initialDOM(page);transaction=runtime.preparePageHydration(server.roots,bytes);
+      const server=initialDOM(page);transaction=runtime.preparePageHydration(server.roots,bytes,parents);
       const controllers=transaction.activate(),after=initialDOM(page);
       if(after.host!==server.host||after.fallback!==server.fallback||!after.roots.every((root,n)=>root===server.roots[n])||page.url!==target()||runtime.actionState().epoch!==epoch||accept&&!accept()||disposed||pending||started)throw failure();
       history.replaceState({...stateObject(history.state),[KEY]:entry(target()+location.hash,scrollX,scrollY)},"",location.href);
       if(disposed||pending||started||page.url!==target())throw failure();
-      server.fallback.remove();transaction.commit();transaction=null;
+      transaction.commit();transaction=null;server.fallback.remove();
       branch=server.layouts.map((item,n)=>({...item,controller:controllers[n]}));current=controllers.at(-1);pageHost=server.host;activeURL=page.url;started=true;history.scrollRestoration="manual";
       status.textContent=page.status===200?"Ready.":`Page ${page.status}.`;
       if(page.failed!==null){lastFailure={url:page.url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(page.url,"error",false);}
@@ -430,7 +499,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   }
   scope.addEventListener("click",click); scope.addEventListener("pointerover",intend); scope.addEventListener("focusin",intend); window.addEventListener("popstate",pop); window.addEventListener("scroll",scroll,{passive:true});
   return Object.freeze({
-    start({accept,snapshot}={}) { if (started || pending || disposed || accept !== undefined && typeof accept !== "function") throw failure(); if(snapshot!==undefined){idle=Promise.resolve(initialize(snapshot,accept));return idle;} return run(target(),"start",{x:scrollX,y:scrollY},accept); },
+    start({accept,snapshot,parents=[]}={}) { if (started || pending || disposed || accept !== undefined && typeof accept !== "function" || !Array.isArray(parents) || parents.length>6 || snapshot===undefined&&parents.length) throw failure(); if(snapshot!==undefined){idle=Promise.resolve(initialize(snapshot,accept,parents));return idle;} return run(target(),"start",{x:scrollX,y:scrollY},accept); },
     navigate(url,{replace=false}={}) { return run(url,replace ? "replace" : "push"); },
     prefetch,
     retry,

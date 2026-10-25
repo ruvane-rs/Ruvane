@@ -66,6 +66,7 @@ fn head(ctx: &PageContext<'_>) -> Result<ClientDocument, PageError> {
         _ => {}
     }
     Ok(ClientDocument::new("Report <&🦀")
+        .hydrate_layouts(q.get("hydrate") == Some("yes"))
         .language("en\"<")
         .limits(limits)
         .unwrap())
@@ -527,4 +528,102 @@ fn typed_metadata_is_present_and_escaped_in_the_initial_head() {
             && !prefix.contains("<script>")
     );
     assert!(chunks(&mut reader).1);
+}
+
+fn layout_snapshot(body: &str) -> LayoutSnapshot {
+    let hex = body
+        .split("<div hidden data-ruvane-segment=\"\">")
+        .nth(1)
+        .unwrap()
+        .split("<br")
+        .next()
+        .unwrap();
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|n| u8::from_str_radix(&hex[n..n + 2], 16).unwrap())
+        .collect::<Vec<_>>();
+    LayoutSnapshot::decode(&bytes).unwrap()
+}
+#[test]
+fn hydration_records_arrive_root_first_with_an_early_external_bootstrap() {
+    let (app, loads, gate) = fixture();
+    let server = Running::new(&app, ServerConfig::default());
+    let mut reader = server.connect("GET", "/work/page?hydrate=yes&pause=yes", "text/html");
+    let h = headers(&mut reader);
+    assert!(
+        h.contains(INTERACTIVE_CONTENT_SECURITY_POLICY) && h.contains("Cache-Control: no-store")
+    );
+    let prefix = String::from_utf8(chunk(&mut reader).unwrap()).unwrap();
+    assert!(
+        prefix.contains("data-ruvane-document=\"segments\"")
+            && prefix.contains("data-ruvane-layouts=\"2\"")
+            && prefix.contains("<script type=\"module\" async src=")
+    );
+    let root = String::from_utf8(chunk(&mut reader).unwrap()).unwrap();
+    let inner = String::from_utf8(chunk(&mut reader).unwrap()).unwrap();
+    for (index, record) in [&root, &inner].iter().enumerate() {
+        let record = layout_snapshot(record);
+        assert_eq!(record.revision(), 42);
+        assert_eq!(record.page().layouts().len(), index + 1);
+        assert_eq!(record.page().pending_layouts(), Some(2));
+        assert_eq!(
+            record.page().url().as_str(),
+            "/work/page?hydrate=yes&pause=yes"
+        );
+    }
+    assert!(!inner.contains("ruvane-initial") && !inner.contains("ruvane-complete"));
+    gate.store(true, Ordering::Release);
+    let (rest, complete) = chunks(&mut reader);
+    assert!(complete);
+    let rest = String::from_utf8(rest).unwrap();
+    assert!(!rest.contains("application.mjs"));
+    assert!(rest.contains("ruvane-complete"));
+    assert_eq!(snapshot(&rest).page().layouts().len(), 2);
+    assert_eq!(loads.load(Ordering::SeqCst), 3);
+}
+#[test]
+fn early_hydration_head_stays_lazy_and_native_rendering_stays_buffered() {
+    let (app, loads, _) = fixture();
+    let server = Running::new(&app, ServerConfig::default());
+    let mut reader = server.connect("HEAD", "/work/page?hydrate=yes", "text/html");
+    assert!(headers(&mut reader).contains("chunked"));
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).unwrap();
+    assert!(bytes.is_empty());
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+    let (h, body, _) = server.get("/work/page?hydrate=yes&native=yes");
+    assert!(
+        !h.contains("chunked")
+            && !body.contains("data-ruvane-segment")
+            && !body.contains("application.mjs")
+    );
+}
+#[test]
+fn early_hydration_supports_a_page_without_layouts() {
+    let (mut app, _, _) = fixture();
+    app.client_page_layout("page", None).unwrap();
+    let server = Running::new(&app, ServerConfig::default());
+    let (_, body, complete) = server.get("/work/page?hydrate=yes");
+    assert!(
+        complete
+            && body.contains("data-ruvane-layouts=\"0\"")
+            && !body.contains("data-ruvane-segment")
+    );
+    assert!(snapshot(&body).page().layouts().is_empty());
+}
+#[test]
+fn known_early_hydration_load_errors_finish_with_abort_html() {
+    let (app, _, _) = fixture();
+    let server = Running::new(&app, ServerConfig::default());
+    for fail in ["root", "inner", "page", "panic", "schema", "title"] {
+        let (h, body, complete) = server.get(&format!("/work/page?hydrate=yes&fail={fail}"));
+        assert!(h.starts_with("HTTP/1.1 200") && complete);
+        assert!(
+            body.contains("async src=")
+                && body.contains("data-ruvane-stream-error")
+                && body.contains("ruvane-complete")
+                && !body.contains("ruvane-initial")
+                && !body.contains("private")
+        );
+    }
 }

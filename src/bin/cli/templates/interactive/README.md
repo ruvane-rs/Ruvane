@@ -45,6 +45,12 @@ before headers, then the final snapshot hydrates the same server nodes without
 a second page GET. Late loader failures leave the response incomplete. Use
 `?native=yes` for buffered SSR with normal HTTP error statuses.
 
+Open **Interactive streamed layouts** for `/tasks/live?delay=yes`. Its workspace
+counter becomes usable while the leaf is loading. `ClientDocument::hydrate_layouts(true)`
+enables this explicitly. The final branch keeps that live layout and its state;
+prepared layout actions are blocked until commitment. No additional page GET is
+sent. Invalid or incomplete documents retire early owners and preserve their HTML.
+
 Open **Streaming SSR** for `/stream`, a native progressive report. Its header
 arrives before the deferred content. Edit `progressive_report` in `src/main.rs`;
 typed fragments use `HtmlStream` with the default byte, yield and time budgets.

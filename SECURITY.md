@@ -1,5 +1,18 @@
 # Security
 
+Alpha.27 adds explicit layout hydration during initial document loading. Bounded
+inert RVH1 records bind the revision, URL, order and layout seeds. Rust/Wasm
+validates ownership and schemas before events activate. Prepared layout actions
+are rejected locally without a POST or queued retry until complete branch
+adoption. Only attested live parents can transfer into the final navigator.
+Malformed records, late failures, departure, deadlines and rejected final commits
+retire temporary listeners/owners while preserving received HTML and drafts.
+Caught application failures finish with generic abort HTML when budgets permit;
+they contain no final page snapshot and cannot activate the leaf. Actual network
+failures may still cause the browser to replace the document. External modules
+reuse the existing CSP and four runtime assets. See
+[early layout hydration](docs/layout-hydration.md).
+
 Alpha.26 adds opt-in initial App document streaming. The typed head and route
 props are resolved before headers. HTML is escaped and bounded; all seeds remain
 public, no-store browser data. The completion suffix is withheld until producer

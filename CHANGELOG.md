@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.27 — Unreleased
+
+- Add opt-in layout hydration during the initial document stream, with bounded
+  inert RVH1 prefixes and an early same-origin asynchronous module bootstrap.
+- Validate each complete layout in Rust/Wasm before activation and adopt live
+  parent owners at final commit without resetting DOM, state, drafts or focus.
+- Block prepared layout actions until complete branch adoption; reject locally
+  without a POST, queued retry or uncertain-mutation latch.
+- Retire early owners on malformed data, late failure, native guards, departure,
+  deadlines and failed final preparation. Preserve received HTML and field values.
+- Finish caught application failures with generic abort HTML to preserve early
+  drafts where transport permits; never embed a successful page snapshot there.
+- Add an interactive streamed-layout demo, protocol tests and browser lifecycle
+  coverage. Keep ABI v11, 22 exports, four assets and zero third-party dependencies.
+
 ## 0.1.0-alpha.26 — Unreleased
 
 - Add opt-in initial App document streaming with a fixed typed head, root-first

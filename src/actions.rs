@@ -297,7 +297,7 @@ pub enum ActionFailure {
     Timeout = 2,
     /// The MIME type, frame or application response is invalid.
     Protocol = 3,
-    /// The server returned an unexpected HTTP status.
+    /// The action was blocked before sending or the server returned an unexpected status.
     Rejected = 4,
 }
 /// The completion delivered to the owning Rust component.

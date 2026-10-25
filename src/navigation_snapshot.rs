@@ -50,14 +50,19 @@ impl NavigationSnapshot {
         Self::new(revision, NavigationPage::decode(&bytes[16..])?)
     }
     pub(crate) fn html(&self) -> crate::Html {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let bytes = self.encode();
         let mut markup = String::from("<div hidden id=\"ruvane-initial\">");
-        for byte in bytes {
-            markup.push(HEX[(byte >> 4) as usize] as char);
-            markup.push(HEX[(byte & 15) as usize] as char);
-        }
+        markup.push_str(&hex(&self.encode()));
         markup.push_str("</div>");
         crate::Html::rendered(markup)
     }
+}
+
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push(HEX[(byte >> 4) as usize] as char);
+        text.push(HEX[(byte & 15) as usize] as char);
+    }
+    text
 }

@@ -86,6 +86,18 @@ pub fn application() -> App {
         Some(|_| Ok(ruvane::ClientDocument::new("Project / Ruvane"))),
     )
     .unwrap();
+    app.client_page(
+        PageRoute::new("live", "/tasks/live").unwrap(),
+        components::PROJECT,
+        zero,
+        project_page,
+    )
+    .unwrap();
+    app.client_page_document_streaming(
+        "live",
+        Some(|_| Ok(ruvane::ClientDocument::new("Project / Ruvane").hydrate_layouts(true))),
+    )
+    .unwrap();
     app.client_layout(
         PageRoute::new("workspace", "/tasks").unwrap(),
         None,
@@ -102,7 +114,7 @@ pub fn application() -> App {
         |_| Ok(ruvane::ClientLayoutData::new(ruvane::ActionData::default())),
     )
     .unwrap();
-    for name in ["tasks", "settings", "project", "document"] {
+    for name in ["tasks", "settings", "project", "document", "live"] {
         app.client_page_layout(name, Some("workspace")).unwrap();
     }
     app.client_page_layout("task", Some("context")).unwrap();
@@ -168,6 +180,11 @@ pub fn shell(children: Html) -> Html {
                 .child(ruvane::link(
                     &InternalUrl::new("/tasks/document").unwrap().query("delay", "yes").unwrap(),
                     "Streaming App document",
+                ))
+                .child(" · ")
+                .child(ruvane::link(
+                    &InternalUrl::new("/tasks/live").unwrap().query("delay", "yes").unwrap(),
+                    "Interactive streamed layouts",
                 )),
         )
         .child(counter)

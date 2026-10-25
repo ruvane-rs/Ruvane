@@ -5,6 +5,9 @@ public seeds. The application bootstrap sends no second page GET and runs no
 page loader in the browser. Native SSR remains complete; initial document
 streaming is available as an [explicit opt-in](document-streaming.md) since alpha.26.
 
+Alpha.27 also supports [early layout hydration](layout-hydration.md) during an
+opted-in initial stream. Default documents still prepare the full branch together.
+
 ## Server output
 
 An interactive App document includes a hidden direct child of

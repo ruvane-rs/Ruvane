@@ -272,7 +272,8 @@ impl App {
                     .find(|p| Some(p.route.name()) == self.owner(path))
                     .and_then(|p| p.client)
                     .is_some_and(|client| {
-                        client.progressive && self.layout_chain(client.layout).len() == expected
+                        (client.progressive || client.document.is_some())
+                            && self.layout_chain(client.layout).len() == expected
                     })
                 && self
                     .client_props(page.url())

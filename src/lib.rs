@@ -10,6 +10,7 @@ mod content;
 mod forms;
 mod html;
 mod http;
+mod layout_snapshot;
 mod metadata;
 mod navigation;
 mod navigation_snapshot;
@@ -54,6 +55,7 @@ pub use http::{
     CONTENT_SECURITY_POLICY, INTERACTIVE_CONTENT_SECURITY_POLICY, Method, Request, Response,
     StatusCode,
 };
+pub use layout_snapshot::{LayoutSnapshot, MAX_LAYOUT_SNAPSHOT_BYTES};
 pub use metadata::{
     CanonicalUrl, MAX_METADATA_TEXT_BYTES, MAX_SITE_ORIGIN_BYTES, Metadata, MetadataError,
     OriginError, Robots, SiteOrigin,

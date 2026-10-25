@@ -63,6 +63,16 @@ export function decodeNavigationSnapshot(bytes) {
   if(page.pending!==null||page.selected!==0)throw invalid();
   return Object.freeze({revision:view.getBigUint64(4,true).toString(),bytes:packet,page});
 }
+/** Decodes a bounded layout prefix for initial-document hydration. */
+export function decodeLayoutSnapshot(bytes) {
+  if(!(bytes instanceof Uint8Array)||bytes.length<16||bytes.length>65552||String.fromCharCode(...bytes.slice(0,4))!=="RVH1")throw invalid();
+  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  if(view.getUint32(12,true)!==bytes.length-16)throw invalid();
+  const packet=bytes.slice(16),page=decodePage(packet);
+  if(page.pending===null||page.selected!==0||!page.layouts.length)throw invalid();
+  return Object.freeze({revision:view.getBigUint64(4,true).toString(),bytes:packet,page});
+}
+function sameLayoutSeed(a,b){return a.name===b.name&&a.key===b.key&&a.component===b.component&&a.kind===b.kind&&a.value===b.value&&a.seed.length===b.seed.length&&a.seed.every((value,n)=>value===b.seed[n]);}
 function actionPath(path) {
   if (typeof path !== "string" || path.length > 1024 || !path.startsWith("/") || path.includes("//") || /[^A-Za-z0-9\-._~!$&'()*+,;=:@/%]/.test(path)) throw invalid();
   for (const part of path.slice(1).split("/")) {
@@ -489,6 +499,14 @@ export async function createRuntime(url, options = {}) {
     deliver(id, view, operation, bytes, kind);
   }
   function launch(id, view, command) {
+    if(view.gated){
+      if(view.rejecting)throw invalid();view.rejecting=true;view.lastAction=command.request;
+      try{
+        if(result(exports.ruvane_action_complete(id,command.request,4))!==1)throw invalid();
+        drain(id,"dispatch");settle(view,"rejected");
+      }finally{view.rejecting=false;}
+      return;
+    }
     const operation = { ...command, controller: new AbortController(), timer: null, timedOut: false, ended: false };
     view.action = operation; view.lastAction = command.request; actionChanged();
     operation.timer = setTimeout(() => { operation.timedOut = true; operation.controller.abort(); }, actionTimeout);
@@ -718,7 +736,8 @@ export async function createRuntime(url, options = {}) {
         if(result(exports.ruvane_commands_clear())!==1)throw invalid();
         view.prepared=decoded;
       }else drain(id, hydrated ? "hydrate" : "mount");
-      return Object.freeze({ id, dispatch: (event, value) => dispatch(id, event, value), whenIdle: () => whenIdle(id), dispose: () => disposeView(id) });
+      const controller=Object.freeze({ id, dispatch: (event, value) => dispatch(id, event, value), whenIdle: () => whenIdle(id), dispose: () => disposeView(id) });
+      views.get(id).controller=controller;return controller;
     } catch (error) {
       if (error instanceof HydrationMismatch || error instanceof MountRejected) {
         try { if (id) { releaseNative(id); forget(id, true); } }
@@ -776,9 +795,13 @@ export async function createRuntime(url, options = {}) {
     } catch (error) { stop(true); throw error; }
     finally { busy = false; }
   }
-  function preparePageHydration(roots,bytes) {
-    live();const page=decodePage(bytes);
-    if(page.pending!==null||page.selected!==0||!Array.isArray(roots)||roots.length!==page.layouts.length+1||views.size+roots.length>LIMITS.views)throw new MountRejected();
+  function prepareHydration(roots,bytes,parents=[],layoutIndex=0) {
+    live();const page=decodePage(bytes),layoutOnly=layoutIndex!==0;
+    if(!Array.isArray(parents)||!Array.isArray(roots)||page.selected!==0)throw new MountRejected();
+    parents=parents.slice();
+    if(layoutOnly?(page.pending===null||!Number.isInteger(layoutIndex)||layoutIndex<1||layoutIndex>page.layouts.length||roots.length!==1||parents.length):(page.pending!==null||roots.length!==page.layouts.length+1||parents.length>page.layouts.length))throw new MountRejected();
+    if(views.size+roots.length-parents.length>LIMITS.views)throw new MountRejected();
+    validatePage(bytes);
     const controllers=[],undo=[];let activated=false,finished=false;
     const focused=document.activeElement,savedSelection=selection(focused),point={x:scrollX,y:scrollY};
     function remember(root){
@@ -794,7 +817,7 @@ export async function createRuntime(url, options = {}) {
     }
     function rollback(){
       if(finished)return false;finished=true;
-      for(const controller of [...controllers].reverse()){
+      for(const controller of controllers.slice(parents.length).reverse()){
         if(!views.has(controller.id))continue;
         try{releaseNative(controller.id);forget(controller.id,true,false);}catch{stop(true);}
       }
@@ -804,18 +827,24 @@ export async function createRuntime(url, options = {}) {
     }
     try{
       for(let index=0;index<roots.length;index++){
-        const root=roots[index],expected=page.layouts[index]??page,props=readProps(root);
-        if(root.localName!=="div"||root.attributes.length!==3||props.component!==expected.component||props.kind!==expected.kind||props.value!==expected.value)throw new HydrationMismatch();
-        const selected=bytes.slice();if(index<page.layouts.length)selected[4]=index+1;
-        controllers.push(start(root,null,true,selected,false,true));
+        const root=roots[index],segment=layoutOnly?layoutIndex:index<page.layouts.length?index+1:0,expected=segment?page.layouts[segment-1]:page,props=readProps(root);
+        if((layoutOnly||index<parents.length)&&!root.isConnected||root.localName!=="div"||root.attributes.length!==3||props.component!==expected.component||props.kind!==expected.kind||props.value!==expected.value)throw new HydrationMismatch();
+        if(index<parents.length){
+          const controller=parents[index],view=views.get(controller?.id),stamp=view?.document;
+          if(!view||view.controller!==controller||view.root!==root||!view.gated||!stamp||stamp.index!==index+1||stamp.expected!==page.layouts.length||stamp.url!==page.url||stamp.title!==page.title||!sameLayoutSeed(stamp.descriptor,expected))throw new HydrationMismatch();
+          matchDom(view.nodes,root,false);controllers.push(controller);continue;
+        }
+        const selected=bytes.slice();if(segment)selected[4]=segment;
+        const controller=start(root,null,true,selected,false,true);controllers.push(controller);
+        if(layoutOnly){const view=views.get(controller.id);view.gated=true;view.document={index:layoutIndex,expected:page.pending,url:page.url,title:page.title,descriptor:expected};}
       }
-      for(const root of roots)undo.push(remember(root));
+      for(const root of roots.slice(parents.length))undo.push(remember(root));
     }catch(error){rollback();throw error;}
     return Object.freeze({
       activate(){
         if(finished||activated||closed||busy)throw invalid();activated=true;hydratingBranch=true;
         try{
-          for(const controller of controllers){
+          for(const controller of controllers.slice(parents.length)){
             const view=views.get(controller.id),decoded=view.prepared;delete view.prepared;
             busy=true;try{drain(controller.id,"hydrate",decoded);}finally{busy=false;}
             const edits=view.hydrationEdits;view.hydrationEdits=[];
@@ -825,14 +854,29 @@ export async function createRuntime(url, options = {}) {
         }catch(error){rollback();throw error;}
         finally{hydratingBranch=false;busy=false;}
       },
-      commit(){if(finished||!activated)throw invalid();finished=true;undo.length=0;controllers.length=0;},
+      commit(){
+        if(finished||!activated)throw invalid();
+        if(parents.some(controller=>{const view=views.get(controller.id);return !view?.gated||!view.document||view.controller!==controller;}))throw invalid();
+        for(const controller of parents){const view=views.get(controller.id);view.gated=false;view.document=null;}
+        finished=true;undo.length=0;controllers.length=0;
+      },
       rollback,
     });
   }
   return Object.freeze({
     applicationRevision,
     validatePage,
-    preparePageHydration,
+    preparePageHydration(roots,bytes,parents=[]){return prepareHydration(roots,bytes,parents);},
+    hydrateLayout(root,bytes,index){
+      const transaction=prepareHydration([root],bytes,[],index);
+      try{const [controller]=transaction.activate();transaction.commit();return controller;}catch(error){transaction.rollback();throw error;}
+    },
+    retireLayout(controller){
+      const view=views.get(controller?.id);
+      if(!view?.document||view.controller!==controller)return false;
+      if(busy)throw invalid();busy=true;
+      try{releaseNative(controller.id);forget(controller.id,true);return true;}catch(error){stop(true);throw error;}finally{busy=false;}
+    },
     actionState,
     subscribeActions(observer) {
       live(); if (typeof observer !== "function" || actionObservers.size >= 16) throw new Error("Invalid Ruvane action observer");
