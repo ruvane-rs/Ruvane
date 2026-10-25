@@ -117,7 +117,7 @@ ruvane_browser::export_application!(
 );
 ```
 
-Invoke this macro once in a Wasm cdylib. It isolates the twenty reviewed numeric
+Invoke this macro once in a Wasm cdylib. It isolates the twenty-one reviewed numeric
 exports in one module. It adds no input pointers, unsafe blocks or host imports.
 The core continues to forbid unsafe code. The optional adapter `demo` feature is
 only for repository examples; generated applications disable it.
@@ -184,5 +184,7 @@ Run the printed executable with `--port 3000`. It serves its embedded resources
 and does not read the bundle's external copies. Interactive bundles are not static
 sites and are not opened with `ruvane preview`; that command retains its static
 export contract. The executable retains the loopback-only development HTTP
-profile. This release adds no TLS, public hosting, sessions, database, prefetch
-or page cache.
+profile. This profile adds no TLS, public hosting, sessions or database. Alpha.20 adds
+[explicit public navigation caching](navigation-cache.md); generated shared demo
+pages opt in for 30 seconds and mark their links for prefetch. Remove those
+declarations for personalized data.

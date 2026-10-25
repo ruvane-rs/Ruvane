@@ -280,6 +280,39 @@ impl BrowserRuntime {
         self.mount_page(root, &page)
     }
 
+    /// Checks a page without allocating a view ID, retaining an instance or emitting commands.
+    pub fn validate_page(&self, page: &ruvane::NavigationPage) -> Result<(), BrowserError> {
+        self.ready()?;
+        if !self.page_validator.is_some_and(|validate| validate(page)) {
+            return Err(BrowserError::InvalidPage);
+        }
+        let mut component = (self.factory)(page.props()).map_err(|_| BrowserError::InvalidPage)?;
+        component
+            .page_data(page.data().clone())
+            .map_err(|_| BrowserError::InvalidPage)?;
+        Self::resources(component.as_ref())?;
+        component
+            .view()?
+            .snapshot()
+            .map_err(|_| BrowserError::InvalidView)?
+            .commands(1)
+            .map_err(|_| BrowserError::InvalidView)?;
+        if component.take_action().is_some() {
+            return Err(BrowserError::InvalidPage);
+        }
+        Ok(())
+    }
+    /// Validates exact staged bytes without mounting a component.
+    pub fn validate_page_wire(&mut self) -> Result<(), BrowserError> {
+        let page = self.page_input.take().ok_or(BrowserError::InvalidPage)?;
+        if page.bytes.len() != page.length {
+            return Err(BrowserError::InvalidPage);
+        }
+        let page =
+            ruvane::NavigationPage::decode(&page.bytes).map_err(|_| BrowserError::InvalidPage)?;
+        self.validate_page(&page)
+    }
+
     /// Dispatches an application event through one of its live nodes.
     pub fn dispatch(&mut self, view: u32, event: u32) -> Result<(), BrowserError> {
         self.ready()?;
@@ -828,7 +861,7 @@ mod tests {
             };
             assert_eq!(runtime.dispatch(id, 42), Err(expected));
             assert_eq!(runtime.live_instances(), 0);
-            assert_eq!(runtime.command_bytes(), b"RVN5\0\0\0\0");
+            assert_eq!(runtime.command_bytes(), b"RVN6\0\0\0\0");
             assert_eq!(runtime.dispatch(id, 42), Err(BrowserError::InvalidHandle));
         }
         assert_eq!(runtime.mount(1, counter(1)), Err(BrowserError::Limit));
@@ -1171,6 +1204,11 @@ mod tests {
         }
         let mut eager = BrowserRuntime::new(|_| Ok(Box::new(Eager))).with_navigation(|_| true);
         assert_eq!(
+            eager.validate_page(&navigation_page(8, "/app")),
+            Err(BrowserError::InvalidPage)
+        );
+        assert_eq!(eager.next, 0);
+        assert_eq!(
             eager.mount_page(1, &navigation_page(8, "/app")),
             Err(BrowserError::InvalidPage)
         );
@@ -1182,6 +1220,8 @@ mod tests {
             runtime.mount(root, counter(0)).unwrap();
             runtime.clear_commands();
         }
+        assert_eq!(runtime.validate_page(&navigation_page(8, "/app")), Ok(()));
+        assert_eq!(runtime.next, 16);
         assert_eq!(
             runtime.mount_page(17, &navigation_page(8, "/app")),
             Err(BrowserError::Limit)

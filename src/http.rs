@@ -213,6 +213,8 @@ pub struct Response {
     body: Body,
     csp: &'static str,
     location: Option<InternalUrl>,
+    navigation_cache: crate::NavigationCachePolicy,
+    navigation_variance: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -233,7 +235,30 @@ impl AsRef<[u8]> for Body {
 impl Response {
     /// Serves a typed page with its real HTTP status and fixed RVP1 MIME.
     pub fn navigation(page: &crate::NavigationPage) -> Self {
-        Self::bytes(page.encode(), MediaType::Navigation).with_status(page.status())
+        Self::navigation_with_cache(page, crate::NavigationCachePolicy::no_store())
+    }
+    /// Allows explicit caching of successful public RVP1 pages. Errors stay no-store.
+    pub fn navigation_with_cache(
+        page: &crate::NavigationPage,
+        policy: crate::NavigationCachePolicy,
+    ) -> Self {
+        let mut response =
+            Self::bytes(page.encode(), MediaType::Navigation).with_status(page.status());
+        response.navigation_cache = policy;
+        response.navigation_variance = true;
+        response
+    }
+    pub(crate) fn navigation_variance(mut self) -> Self {
+        self.navigation_variance = true;
+        self
+    }
+    /// The effective response cache directive. Only successful typed pages can opt in.
+    pub fn cache_control(&self) -> String {
+        if self.status == StatusCode::Ok && self.content_type == crate::NAVIGATION_MEDIA_TYPE {
+            self.navigation_cache.header()
+        } else {
+            "no-store".into()
+        }
     }
     /// Serves a typed RVA1 action reply with fixed MIME and success/validation status.
     pub fn action(reply: &crate::ActionReply) -> Self {
@@ -253,6 +278,8 @@ impl Response {
             body: Body::Bytes(Cow::Owned(body.into().into_bytes())),
             csp: CONTENT_SECURITY_POLICY,
             location: None,
+            navigation_cache: crate::NavigationCachePolicy::no_store(),
+            navigation_variance: false,
         }
     }
 
@@ -264,6 +291,8 @@ impl Response {
             body: Body::Bytes(Cow::Owned(body.into_string().into_bytes())),
             csp: CONTENT_SECURITY_POLICY,
             location: None,
+            navigation_cache: crate::NavigationCachePolicy::no_store(),
+            navigation_variance: false,
         }
     }
 
@@ -292,6 +321,8 @@ impl Response {
             body: Body::Bytes(Cow::Owned(body.into())),
             csp: CONTENT_SECURITY_POLICY,
             location: None,
+            navigation_cache: crate::NavigationCachePolicy::no_store(),
+            navigation_variance: false,
         }
     }
 
@@ -302,6 +333,8 @@ impl Response {
             body: Body::Bytes(Cow::Borrowed(body)),
             csp: CONTENT_SECURITY_POLICY,
             location: None,
+            navigation_cache: crate::NavigationCachePolicy::no_store(),
+            navigation_variance: false,
         }
     }
 
@@ -333,6 +366,8 @@ impl Response {
             body: Body::Shared(body),
             csp: CONTENT_SECURITY_POLICY,
             location: None,
+            navigation_cache: crate::NavigationCachePolicy::no_store(),
+            navigation_variance: false,
         }
     }
 
@@ -380,13 +415,19 @@ impl Response {
             .as_ref()
             .map_or_else(String::new, |url| format!("Location: {}\r\n", url.as_str()));
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store\r\nContent-Security-Policy: {}\r\n{}{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}\r\n",
             self.status,
             self.content_type,
             self.body().len(),
+            self.cache_control(),
             self.csp,
             allow,
-            location
+            location,
+            if self.navigation_variance {
+                "Vary: Accept, Ruvane-Application-Revision\r\n"
+            } else {
+                ""
+            }
         )
     }
 }

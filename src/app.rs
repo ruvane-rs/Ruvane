@@ -157,6 +157,7 @@ pub struct Page {
     stylesheets: Vec<InternalUrl>,
     bad_request: bool,
     client_data: Option<crate::ActionData>,
+    client_no_store: bool,
 }
 impl Page {
     /// Creates a page. Titles are limited to 1024 control-free UTF-8 bytes at
@@ -170,6 +171,7 @@ impl Page {
             stylesheets: Vec::new(),
             bad_request: false,
             client_data: None,
+            client_no_store: false,
         }
     }
     /// Marks a server-only validation page as HTTP 400 while retaining its

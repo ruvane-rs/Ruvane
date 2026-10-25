@@ -29,7 +29,9 @@ bounded typed replies, pending state and lifetime-checked completions.
 Shared page routes now support client navigation, persistent layouts, typed page
 seeds, back/forward history and native fallbacks. `App` and the CLI now generate,
 compile and bundle interactive applications with their own Wasm registries and
-matching build revisions. See [interactive applications](docs/interactive-apps.md).
+matching build revisions. Explicit public policies now add bounded navigation
+caching, hover/focus prefetch and action-aware invalidation. See
+[interactive applications](docs/interactive-apps.md) and [navigation cache](docs/navigation-cache.md).
 
 Create an interactive project from a local checkout:
 

@@ -3,7 +3,7 @@
 Alpha.17 connects browser components to explicit server actions. The browser
 performs same-origin POST requests; Rust owns the model, validation results and
 view updates. There are no third-party crates, npm packages, host imports or
-input pointers. This profile uses browser ABI v7, RVN5 commands and RVA1 replies.
+input pointers. This profile uses browser ABI v8, RVN6 commands and RVA1 replies.
 Rebuild the Wasm and serve its matching bridge together.
 
 ## Run the example
@@ -172,3 +172,7 @@ Alpha.19 App runtimes attach the fixed `Ruvane-Application-Revision` header.
 Typed actions on those routers require its current value; stale or missing
 values return 409 before the action. Native forms retain their normal origin
 policy. The revision is not authorization. See [interactive applications](interactive-apps.md).
+
+Alpha.20 runtime action epochs invalidate navigation data at start and completion.
+Uncertain outcomes pause storage and prefetch until document reload. Ordinary
+foreground reads remain available. See [navigation cache](navigation-cache.md).

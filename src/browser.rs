@@ -1,8 +1,8 @@
-//! RVN5 browser command encoding.
+//! RVN6 browser command encoding.
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 7;
+pub const BROWSER_ABI_VERSION: u32 = 8;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.
@@ -97,6 +97,16 @@ impl BrowserCommands {
             url.as_str().as_bytes(),
         )
     }
+    /// Sets a link's explicit prefetch eligibility.
+    pub fn prefetch(
+        &mut self,
+        view: u32,
+        node: u32,
+        enabled: bool,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node])?;
+        self.push(13, &[view, node], &[u8::from(enabled)])
+    }
     /// Queues a validated POST action after this batch's DOM updates.
     pub fn action(
         &mut self,
@@ -114,10 +124,10 @@ impl BrowserCommands {
         data.extend_from_slice(body);
         self.push(11, &[view, request, action.action()], &data)
     }
-    /// Creates an empty batch with an RVN5 header.
+    /// Creates an empty batch with an RVN6 header.
     pub fn new() -> Self {
         Self {
-            bytes: b"RVN5\0\0\0\0".to_vec(),
+            bytes: b"RVN6\0\0\0\0".to_vec(),
             count: 0,
         }
     }

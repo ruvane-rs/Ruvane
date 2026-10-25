@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.20 — Unreleased
+
+- Add explicit public client-page caching with bounded freshness, no-store
+  defaults, credential guards, loader-level tightening and representation Vary.
+- Add marked hover/focus prefetch, a bounded memory LRU and foreground priority.
+  Validate seeds in Rust before storage without retaining views or consuming IDs.
+- Add prefetch, invalidate and refresh APIs, bounded queues, deduplication,
+  expiration and cleanup. Cache only successful public RVP1 responses.
+- Connect cache generations to action start/end, retire late replies and suspend
+  storage/speculation after uncertain mutation outcomes until document reload.
+- Introduce browser ABI v8 with page validation and RVN6 prefetch flags. Keep
+  RVP1/RVA1 formats and the two first-party Cargo packages unchanged.
+- Opt the generated public in-memory demo pages in explicitly and add native,
+  compiled Wasm and browser coverage for caching, ordering and resource bounds.
+
 ## 0.1.0-alpha.19 — Unreleased
 
 - Connect App client pages to shared component/state declarations, GET loaders,

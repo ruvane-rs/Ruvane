@@ -40,7 +40,7 @@ macro_rules! export_application {
                 })
             }
 
-            // SAFETY: This module owns all twenty ruvane_ export names.
+            // SAFETY: This module owns all twenty-one ruvane_ export names.
             #[unsafe(no_mangle)]
             pub extern "C" fn ruvane_abi_version() -> u32 {
                 $crate::ABI_VERSION
@@ -157,6 +157,11 @@ macro_rules! export_application {
             #[unsafe(no_mangle)]
             pub extern "C" fn ruvane_page_mount(root: u32) -> u32 {
                 operation(|state| state.mount_page_wire(root))
+            }
+
+            #[unsafe(no_mangle)]
+            pub extern "C" fn ruvane_page_validate() -> u32 {
+                operation(|state| { state.validate_page_wire()?; Ok(1) })
             }
 
             #[unsafe(no_mangle)]

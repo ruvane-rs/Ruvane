@@ -68,7 +68,7 @@ impl Component for Page {
                     Span,
                     &format!("{} tasks saved on the server.", self.tasks.len()),
                 )?;
-                view.link(
+                view.prefetch_link(
                     section,
                     4,
                     &super::pages::application().url("tasks", &[]).unwrap(),
@@ -86,7 +86,7 @@ impl Component for Page {
                         "Invalid page request"
                     },
                 )?;
-                view.link(
+                view.prefetch_link(
                     section,
                     2,
                     &super::pages::application().url("home", &[]).unwrap(),
@@ -120,7 +120,7 @@ impl Component for Page {
                     view.keyed_leaf(section, 1, Heading, "Task removed")?;
                 }
                 view.keyed_leaf(section, 6, Output, &self.message)?;
-                view.link(
+                view.prefetch_link(
                     section,
                     7,
                     &super::pages::application().url("tasks", &[]).unwrap(),

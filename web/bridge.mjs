@@ -1,8 +1,8 @@
-// DOM and action bridge for RVN5 commands.
-export const ABI_VERSION = 7;
+// DOM and action bridge for RVN6 commands.
+export const ABI_VERSION = 8;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
 const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a" });
-const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision"];
+const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision", "ruvane_page_validate"];
 export const ACTION_MEDIA_TYPE = "application/vnd.ruvane.action";
 export const NAVIGATION_MEDIA_TYPE = "application/vnd.ruvane.page";
 /** Validates a complete origin-relative target, without URL normalization. */
@@ -67,7 +67,7 @@ export function validateExports(exports) {
 /** Decodes a batch before touching the DOM. */
 export function decodeCommands(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 8 || bytes.length > LIMITS.bytes) throw invalid();
-  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 53) throw invalid();
+  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 54) throw invalid();
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 4;
   const u8 = () => { if (offset >= bytes.length) throw invalid(); return bytes[offset++]; };
@@ -88,7 +88,7 @@ export function decodeCommands(bytes) {
       if (/[^\x21-\x7e]/.test(body)) throw invalid();
       commands.push({ op, view, request, action, url, body }); continue;
     }
-    if (![1, 2, 3, 4, 6, 7, 8, 9, 10, 12].includes(op)) throw invalid();
+    if (![1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13].includes(op)) throw invalid();
     const node = uint(u32());
     if (op === 12) {
       const size = u32(); if (size > 4096 || offset + size > bytes.length) throw invalid();
@@ -117,7 +117,7 @@ export function decodeCommands(bytes) {
       const epoch = op === 9 ? u32() : null;
       const disabled = u8();
       if (disabled > 1) throw invalid();
-      commands.push(op === 9 ? { op, view, node, checked: disabled === 1, epoch } : op === 10 ? { op, view, node, invalid: disabled === 1 } : { op, view, node, disabled: disabled === 1 });
+      commands.push(op === 13 ? { op, view, node, prefetch: disabled === 1 } : op === 9 ? { op, view, node, checked: disabled === 1, epoch } : op === 10 ? { op, view, node, invalid: disabled === 1 } : { op, view, node, disabled: disabled === 1 });
     }
   }
   if (offset !== bytes.length) throw invalid();
@@ -239,7 +239,7 @@ export function planCommands(commands, id, previous, initial = false) {
       let ancestor = command.parent, inForm = false;
       while (ancestor) { inForm ||= nodes.get(ancestor).tag === 9; ancestor = nodes.get(ancestor).parent; }
       if ((command.tag === 9 && inForm) || (command.tag === 14 && !inForm)) throw invalid();
-      nodes.set(command.node, { url: null, value: null, checked: null, invalid: null, epoch: null, seed: null, element: null, key: command.key, tag: command.tag, parent: command.parent, depth: parent.depth + 1, children: [], text: null, event: null, disabled: null });
+      nodes.set(command.node, { prefetch: null, url: null, value: null, checked: null, invalid: null, epoch: null, seed: null, element: null, key: command.key, tag: command.tag, parent: command.parent, depth: parent.depth + 1, children: [], text: null, event: null, disabled: null });
       fresh.add(command.node); nextNode = command.node; parent.children.push(command.node);
       continue;
     }
@@ -250,6 +250,8 @@ export function planCommands(commands, id, previous, initial = false) {
       node.text = command.text;
     } else if (command.op === 12 && node.tag === 15) {
       node.url = internalTarget(command.url);
+    } else if (command.op === 13 && node.tag === 15 && typeof command.prefetch === "boolean") {
+      node.prefetch = command.prefetch;
     } else if (command.op === 3 && (node.tag === 6 || node.tag === 9 || field(node.tag)) && fresh.has(command.node) && node.event === null) {
       node.event = uint(command.event);
     } else if (command.op === 4 && disableable(node.tag) && typeof command.disabled === "boolean") {
@@ -288,7 +290,7 @@ export function planCommands(commands, id, previous, initial = false) {
   if (nodes.size < 2) throw invalid();
   let listeners = 0;
   for (const [id, node] of nodes) {
-    if (node.tag === 15 && node.url === null) throw invalid();
+    if (node.tag === 15 && (node.url === null || node.prefetch === null)) throw invalid();
     if (id && leaf(node.tag) && node.text === null) throw invalid();
     if ((node.tag === 6 || node.tag === 9 || field(node.tag)) && (node.event === null || ++listeners > LIMITS.listeners)) throw invalid();
     if (disableable(node.tag) && node.disabled === null) throw invalid();
@@ -309,7 +311,7 @@ function matchDom(nodes, root, inert) {
       if (node.event !== null) attributes[eventAttribute(node.tag)] = String(node.event);
       if (node.tag === 6 || node.tag === 14) attributes.type = node.tag === 6 ? "button" : "submit";
       if (node.tag === 9) attributes.novalidate = "";
-      if (node.tag === 15) { attributes.href = node.url; attributes["data-ruvane-nav"] = ""; }
+      if (node.tag === 15) { attributes.href = node.url; attributes["data-ruvane-nav"] = ""; if (node.prefetch) attributes["data-ruvane-prefetch"] = ""; }
       if (field(node.tag)) {
         attributes["aria-invalid"] = String(node.invalid); attributes["data-ruvane-epoch"] = String(node.epoch);
         if (textField(node.tag)) attributes.maxlength = "1024";
@@ -343,14 +345,21 @@ export async function createRuntime(url, options = {}) {
   if (applicationRevision !== null && (typeof applicationRevision !== "string" || !/^(0|[1-9][0-9]{0,19})$/.test(applicationRevision) || BigInt(applicationRevision) > 0xffffffffffffffffn)) throw invalid();
   let exports = await loadModule(url);
   if (applicationRevision !== null && exports.ruvane_application_revision() !== BigInt(applicationRevision)) throw new Error("Ruvane application revision mismatch");
-  const views = new Map();
+  const views = new Map(), actionObservers = new Set();
+  let actionEpoch = 0, uncertainActions = false;
+  function actionState() { return Object.freeze({ state: closed ? faulted ? "faulted" : "disposed" : "active", epoch: actionEpoch, uncertain: uncertainActions, pending: [...views.values()].filter(view => view.action).length, subscribers: actionObservers.size }); }
+  function actionChanged() {
+    actionEpoch = actionEpoch === null || actionEpoch === Number.MAX_SAFE_INTEGER ? null : actionEpoch + 1;
+    const state = actionState(); for (const observer of [...actionObservers]) { try { observer(state); } catch { /* Observers do not control delivery. */ } }
+  }
+  function endAction(operation, uncertain = false) { if (!operation.ended) { operation.ended = true; uncertainActions ||= uncertain; actionChanged(); } }
   let nextRoot = 0, busy = false, closed = false, faulted = false, finalRust = null;
 
   function live() { if (closed) throw new Error("Ruvane browser runtime disposed"); }
   function forget(id, preserve = false) {
     const view = views.get(id);
     if (!view) return;
-    if (view.action) { clearTimeout(view.action.timer); view.action.controller.abort(); view.action = null; }
+    if (view.action) { const operation = view.action; clearTimeout(operation.timer); operation.controller.abort(); view.action = null; endAction(operation,true); }
     view.resolveIdle?.("disposed"); view.idlePromise = null; view.resolveIdle = null;
     for (const [node, listeners] of view.listeners) for (const [type, listener] of listeners) view.nodes.get(node).element.removeEventListener(type, listener);
     view.listeners.clear();
@@ -388,7 +397,7 @@ export async function createRuntime(url, options = {}) {
     for (const [id, view] of [...views]) forget(id, failed && view.hydrated);
     faulted = failed || !cleaned;
     if (!cleaned) finalRust = null;
-    closed = true; exports = null;
+    closed = true; exports = null; actionChanged(); actionObservers.clear();
   }
   function commands() {
     const pointer = result(exports.ruvane_commands_ptr()), size = result(exports.ruvane_commands_len());
@@ -411,7 +420,7 @@ export async function createRuntime(url, options = {}) {
   function deliver(id, view, operation, bytes, kind) {
     if (closed || views.get(id) !== view || view.action !== operation) return;
     if (busy) { queueMicrotask(() => deliver(id, view, operation, bytes, kind)); return; }
-    busy = true; view.action = null;
+    busy = true; view.action = null; let delivered = false;
     try {
       if (bytes) {
         if (result(exports.ruvane_action_begin(id, operation.request, bytes.length)) !== 1) throw invalid();
@@ -425,9 +434,9 @@ export async function createRuntime(url, options = {}) {
       if (![1, 2].includes(completed)) throw invalid();
       if (completed === 2) kind = 3;
       drain(id, "dispatch");
-      settle(view, kind ? ["", "network", "timeout", "protocol", "rejected"][kind] : bytes[4] === 1 ? "validation" : "success");
+      settle(view, kind ? ["", "network", "timeout", "protocol", "rejected"][kind] : bytes[4] === 1 ? "validation" : "success"); delivered = true;
     } catch { stop(true); }
-    finally { busy = false; }
+    finally { busy = false; endAction(operation,!delivered || kind !== 0); }
   }
   class TransportError extends Error { constructor(kind) { super("Ruvane action transport failed"); this.kind = kind; } }
   async function perform(id, view, operation) {
@@ -453,8 +462,8 @@ export async function createRuntime(url, options = {}) {
     deliver(id, view, operation, bytes, kind);
   }
   function launch(id, view, command) {
-    const operation = { ...command, controller: new AbortController(), timer: null, timedOut: false };
-    view.action = operation; view.lastAction = command.request;
+    const operation = { ...command, controller: new AbortController(), timer: null, timedOut: false, ended: false };
+    view.action = operation; view.lastAction = command.request; actionChanged();
     operation.timer = setTimeout(() => { operation.timedOut = true; operation.controller.abort(); }, actionTimeout);
     void perform(id, view, operation);
   }
@@ -593,6 +602,7 @@ export async function createRuntime(url, options = {}) {
         if (command.op === 6) { old.get(command.node).element.remove(); continue; }
         if (command.op === 1) { createElement(nodes, command); continue; }
         const node = nodes.get(command.node);
+        if (command.op === 13) { if (node.prefetch) node.element.setAttribute("data-ruvane-prefetch", ""); else node.element.removeAttribute("data-ruvane-prefetch"); }
         if (command.op === 12) { node.element.setAttribute("href", node.url); node.element.setAttribute("data-ruvane-nav", ""); }
         if (command.op === 2) node.element.textContent = command.text;
         else if (command.op === 3) node.element.setAttribute(eventAttribute(node.tag), String(command.event));
@@ -629,6 +639,30 @@ export async function createRuntime(url, options = {}) {
     }
     if (actions.length) launch(id, view, actions[0]);
   }
+  function stagePage(page) {
+    if (result(exports.ruvane_page_begin(page.length)) !== 1) throw invalid();
+    for (let offset = 0; offset < page.length; offset += 4) {
+      const count = Math.min(4, page.length - offset); let word = 0;
+      for (let index = 0; index < count; index++) word |= page[offset + index] << (index * 8);
+      if (result(exports.ruvane_page_chunk(word >>> 0, count)) !== 1) throw invalid();
+    }
+  }
+  function validatePage(bytes) {
+    live(); decodePage(bytes); if (busy) throw new Error("Ruvane bridge busy"); busy = true;
+    try {
+      stagePage(bytes);
+      if (result(exports.ruvane_page_validate()) !== 1) {
+        if ([2,6,7,8,9,11].includes(result(exports.ruvane_last_error()))) throw new MountRejected();
+        throw invalid();
+      }
+      if (commands().length !== 0) throw invalid();
+      return true;
+    } catch (error) {
+      if (error instanceof MountRejected) { if (result(exports.ruvane_commands_clear()) !== 1) stop(true); }
+      else stop(true);
+      throw error;
+    } finally { busy = false; }
+  }
   function start(root, props, hydrated, page = null) {
     live(); host(root);
     if (!hydrated && root.childNodes.length) throw new Error("Ruvane mount requires an empty root");
@@ -638,12 +672,7 @@ export async function createRuntime(url, options = {}) {
     let id = 0;
     try {
       if (page) {
-        if (result(exports.ruvane_page_begin(page.length)) !== 1) throw invalid();
-        for (let offset = 0; offset < page.length; offset += 4) {
-          const count = Math.min(4, page.length - offset); let word = 0;
-          for (let index = 0; index < count; index++) word |= page[offset + index] << (index * 8);
-          if (result(exports.ruvane_page_chunk(word >>> 0, count)) !== 1) throw invalid();
-        }
+        stagePage(page);
         id = result(exports.ruvane_page_mount(++nextRoot));
       } else id = result(exports.ruvane_mount(++nextRoot, props.component, props.kind, props.value));
       if (!id) {
@@ -714,6 +743,12 @@ export async function createRuntime(url, options = {}) {
   }
   return Object.freeze({
     applicationRevision,
+    validatePage,
+    actionState,
+    subscribeActions(observer) {
+      live(); if (typeof observer !== "function" || actionObservers.size >= 16) throw new Error("Invalid Ruvane action observer");
+      actionObservers.add(observer); return () => actionObservers.delete(observer);
+    },
     mountPage(root, bytes) { decodePage(bytes); return start(root, null, false, bytes); },
     mount(root, props) { return start(root, validateProps(props), false); },
     hydrate(root) {

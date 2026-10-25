@@ -111,13 +111,13 @@ Loading sets `aria-busy` on the outlet and updates the supplied status element
 with a polite status announcement. Disposal restores its previous role/live attributes.
 A failed link/programmatic transition leaves the current page and URL in place.
 A failed pop transition or commit uses a normal document request at the target
-URL. Disposal aborts fetches, removes the three delegated handlers, cancels scroll
+URL. Disposal aborts fetches, removes the five delegated handlers, cancels scroll
 callbacks, restores scroll restoration and drops the current page. Disposing a
 page also releases its action requests and listeners. The shared runtime and
 other islands remain alive until explicitly disposed.
 
 `whenIdle()` returns the current transition promise. Outcomes are `success`,
-`failed`, `native`, `superseded` or `disposed`; before any transition it resolves
+`failed`, `native`, `invalidated`, `superseded` or `disposed`; before any transition it resolves
 to `idle`. `current()` exposes the current component controller, or null.
 `stats()` reports navigator state, pending status, current target and listener
 count. Only one navigator can own a window at a time.
@@ -144,18 +144,20 @@ No HTML, selectors or raw DOM attributes cross this format.
 
 Fetch uses same-origin GET, fixed Accept, same-origin credentials, no redirects,
 and an absolute 10-second response/read deadline. `timeoutMs` may lower that
-deadline to 1..=10000 ms. There is one in-flight navigation and no page cache.
+deadline to 1..=10000 ms. There is one in-flight foreground navigation. Alpha.20 adds an optional public
+page cache and two bounded speculative requests; no-store remains the default.
 At most two page owners overlap during preparation, within the runtime's
 16-view budget; reserve space for the prepared page alongside layout islands.
 
-Browser ABI v7 adds `ruvane_page_begin`, `ruvane_page_chunk` and
-`ruvane_page_mount`. Input arrives in exact-length chunks of 1..=4 bytes, without
-input pointers or imports. Error 11 means an invalid page/route/seed. RVN5 adds
-link tag 15 and opcode 12 (node u32, target length u32, encoded target bytes).
+Browser ABI v8 provides `ruvane_page_begin`, `ruvane_page_chunk`,
+`ruvane_page_mount` and `ruvane_page_validate`. Input arrives in exact-length
+chunks of 1..=4 bytes, without input pointers or imports. Error 11 means an invalid
+page/route/seed. RVN6 carries link tag 15, opcode 12 (node u32, target length u32,
+encoded target bytes) and opcode 13 (node u32, prefetch boolean u8).
 Rebuild Wasm with the matching bridge; older versions are rejected.
 
 Alpha.19 integrates this layer through `App::client_page` and application-owned
 factories. See [interactive applications](interactive-apps.md). Ordinary
 `App::page` handlers, static exports and arbitrary HTML are not automatically
-converted into client pages. Nested changing layouts, prefetch,
-page caching, streaming and richer props remain separate work.
+converted into client pages. See [navigation cache](navigation-cache.md) for prefetch, expiry and invalidation.
+Nested changing layouts, streaming and richer props remain separate work.

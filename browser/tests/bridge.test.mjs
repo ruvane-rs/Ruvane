@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { decodeCommands, validateExports, validateProps, planCommands, LIMITS } from "../../web/bridge.mjs";
 
 function frame(payload = [], count = 0) {
-  return new Uint8Array([82, 86, 78, 53, ...word(count), ...payload]);
+  return new Uint8Array([82, 86, 78, 54, ...word(count), ...payload]);
 }
 const word = n => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
 
@@ -52,7 +52,7 @@ test("compiled Rust module has no host imports and executes the real reactor", a
     assert.equal(e.ruvane_commands_clear(), 1);
     return commands;
   };
-  assert.equal(e.ruvane_abi_version(), 7);
+  assert.equal(e.ruvane_abi_version(), 8);
   assert.equal(e.ruvane_mount(0, 1, 1, 0), 0);
   assert.equal(e.ruvane_last_error(), 1);
   for (const args of [[1, 1, 2, 1], [1, 2, 2, 2], [1, 1, 1, 1001], [1, 99, 1, 0]]) {
@@ -310,7 +310,7 @@ test("page metadata and link targets reject ambiguous URLs, malformed packets an
     assert.throws(() => internalTarget(url)); assert.throws(() => decodePage(pagePacket(url)));
   }
   for (const url of ["/app", "/app?", "/app/tasks/1?q=a+b", "/app?q=%252F"]) assert.equal(internalTarget(url), url);
-  const link = [{ op: 1, view: 1, node: 1, parent: 0, tag: 15, key: 1 }, { op: 2, view: 1, node: 1, text: "Open" }, { op: 12, view: 1, node: 1, url: "/app" }];
+  const link = [{ op: 1, view: 1, node: 1, parent: 0, tag: 15, key: 1 }, { op: 2, view: 1, node: 1, text: "Open" }, { op: 12, view: 1, node: 1, url: "/app" }, { op: 13, view: 1, node: 1, prefetch: false }];
   const initial = planCommands(link, 1, blank(), true); assert.equal(initial.nodes.get(1).url, "/app");
   for (const url of ["//evil", "/a/..", "javascript:x"]) assert.throws(() => planCommands([{ op: 12, view: 1, node: 1, url }], 1, initial));
   assert.throws(() => planCommands(link.slice(0,2), 1, blank(), true));
@@ -336,4 +336,24 @@ test("compiled page ingress validates the shared registry and seed before creati
   assert.equal(e.ruvane_live_instances(),2); assert.equal(e.ruvane_dispose(page),1); e.ruvane_commands_clear();
   assert.equal(e.ruvane_dispatch(counter,9,1,0,0),1); e.ruvane_commands_clear();
   assert.equal(e.ruvane_dispose(counter),1); e.ruvane_commands_clear(); assert.equal(e.ruvane_live_instances(),0);
+});
+
+test("cache expiration accepts only explicit public freshness and the versioned Vary profile", async () => {
+  const { cacheFreshness } = await import("../../web/navigation.mjs");
+  const began = performance.now(), base = { "Cache-Control":"public, max-age=30, must-revalidate", "Vary":"Accept, Ruvane-Application-Revision" };
+  const response = (headers={},status=200) => new Response("packet",{status,headers:{...base,...headers}});
+  assert.equal(cacheFreshness(response(),30000,began),began+30000);
+  assert.equal(cacheFreshness(response({Age:"29"}),30000,began),began+1000);
+  assert.equal(cacheFreshness(response({Age:"2"}),5000,began),began+5000);
+  for(const headers of [{"Cache-Control":"no-store"},{"Cache-Control":"private, max-age=30"},{"Cache-Control":"public, max-age=30, must-revalidate, no-store"},{"Cache-Control":"public, max-age=0, must-revalidate"},{"Cache-Control":"public, max-age=301, must-revalidate"},{"Cache-Control":"public, max-age=30, max-age=60"},{Vary:"*"},{Vary:"Accept"},{Vary:"Accept, Cookie, Ruvane-Application-Revision"},{Age:"30"},{Age:"invalid"},{Age:"1, 2"}]) assert.equal(cacheFreshness(response(headers),30000,began),null);
+  assert.equal(cacheFreshness(response({},404),30000,began),null);
+});
+test("page validation exports check schemas without consuming instance or node identities",async()=>{
+  const file=process.env.RUVANE_WASM_FILE || new URL("../../target/wasm32-unknown-unknown/release/ruvane_browser.wasm",import.meta.url);
+  const {instance}=await WebAssembly.instantiate(await readFile(file),{}),e=validateExports(instance.exports);
+  const counter=e.ruvane_mount(1,1,1,5);e.ruvane_commands_clear();
+  const validate=bytes=>{assert.equal(e.ruvane_page_begin(bytes.length),1);for(let offset=0;offset<bytes.length;offset+=4){let word=0;const count=Math.min(4,bytes.length-offset);for(let n=0;n<count;n++)word|=bytes[offset+n]<<(n*8);assert.equal(e.ruvane_page_chunk(word>>>0,count),1);}return e.ruvane_page_validate();};
+  for(let n=0;n<1000;n++){assert.equal(validate(pagePacket()),1);assert.equal(e.ruvane_live_instances(),1);assert.equal(e.ruvane_live_signals(),2);assert.deepEqual(decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr(),e.ruvane_commands_len())),[]);}
+  assert.equal(validate(pagePacket("/other")),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),1);
+  const next=e.ruvane_mount(2,1,1,0);assert.equal(next,counter+1);e.ruvane_commands_clear();e.ruvane_dispose(next);e.ruvane_commands_clear();e.ruvane_dispose(counter);e.ruvane_commands_clear();assert.equal(e.ruvane_live_instances(),0);
 });

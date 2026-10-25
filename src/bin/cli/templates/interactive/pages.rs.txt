@@ -1,7 +1,7 @@
 use crate::{components, store};
 use ruvane::{
     App, ClientPageData, ComponentProps, Html, InitialState, InternalUrl, NavigationMatch,
-    PageContext, PageError, PageRoute, PostForm, Tag, element, navigation_link,
+    PageContext, PageError, PageRoute, PostForm, Tag, element,
 };
 fn zero(_: &NavigationMatch) -> Result<InitialState, PageError> {
     Ok(InitialState::Number(0))
@@ -55,6 +55,10 @@ pub fn application() -> App {
         },
     )
     .unwrap();
+    for name in ["home", "tasks", "task"] {
+        app.client_page_cache(name, ruvane::NavigationCachePolicy::public(30).unwrap())
+            .unwrap();
+    }
     app
 }
 pub fn shell(children: Html) -> Html {
@@ -70,15 +74,9 @@ pub fn shell(children: Html) -> Html {
             element(Tag::Header)
                 .child(element(Tag::H1).child("Ruvane application"))
                 .child(element(Tag::P).child("Shared Rust pages. No third-party dependencies."))
-                .child(navigation_link(
-                    &application().url("home", &[]).unwrap(),
-                    "Home",
-                ))
+                .child(application().prefetch_link("home", &[], "Home").unwrap())
                 .child(" · ")
-                .child(navigation_link(
-                    &application().url("tasks", &[]).unwrap(),
-                    "Tasks",
-                )),
+                .child(application().prefetch_link("tasks", &[], "Tasks").unwrap()),
         )
         .child(counter)
         .child(children)

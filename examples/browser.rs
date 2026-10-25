@@ -76,7 +76,7 @@ fn page(tests: bool, scripts: bool) -> ruvane::Html {
         ruvane::Html::default()
     };
     Document::new(
-        "Ruvane alpha.19 — Typed controls and forms",
+        "Ruvane alpha.20 — Typed controls and forms",
         fragment([
             element(Tag::H1)
                 .child("Ruvane / Server HTML + Rust/Wasm")
@@ -107,7 +107,7 @@ fn wrong_version() -> Vec<u8> {
     bytes.extend(b"memory");
     bytes.extend([2, 0, 18]);
     bytes.extend(b"ruvane_abi_version");
-    bytes.extend([0, 0, 10, 6, 1, 4, 0, 65, 6, 11]);
+    bytes.extend([0, 0, 10, 6, 1, 4, 0, 65, 7, 11]);
     bytes
 }
 

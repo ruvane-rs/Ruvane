@@ -29,7 +29,7 @@ await test("a generated application ships an independent, revision-matched Wasm 
     assert.deepEqual(WebAssembly.Module.imports(module),[]);
     const e = validateExports(new WebAssembly.Instance(module,{}).exports);
     assert.equal(e.ruvane_application_revision(),BigInt(revision));
-    assert.equal(WebAssembly.Module.exports(module).filter(e=>e.kind === "function").length,20);
+    assert.equal(WebAssembly.Module.exports(module).filter(e=>e.kind === "function").length,21);
     const drain = () => { const commands = decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr() >>> 0,e.ruvane_commands_len() >>> 0).slice()); assert.equal(e.ruvane_commands_clear(),1); return commands; };
     const stage = bytes => { assert.equal(e.ruvane_page_begin(bytes.length),1); for (let offset=0;offset<bytes.length;offset+=4) { const count=Math.min(4,bytes.length-offset); let word=0;for(let i=0;i<count;i++)word|=bytes[offset+i]<<(i*8);assert.equal(e.ruvane_page_chunk(word >>> 0,count),1); } return e.ruvane_page_mount(2); };
     await t.test("the app owns its components instead of using the repository demo", () => {

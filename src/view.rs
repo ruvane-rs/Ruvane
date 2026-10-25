@@ -126,6 +126,7 @@ struct Node {
     disabled: bool,
     field: Option<Control>,
     link: Option<crate::InternalUrl>,
+    prefetch: bool,
 }
 
 /// A small element tree shared by server rendering and Wasm.
@@ -149,6 +150,18 @@ impl View {
         }
         let id = self.push(parent, key, BrowserTag::Link, Some(label), None, false)?;
         self.nodes[id as usize - 1].link = Some(url.clone());
+        Ok(id)
+    }
+    /// Adds a native link eligible for safe, read-only speculative loading.
+    pub fn prefetch_link(
+        &mut self,
+        parent: u32,
+        key: u32,
+        url: &crate::InternalUrl,
+        label: &str,
+    ) -> Result<u32, ViewError> {
+        let id = self.link(parent, key, url, label)?;
+        self.nodes[id as usize - 1].prefetch = true;
         Ok(id)
     }
     /// Creates an empty view.
@@ -231,6 +244,7 @@ impl View {
             disabled,
             field: None,
             link: None,
+            prefetch: false,
         });
         Ok(self.nodes.len() as u32)
     }
@@ -429,7 +443,11 @@ impl View {
             }
             match node.tag {
                 BrowserTag::Link => {
-                    output.push_str(" data-ruvane-nav=\"\" href=\"");
+                    output.push_str(" data-ruvane-nav=\"\"");
+                    if node.prefetch {
+                        output.push_str(" data-ruvane-prefetch=\"\"");
+                    }
+                    output.push_str(" href=\"");
                     output.push_str(text(node.link.as_ref().unwrap().as_str()).as_str());
                     output.push('"');
                 }

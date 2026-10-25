@@ -84,7 +84,7 @@ await test("retired page controllers and detached controls cannot update the rep
 });
 await test("100 page replacements keep listeners, handles and native owners bounded", async () => {
   for (let n = 0; n < 100; n++) { equal(await navigator.navigate(n % 2 ? "/app" : "/app/tasks", { replace: true }), "success", "replacement"); equal(runtime.stats().views, 2, "two views"); equal(runtime.stats().rustInstances, 2, "two owners"); equal(runtime.stats().pendingActions, 0, "no pending actions"); }
-  equal(output(), ["6", "12"], "persistent layout state"); equal(navigator.stats().listeners, 3, "delegated listener count");
+  equal(output(), ["6", "12"], "persistent layout state"); equal(navigator.stats().listeners, 5, "delegated listener count");
 });
 await test("disposing pending navigation releases the page and keeps the independent layout alive", async () => {
   const pending = navigator.navigate("/app/tasks?delay=yes"); navigator.dispose(); equal(await pending, "disposed", "pending waiter"); await wait(300);

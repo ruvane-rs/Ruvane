@@ -122,7 +122,7 @@ impl Component for Tasks {
                 let url = super::pages::application()
                     .url("task", &[("id", &task.id.to_string())])
                     .unwrap();
-                view.link(row, 3, &url, "Open task")?;
+                view.prefetch_link(row, 3, &url, "Open task")?;
             }
         }
         view.keyed_button(section, 5, "Previous", 2, busy || self.page == 0)?;
@@ -141,7 +141,7 @@ impl Component for Tasks {
         )?;
         view.keyed_button(section, 8, "Refresh tasks", 4, busy)?;
         if self.navigation {
-            view.link(section, 9, &InternalUrl::new("/").unwrap(), "Home")?;
+            view.prefetch_link(section, 9, &InternalUrl::new("/").unwrap(), "Home")?;
         }
         Ok(view)
     }

@@ -14,6 +14,40 @@ pub const MAX_NAVIGATION_ROUTES: usize = 128;
 /// First-party browser navigation module source.
 pub const BROWSER_NAVIGATION_MODULE: &str = include_str!("../web/navigation.mjs");
 
+/// Maximum explicitly allowed navigation freshness, in seconds.
+pub const MAX_NAVIGATION_CACHE_AGE_SECONDS: u32 = 300;
+
+/// Explicit public navigation caching. Other responses remain no-store.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct NavigationCachePolicy {
+    seconds: Option<u32>,
+}
+impl NavigationCachePolicy {
+    /// Disables storage. This is the default for every page.
+    pub const fn no_store() -> Self {
+        Self { seconds: None }
+    }
+    /// Allows public, authorization-free page seeds for 1..=300 seconds.
+    pub fn public(seconds: u32) -> Result<Self, NavigationError> {
+        if seconds == 0 || seconds > MAX_NAVIGATION_CACHE_AGE_SECONDS {
+            return Err(NavigationError::InvalidData);
+        }
+        Ok(Self {
+            seconds: Some(seconds),
+        })
+    }
+    /// The public freshness bound, or None for no-store.
+    pub const fn max_age_seconds(self) -> Option<u32> {
+        self.seconds
+    }
+    pub(crate) fn header(self) -> String {
+        match self.seconds {
+            Some(seconds) => format!("public, max-age={seconds}, must-revalidate"),
+            None => "no-store".into(),
+        }
+    }
+}
+
 /// Invalid navigation declarations or wire data, without reflected inputs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NavigationError {
@@ -305,6 +339,17 @@ impl NavigationPage {
 /// A normal HTML link explicitly eligible for client navigation.
 pub fn navigation_link(url: &InternalUrl, label: &str) -> Html {
     let mut html = String::from("<a data-ruvane-nav=\"\" href=\"");
+    crate::html::escape_into(&mut html, url.as_str());
+    html.push_str("\">");
+    crate::html::escape_into(&mut html, label);
+    html.push_str("</a>");
+    Html::rendered(html)
+}
+
+/// Marks a public native link for speculative GET loading. The response policy
+/// still controls storage; callers must only mark safe, read-only destinations.
+pub fn prefetch_link(url: &InternalUrl, label: &str) -> Html {
+    let mut html = String::from("<a data-ruvane-nav=\"\" data-ruvane-prefetch=\"\" href=\"");
     crate::html::escape_into(&mut html, url.as_str());
     html.push_str("\">");
     crate::html::escape_into(&mut html, label);

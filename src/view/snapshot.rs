@@ -76,6 +76,7 @@ impl ViewSnapshot {
         }
         if let Some(url) = &node.link {
             commands.link(view, entry.id, url)?;
+            commands.prefetch(view, entry.id, node.prefetch)?;
         }
         if matches!(node.tag, BrowserTag::Button | BrowserTag::Submit) || is_control(node.tag) {
             commands.disabled(view, entry.id, node.disabled)?;
@@ -191,6 +192,9 @@ impl ViewSnapshot {
                             .as_ref()
                             .ok_or(ViewError::InvalidStructure)?,
                     )?;
+                }
+                if entry.node.prefetch != previous.prefetch {
+                    commands.prefetch(view_id, entry.id, entry.node.prefetch)?;
                 }
                 if entry.node.text != previous.text {
                     commands.text(

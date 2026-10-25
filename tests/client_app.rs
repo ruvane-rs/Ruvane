@@ -309,3 +309,79 @@ fn stale_browser_revision_is_rejected_before_the_get_loader_runs() {
     assert!(NavigationPage::decode(&body).is_ok());
     assert_eq!(loads.load(Ordering::SeqCst), 1);
 }
+
+fn extra_get(server: &Running, target: &str, extra: &str) -> (String, Vec<u8>) {
+    let mut stream = TcpStream::connect(server.address).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .unwrap();
+    write!(
+        stream,
+        "GET {target} HTTP/1.1\r\nHost: {}\r\nAccept: application/vnd.ruvane.page\r\n{extra}\r\n",
+        server.address
+    )
+    .unwrap();
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).unwrap();
+    let end = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    (
+        String::from_utf8(bytes[..end].to_vec()).unwrap(),
+        bytes[end + 4..].to_vec(),
+    )
+}
+#[test]
+fn public_cache_policy_applies_only_to_explicit_routes_and_uncredentialed_successes() {
+    let mut app = app(Arc::new(AtomicUsize::new(0)));
+    assert!(app.prefetch_link("home", &[], "Home").is_err());
+    app.client_page_cache("home", ruvane::NavigationCachePolicy::public(30).unwrap())
+        .unwrap();
+    assert!(
+        app.prefetch_link("home", &[], "Home")
+            .unwrap()
+            .as_str()
+            .contains("data-ruvane-prefetch")
+    );
+    assert!(
+        app.client_page_cache(
+            "unknown",
+            ruvane::NavigationCachePolicy::public(30).unwrap()
+        )
+        .is_err()
+    );
+    let server = Running::new(app);
+    let (headers, _) = server.get("GET", "/", true);
+    assert!(headers.contains("Cache-Control: public, max-age=30, must-revalidate"));
+    assert!(headers.contains("Vary: Accept, Ruvane-Application-Revision"));
+    let (headers, _) = server.get("GET", "/", false);
+    assert!(headers.contains("Cache-Control: no-store"));
+    assert!(headers.contains("Vary: Accept, Ruvane-Application-Revision"));
+    for extra in ["Cookie: session=fixture\r\n", "Authorization: fixture\r\n"] {
+        let (headers, _) = extra_get(&server, "/", extra);
+        assert!(headers.contains("Cache-Control: no-store"));
+    }
+    for path in ["/unknown", "/items/99", "/items/01"] {
+        let (headers, _) = server.get("GET", path, true);
+        assert!(headers.contains("Cache-Control: no-store"));
+    }
+}
+#[test]
+fn loaders_can_tighten_public_routes_to_no_store() {
+    let mut app = App::new();
+    app.components(factory, 3).unwrap();
+    app.client_page(PageRoute::new("private", "/").unwrap(), 1, zero, |_| {
+        Ok(ClientPageData::new("Private", data("value")).no_store())
+    })
+    .unwrap();
+    app.client_page_cache(
+        "private",
+        ruvane::NavigationCachePolicy::public(30).unwrap(),
+    )
+    .unwrap();
+    let server = Running::new(app);
+    assert!(
+        server
+            .get("GET", "/", true)
+            .0
+            .contains("Cache-Control: no-store")
+    );
+}

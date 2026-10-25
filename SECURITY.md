@@ -1,5 +1,26 @@
 # Security
 
+Alpha.20 adds only explicit public navigation caching. App pages default to
+no-store; HTML, action replies, errors and requests carrying Cookie/Authorization
+stay no-store. A loader can tighten a public declaration. Never opt user-specific
+or authorization-dependent data into a public policy. GET loaders, component
+factories and validation remain trusted read-only code, not a side-effect sandbox.
+
+Prefetch accepts only marked internal links or explicit calls. The navigator
+checks MIME, status, exact target, the public response policy and Vary, then uses
+Rust to validate the full packet/schema/view before storing bytes. It retains no
+DOM or component owners. Budgets are 32 entries, 2 MiB, two speculative fetches,
+32 jobs, 64 KiB per packet and an absolute fetch/read deadline. There is no disk,
+localStorage, sessionStorage or cross-tab page cache. Public freshness is bounded
+and is not a guarantee against independent server-side changes.
+
+Action start/end events retire cached and in-flight data. Generation checks
+prevent late replies from re-entering the cache. Unknown transport/server outcomes
+latch speculative loading and storage off until document reload; fresh foreground
+reads remain possible. Abort does not roll back server effects. A 409 blocks cache
+reuse and asks for reload. Revision headers remain build metadata, not access
+control. See [navigation cache](docs/navigation-cache.md) for the exact contract.
+
 Alpha.19 adds application-owned browser registries, App client pages and paired
 CLI builds. State resolution and schema checks are shared; only server GETs run
 loaders. Factories, loaders and shells remain trusted Rust callbacks. SSR checks
@@ -7,8 +28,8 @@ seeds and views before serving them, and refuses initial queued actions. Explici
 native forms retain the existing Origin, Host, framing and field checks.
 
 The server embeds one prepared module and serves resources under its build
-revision. Before hydration the bridge checks ABI v7 and the exact u64 revision.
-The export macro isolates twenty numeric exports, accepts no input pointers and
+revision. Before hydration the bridge checks ABI v8 and the exact u64 revision.
+The export macro isolates twenty-one numeric exports, accepts no input pointers and
 provides no host imports; only the reviewed no_mangle attributes allow unsafe
 code annotations. The core continues to forbid unsafe code.
 
@@ -61,7 +82,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v7/RVN5 isolate twenty reviewed numeric exports. The added reply
+Browser ABI v8/RVN6 isolate twenty-one reviewed numeric exports. The reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts

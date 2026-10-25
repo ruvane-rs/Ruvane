@@ -47,7 +47,7 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="7" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="8" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
@@ -140,15 +140,15 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v7
+## Browser ABI v8
 
-Alpha.19 adds application-owned exports and a u64 build revision. RVN5 frames stay unchanged. Rebuild the Wasm and use its
-matching bridge together. The module exports memory and these twenty functions,
+Alpha.20 adds read-only page validation and explicit prefetch eligibility in RVN6 frames. Rebuild the Wasm and use its
+matching bridge together. The module exports memory and these twenty-one functions,
 with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 7 |
+| `ruvane_abi_version()` | Returns 8 |
 | `ruvane_application_revision()` | Returns the application build revision as u64/BigInt |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
 | `ruvane_dispatch(view, node, event, kind, value)` | Commit an event; 1 on success, zero on error |
@@ -159,6 +159,7 @@ with no host imports:
 | `ruvane_action_complete(view, request, kind)` | Commit RVA1 (0) or failure (1..=4); 1 handled, 2 handled malformed RVA1, 0 ABI error |
 | `ruvane_page_begin(length)` | Stage one RVP1 packet of at most 64 KiB |
 | `ruvane_page_chunk(word, count)` | Append 1..=4 little-endian page bytes |
+| `ruvane_page_validate()` | Check the staged packet without IDs, commands or retained instances |
 | `ruvane_page_mount(root)` | Validate route/seed and create a prepared page owner |
 | `ruvane_dispose(view)` | 1 on success, zero for a stale/invalid view |
 | `ruvane_commands_ptr()` | Borrowed output offset |
@@ -196,9 +197,9 @@ memory view, checks ranges and copies the bounded batch before acknowledging
 it. Signed JavaScript i32 results are interpreted as u32 bit patterns; public
 JavaScript inputs are validated before crossing the ABI.
 
-## RVN5 command frames
+## RVN6 command frames
 
-Integers are little-endian. The header is `RVN5` plus a u32 count, with no trailing
+Integers are little-endian. The header is `RVN6` plus a u32 count, with no trailing
 bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 
 | Opcode | Remaining fields | Operation |
@@ -216,6 +217,8 @@ bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 | 11 | request u32, action u32, URL length u32 + UTF-8, body length u32 + ASCII | Queue an internal POST action |
 
 | 12 | node u32, target length u32, encoded ASCII target | Set an internal link href |
+
+| 13 | node u32, boolean u8 | Set explicit link prefetch eligibility |
 
 Tags are section=1, h2=2, p=3, span=4, output=5, button=6, ul=7, li=8,
 form=9, label=10, text input=11, checkbox=12, textarea=13, submit button=14 and
@@ -293,3 +296,6 @@ with their own factory and validator. `createRuntime` accepts an optional decima
 `applicationRevision` string and rejects mismatches before hydration. That runtime
 carries its revision on automatic navigation and action requests; stale App
 requests receive 409. See [interactive applications](interactive-apps.md).
+
+See [navigation cache](navigation-cache.md) for policy, memory/network bounds,
+validation, mutation epochs and uncertainty handling.

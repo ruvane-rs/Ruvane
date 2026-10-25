@@ -187,7 +187,50 @@ pub(super) fn register(
                     Some("status") => {
                         Response::navigation(&page).with_status(StatusCode::BadRequest)
                     }
-                    _ => Response::navigation(&page),
+                    _ => match request.query_params().get("cache") {
+                        Some("updated") => {
+                            Response::text("Application updated").with_status(StatusCode::Conflict)
+                        }
+                        Some("public")
+                            if request.query_params().get("key") != Some("cookie")
+                                || request.header("cookie").is_none()
+                                    && request.header("authorization").is_none() =>
+                        {
+                            Response::navigation_with_cache(
+                                &page,
+                                ruvane::NavigationCachePolicy::public(30).unwrap(),
+                            )
+                        }
+                        Some("invalid-seed") => {
+                            let bad = NavigationPage::new(
+                                page.url().clone(),
+                                page.title(),
+                                page.props(),
+                                ActionData::default(),
+                                page.status(),
+                            )
+                            .unwrap();
+                            Response::navigation_with_cache(
+                                &bad,
+                                ruvane::NavigationCachePolicy::public(30).unwrap(),
+                            )
+                        }
+                        Some("invalid-url") => {
+                            let bad = NavigationPage::new(
+                                InternalUrl::new("/app").unwrap(),
+                                page.title(),
+                                page.props(),
+                                page.data().clone(),
+                                page.status(),
+                            )
+                            .unwrap();
+                            Response::navigation_with_cache(
+                                &bad,
+                                ruvane::NavigationCachePolicy::public(30).unwrap(),
+                            )
+                        }
+                        _ => Response::navigation(&page),
+                    },
                 }
             } else {
                 render(
@@ -198,6 +241,31 @@ pub(super) fn register(
             }
         })?;
     }
+    router.get("/cache-tests", |_| {
+        Response::interactive_html(
+            Document::new(
+                "Navigation cache tests",
+                element(Tag::Main)
+                    .child(element(Tag::H1).child("Ruvane / Navigation cache tests"))
+                    .child(
+                        element(Tag::P)
+                            .attr(Attribute::Id, "status")
+                            .child("Running…"),
+                    )
+                    .child(element(Tag::Pre).attr(Attribute::Id, "report"))
+                    .child(element(Tag::Div).attr(Attribute::Id, "cache-fixtures"))
+                    .child(module_script(
+                        &InternalUrl::new("/assets/cache-tests.mjs").unwrap(),
+                    )),
+            )
+            .render(),
+        )
+    })?;
+    router.asset(
+        "/assets/cache-tests.mjs",
+        include_bytes!("../../web/cache-tests.mjs"),
+        MediaType::JavaScript,
+    )?;
     router.get("/navigation-tests", |_| {
         Response::interactive_html(
             Document::new(

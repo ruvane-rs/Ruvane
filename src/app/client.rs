@@ -39,6 +39,7 @@ pub struct ClientPageData {
     title: String,
     data: ActionData,
     fallback: Html,
+    no_store: bool,
 }
 impl ClientPageData {
     /// Creates a page seed. The component checks its schema before SSR and mounting.
@@ -47,7 +48,13 @@ impl ClientPageData {
             title: title.into(),
             data,
             fallback: Html::default(),
+            no_store: false,
         }
+    }
+    /// Tightens a public route to no-store for this response.
+    pub fn no_store(mut self) -> Self {
+        self.no_store = true;
+        self
     }
     /// Adds native forms or other server-rendered fallback content.
     pub fn fallback(mut self, html: impl Into<Html>) -> Self {
@@ -120,6 +127,7 @@ impl ClientRuntime {
 #[derive(Clone, Copy)]
 pub(super) struct ClientRoute {
     component: u32,
+    cache: crate::NavigationCachePolicy,
     state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
 }
 
@@ -170,13 +178,53 @@ impl App {
                 let data = load(context)?;
                 let mut page = Page::new(data.title, data.fallback);
                 page.client_data = Some(data.data);
+                page.client_no_store = data.no_store;
                 Ok(page)
             },
         )?;
-        candidate.pages.last_mut().unwrap().client = Some(ClientRoute { component, state });
+        candidate.pages.last_mut().unwrap().client = Some(ClientRoute {
+            component,
+            state,
+            cache: crate::NavigationCachePolicy::no_store(),
+        });
         candidate.validate()?;
         *self = candidate;
         Ok(())
+    }
+    /// Opts an existing client page into public caching, or restores no-store.
+    pub fn client_page_cache(
+        &mut self,
+        name: &str,
+        policy: crate::NavigationCachePolicy,
+    ) -> Result<(), AppError> {
+        let page = self
+            .pages
+            .iter_mut()
+            .find(|page| page.route.name() == name)
+            .ok_or(AppError::UnknownRoute)?;
+        let client = page.client.as_mut().ok_or(AppError::InvalidPage)?;
+        client.cache = policy;
+        Ok(())
+    }
+    /// Builds a marked link only for a client page explicitly allowed to cache.
+    pub fn prefetch_link(
+        &self,
+        name: &str,
+        params: &[(&str, &str)],
+        label: &str,
+    ) -> Result<Html, AppError> {
+        let page = self
+            .pages
+            .iter()
+            .find(|page| page.route.name() == name)
+            .ok_or(AppError::UnknownRoute)?;
+        if page
+            .client
+            .is_none_or(|client| client.cache.max_age_seconds().is_none())
+        {
+            return Err(AppError::InvalidPage);
+        }
+        Ok(crate::prefetch_link(&self.url(name, params)?, label))
     }
     /// Checks route ownership and props without executing loaders. The runtime then
     /// validates the complete seed with Component::page_data before preparing a view.
@@ -320,7 +368,15 @@ impl App {
                 StatusCode::Ok,
             )
             .map_err(|_| PageError::InternalServerError)?;
-            self.client_finish(&packet, page.body, request)
+            let policy = if page.client_no_store
+                || request.header("cookie").is_some()
+                || request.header("authorization").is_some()
+            {
+                crate::NavigationCachePolicy::no_store()
+            } else {
+                self.pages[index].client.unwrap().cache
+            };
+            self.client_finish(&packet, page.body, request, policy)
         })();
         result.unwrap_or_else(|error| self.client_failure(request, error))
     }
@@ -352,14 +408,20 @@ impl App {
             status,
         )
         .unwrap();
-        self.client_finish(&packet, Html::default(), request)
-            .unwrap_or_else(|_| Response::error(StatusCode::InternalServerError))
+        self.client_finish(
+            &packet,
+            Html::default(),
+            request,
+            crate::NavigationCachePolicy::no_store(),
+        )
+        .unwrap_or_else(|_| Response::error(StatusCode::InternalServerError))
     }
     fn client_finish(
         &self,
         packet: &NavigationPage,
         fallback: Html,
         request: &Request,
+        policy: crate::NavigationCachePolicy,
     ) -> Result<Response, PageError> {
         let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
         let mut component = factory(packet.props()).map_err(|_| PageError::InternalServerError)?;
@@ -375,7 +437,7 @@ impl App {
             return Err(PageError::InternalServerError);
         }
         if request.header("accept") == Some(crate::NAVIGATION_MEDIA_TYPE) {
-            return Ok(Response::navigation(packet));
+            return Ok(Response::navigation_with_cache(packet, policy));
         }
         let runtime = self
             .client_runtime
@@ -431,6 +493,7 @@ impl App {
         } else {
             Response::interactive_html(html)
         }
-        .with_status(packet.status()))
+        .with_status(packet.status())
+        .navigation_variance())
     }
 }
