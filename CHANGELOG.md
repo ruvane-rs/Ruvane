@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.0-alpha.11 — Unreleased
+
+- Add a single-threaded, explicitly owned ReactiveRuntime without global state,
+  with Signal, Memo, Effect, Source and nested Scope ownership.
+- Declare static dependencies explicitly, deduplicate edges and queue each
+  computation once; settle memos before effects in registration order.
+- Add nested batching, deferred reentrant effect writes, equality-filtered memo
+  outputs and configurable live-resource and propagation budgets.
+- Use weak handles and monotonic checked identifiers; disposing an owner/source
+  cancels queued computations and downstream derived values across scopes.
+- Stop a runtime after callback errors, unwinding panics or propagation-budget
+  exhaustion; clear scheduling state without claiming transactional rollback.
+- Add native counter example and regression tests for diamond graphs, batches,
+  cycles, panic recovery, reentrant destruction/Clone, cross-runtime inputs,
+  disposed handles and 1,000 mount/unmount cycles.
+- Preserve the server/static APIs and script-blocking CSP; browser bindings and
+  hydration remain future work. No third-party dependencies or unsafe code.
+
 ## 0.1.0-alpha.10 — Unreleased
 
 - Add immutable typed content collections with strict Ruvane headers,

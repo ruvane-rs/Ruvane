@@ -10,6 +10,7 @@ mod html;
 mod http;
 mod metadata;
 mod page_route;
+mod reactive;
 mod routing;
 mod server;
 mod static_site;
@@ -38,6 +39,10 @@ pub use metadata::{
     OriginError, Robots, SiteOrigin,
 };
 pub use page_route::{MAX_PAGE_NAME_BYTES, MAX_PAGE_SEGMENTS, PageParams, PageRoute};
+pub use reactive::{
+    Effect, Memo, ReactiveError, ReactiveLimits, ReactiveRuntime, ReactiveStats, Scope, Signal,
+    Source,
+};
 pub use routing::{RouteError, Router};
 pub use server::{Server, ServerConfig, ShutdownHandle};
 pub use static_site::{

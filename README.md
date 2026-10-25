@@ -13,8 +13,10 @@ sources, runs the development server, and manages versioned static builds.
 The application layer declares named pages and assets once for server rendering
 and static builds, with bounded nested layouts and private error pages.
 Typed local content collections add a bounded Markdown profile and embedded
-articles shared by the server and static export. Server actions and browser-side
-reactivity are planned for future versions.
+articles shared by the server and static export. The independent reactive
+runtime provides owner-scoped signals, derived memo values, explicit effects,
+batching, cleanup and bounded propagation. Browser bindings, hydration and server
+actions are planned for future versions.
 
 ## Principles
 
@@ -23,6 +25,42 @@ reactivity are planned for future versions.
 - **Escaped text by default**, with no raw HTML constructor.
 - **Bounded local transport**, with explicit limits and absolute I/O deadlines.
 - **No unsafe code** in the crate.
+
+## Reactive state
+
+```rust
+use ruvane::{ReactiveError, ReactiveRuntime};
+
+let runtime = ReactiveRuntime::new();
+let scope = runtime.scope()?;
+let count = scope.signal(1u32)?;
+let input = count.clone();
+let doubled = scope.memo(&[count.source()], move || Ok(input.get()? * 2))?;
+
+runtime.batch(|| {
+    count.set(2)?;
+    count.set(3)
+})?;
+assert_eq!(doubled.get()?, 6);
+
+drop(scope);
+assert_eq!(count.get(), Err(ReactiveError::Disposed));
+# Ok::<(), ReactiveError>(())
+```
+
+Dependencies are declared explicitly; reads do not implicitly subscribe. Each
+runtime is local to one thread and has no global state. Scopes own values and
+computations, while signal/memo/effect handles are weak. Memos settle before
+effects; nested batches coalesce pending work. Propagation has a configurable
+run budget and stops permanently after a callback failure. Callbacks and their
+external side effects are trusted application code, without rollback or a
+resource sandbox.
+
+Run `cargo run --example reactivity --offline --locked` for a native counter,
+derived state, batched notifications and explicit cleanup. This is the reactive
+foundation, without a browser runtime or changes to the current script-blocking
+CSP. See [reactivity](docs/reactivity.md) for ordering, lifetimes, budgets,
+failure behavior and the complete example.
 
 ## CLI and generated projects
 

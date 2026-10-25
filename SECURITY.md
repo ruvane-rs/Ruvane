@@ -1,5 +1,29 @@
 # Security
 
+Starting with alpha.11, each ReactiveRuntime owns independent single-threaded
+metadata without global or thread-local graph state. Scopes own values and
+callbacks; public signal, memo and effect handles are weak. Monotonic checked
+identifiers are never reused. Cross-runtime and disposed dependencies are
+rejected before callbacks run. Resource budgets constrain live owners, values,
+computations, dependency entries/edges and callback runs per flush.
+
+Dependencies are explicit and fixed; reading a source does not subscribe it.
+Memo writes, registration and batching are rejected. Effects may enqueue writes
+without recursively invoking the scheduler. Disposal cancels pending work and
+derived dependents even when their owners differ. User values and captures are
+released outside scheduler metadata borrows. Custom Clone reentry reports a
+borrow error instead of unconditionally borrowing a mutable value.
+
+A callback error, unwinding panic or exhausted run budget permanently faults
+the runtime and clears pending work. Subsequent reads/writes/registration fail;
+inspection and disposal remain available. Committed writes and external side
+effects are not rolled back. Catching unwinds does not suppress the application's
+panic hook and cannot recover panic=abort. Callbacks, Clone, PartialEq and Drop
+implementations are trusted Rust code: their CPU, memory, recursion, side effects
+and custom reference cycles are not sandboxed by the metadata/run budgets.
+See [reactivity](docs/reactivity.md). This version introduces no browser ABI,
+script execution, wire protocol, mutation HTTP endpoint or CSP relaxation.
+
 Starting with alpha.10, local content has strict typed metadata and portable
 unique slugs. The limited Markdown renderer constructs typed HTML, escapes raw
 HTML/entities, permits only validated internal link paths, and bounds bytes,
