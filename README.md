@@ -17,7 +17,9 @@ articles shared by the server and static export. The independent reactive
 runtime provides owner-scoped signals, derived memo values, explicit effects,
 batching, cleanup and bounded propagation. A first-party Wasm adapter and small
 JavaScript bridge run shared Rust components in the browser. Typed views render
-server HTML and hydrate its existing nodes with versioned initial state.
+server HTML and hydrate its existing nodes with versioned initial state. Keyed
+subtrees support conditional rendering, insertion, removal and reordering while
+retaining surviving DOM nodes and component state.
 Interactive HTTP pages explicitly opt into a fixed module/Wasm CSP. Server
 actions and client-side navigation remain future work.
 
@@ -39,14 +41,16 @@ cargo build --offline --locked -p ruvane-browser --target wasm32-unknown-unknown
 cargo run --offline --locked -p ruvane --example browser
 ```
 
-Open the printed address. The server renders a counter at 5 with a doubled
-value of 10, plus a boolean toggle. Wasm hydrates those same DOM nodes and
-connects their events. Both targets compile the components from
-`examples/support/widgets.rs`. The browser registry contains no counter logic.
+Open the printed address. The server renders a counter at 5/10, a boolean toggle
+and an item list. Wasm hydrates those same DOM nodes and connects their events.
+The list supports add/remove, per-item counters, ordering and filtering. Keys keep
+surviving rows and state attached to their identities. Both targets compile
+`examples/support/widgets.rs`; the registry contains no widget-specific rules.
 
 The `/ssr` page serves the same content with scripts blocked and controls
 disabled. The `/tests` page checks node and text identity, state transfer,
-mismatches, isolation, stale handles and 1,000 mount and hydration cycles each.
+mismatches, isolation, stale handles, focus during reorder, 1,000 mount/hydration
+cycles each and 1,000 additions/removals with resource counts returning to baseline.
 The bridge also supports client mounts with explicit component props.
 See [shared views](docs/views.md) for the component API.
 
@@ -56,6 +60,27 @@ No wasm-bindgen, web-sys or npm package is required. Run
 `python3 tools/check_first_party.py` to check the complete Cargo graph and ABI
 attribute boundary. Node's built-in test runner validates the bridge and compiled
 Wasm; a real browser validates DOM and CSP. See [browser](docs/browser.md).
+
+## Dynamic views
+
+Use nonzero sibling keys when an element must survive position changes:
+
+```rust
+use ruvane::{BrowserTag, View};
+
+let mut view = View::new();
+let list = view.keyed_element(0, 1, BrowserTag::List).unwrap();
+for key in [3, 1] {
+    let row = view.keyed_element(list, key, BrowserTag::ListItem).unwrap();
+    view.keyed_button(row, 1, "Run", key, false).unwrap();
+}
+let snapshot = view.snapshot().unwrap();
+assert!(snapshot.node_for_event(3).is_some());
+```
+
+The browser registry retains a `ViewSnapshot` between updates. Removed handles
+are never reused, including when a hidden key returns. Unkeyed nodes keep
+positional identity. See [shared views](docs/views.md) for keys and lifecycle.
 
 ## Reactive state
 

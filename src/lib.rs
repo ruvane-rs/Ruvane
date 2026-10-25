@@ -65,5 +65,5 @@ pub use url::{
 };
 pub use view::{
     Component, ComponentError, ComponentProps, ComponentStats, InitialState, MAX_VIEW_DEPTH,
-    MAX_VIEW_EVENTS, MAX_VIEW_NODES, View, ViewError,
+    MAX_VIEW_EVENTS, MAX_VIEW_NODES, View, ViewError, ViewSnapshot,
 };

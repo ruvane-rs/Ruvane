@@ -1,6 +1,27 @@
 # Security
 
-Alpha.13 adds shared views and hydration with browser ABI v2. Initial state is
+Alpha.14 uses browser ABI v3 and RVN2 structural batches. Keys are nonzero u32
+values unique among siblings, with a separate namespace from unkeyed positions.
+DOM handles are checked monotonic values within one live view. Deletion retires
+handles permanently; restoring a key allocates new handles. Tag or event-binding
+changes also allocate a new lifetime. Native event dispatch checks view, node
+and event together before calling application code.
+
+Structural batches are planned against a copy of the live metadata. Unknown
+parents, cross-view references, duplicate keys, reused handles, bad list nesting,
+invalid sibling targets, incomplete nodes and resource excess reject the whole
+plan before DOM commands run. Removal drops all descendant bindings. Retained
+nodes keep their handlers; new handlers attach after the DOM matches the plan.
+The command cap is 256 within 64 KiB; live nodes, depth and events stay capped.
+
+Reconciliation preserves keyed nodes within the same parent. A moved surviving
+element can regain focus without scrolling. Unexpected DOM-application errors
+stop the bridge and release resources; there is no transactional rollback of
+application state or arbitrary host side effects. Hydrated DOM is retained and
+disabled on failure, while client-created nodes are removed. Validation failure
+before application produces no partial DOM command effects.
+
+Alpha.13 introduced shared views and hydration with browser ABI v2. Initial state is
 one u32 or boolean, carried in fixed numeric data attributes. Component IDs
 belong to the application's registry; props and downloaded Wasm are public,
 not authorization or secret storage. No JSON parser or inline script is used.
@@ -20,8 +41,8 @@ also prevent duplicate hydration by runtimes using the same bridge module.
 
 Components and factories are trusted Rust code. Their reported reactive counts
 are capped, but custom CPU, allocation, reference cycles and destructors are not
-sandboxed. Updates may change text and disabled states; structure and event
-bindings must remain fixed. A failed update drops the affected native component.
+sandboxed. A failed native update drops the affected component. Structural updates in
+alpha.14 follow the handle and patch-validation rules above.
 
 Starting with alpha.12, the core can encode a bounded RVN1 browser command batch
 and explicitly serve trusted JavaScript/Wasm. Response::interactive_html opts

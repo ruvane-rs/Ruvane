@@ -8,6 +8,10 @@ use ruvane::{
 pub const COUNTER: u32 = 1;
 /// Toggle registry ID.
 pub const TOGGLE: u32 = 2;
+/// Dynamic list registry ID.
+pub const ITEM_LIST: u32 = 3;
+/// Maximum logical items in the demo list.
+pub const MAX_ITEMS: usize = 4;
 /// Maximum counter value.
 pub const MAX_COUNT: u32 = 1000;
 
@@ -102,6 +106,145 @@ impl Component for Toggle {
     }
 }
 
+struct Item {
+    id: u32,
+    _scope: Scope,
+    count: Signal<u32>,
+    done: Signal<bool>,
+}
+
+struct ItemList {
+    runtime: ReactiveRuntime,
+    scope: Scope,
+    items: Vec<Item>,
+    next: u32,
+    show_done: bool,
+}
+
+impl ItemList {
+    fn add(&mut self) -> Result<(), ComponentError> {
+        if self.items.len() == MAX_ITEMS {
+            return Ok(());
+        }
+        let id = self
+            .next
+            .checked_add(1)
+            .filter(|id| id.checked_mul(4).and_then(|n| n.checked_add(18)).is_some())
+            .ok_or(ComponentError::InvalidProps)?;
+        let scope = self.scope.child()?;
+        let count = scope.signal(0)?;
+        let done = scope.signal(false)?;
+        self.items.push(Item {
+            id,
+            _scope: scope,
+            count,
+            done,
+        });
+        self.next = id;
+        Ok(())
+    }
+}
+
+impl Component for ItemList {
+    fn view(&self) -> Result<View, ComponentError> {
+        let mut view = View::new();
+        let section = view.keyed_element(0, 1, Section)?;
+        view.keyed_leaf(section, 1, Heading, "Ruvane item list")?;
+        let mut visible = 0;
+        let list = view.keyed_element(section, 3, List)?;
+        for item in &self.items {
+            let done = item.done.get()?;
+            if !self.show_done && done {
+                continue;
+            }
+            visible += 1;
+            let row = view.keyed_element(list, item.id, ListItem)?;
+            let label = if item.id <= 26 {
+                format!("Item {}: ", char::from(b'A' + item.id as u8 - 1))
+            } else {
+                format!("Item {}: ", item.id)
+            };
+            view.keyed_leaf(row, 1, Span, &label)?;
+            let count = item.count.get()?;
+            view.keyed_leaf(row, 2, Output, &count.to_string())?;
+            let event = 16 + item.id * 4;
+            view.keyed_button(row, 3, "Increase", event, count == MAX_COUNT)?;
+            view.keyed_button(row, 4, if done { "Undo" } else { "Done" }, event + 1, false)?;
+            view.keyed_button(row, 5, "Remove", event + 2, false)?;
+        }
+        view.keyed_leaf(
+            section,
+            2,
+            Span,
+            &format!("{} items / {visible} visible", self.items.len()),
+        )?;
+        if visible == 0 {
+            let message = view.keyed_element(section, 20, Paragraph)?;
+            view.keyed_leaf(message, 1, Span, "No visible items.")?;
+        }
+        view.keyed_button(section, 4, "Add item", 1, self.items.len() == MAX_ITEMS)?;
+        view.keyed_button(section, 5, "Reverse order", 2, self.items.len() < 2)?;
+        view.keyed_button(
+            section,
+            6,
+            if self.show_done {
+                "Hide done"
+            } else {
+                "Show all"
+            },
+            3,
+            false,
+        )?;
+        Ok(view)
+    }
+
+    fn dispatch(&mut self, event: u32) -> Result<(), ComponentError> {
+        match event {
+            1 => return self.add(),
+            2 => {
+                self.items.reverse();
+                return Ok(());
+            }
+            3 => {
+                self.show_done = !self.show_done;
+                return Ok(());
+            }
+            _ => {}
+        }
+        let value = event.checked_sub(16).ok_or(ComponentError::InvalidEvent)?;
+        let index = self
+            .items
+            .iter()
+            .position(|item| item.id == value / 4)
+            .ok_or(ComponentError::InvalidEvent)?;
+        match value % 4 {
+            0 => {
+                let count = self.items[index].count.get()?;
+                if count < MAX_COUNT {
+                    self.items[index].count.set(count + 1)?;
+                }
+            }
+            1 => {
+                let done = self.items[index].done.get()?;
+                self.items[index].done.set(!done)?;
+            }
+            2 => {
+                self.items.remove(index);
+            }
+            _ => return Err(ComponentError::InvalidEvent),
+        }
+        Ok(())
+    }
+
+    fn stats(&self) -> ComponentStats {
+        let stats = self.runtime.stats();
+        ComponentStats {
+            signals: stats.signals,
+            effects: stats.effects,
+        }
+    }
+}
+
 /// Creates a component from the demo's registry.
 pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
     match (props.component(), props.state()) {
@@ -127,6 +270,21 @@ pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentErro
                 _scope: scope,
                 enabled,
             }))
+        }
+        (ITEM_LIST, InitialState::Number(count)) if count <= MAX_ITEMS as u32 => {
+            let runtime = ReactiveRuntime::new();
+            let scope = runtime.scope()?;
+            let mut list = ItemList {
+                runtime,
+                scope,
+                items: Vec::new(),
+                next: 0,
+                show_done: true,
+            };
+            for _ in 0..count {
+                list.add()?;
+            }
+            Ok(Box::new(list))
         }
         _ => Err(ComponentError::InvalidProps),
     }

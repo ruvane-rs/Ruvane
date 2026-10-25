@@ -24,7 +24,7 @@ const load = () => createRuntime("/assets/app.wasm");
 await test("real Wasm ABI, props, invalid events and stale handles", async () => {
   const { instance } = await WebAssembly.instantiate(await (await fetch("/assets/app.wasm")).arrayBuffer(), {});
   const e = validateExports(instance.exports);
-  equal(e.ruvane_abi_version(), 2, "ABI");
+  equal(e.ruvane_abi_version(), 3, "ABI");
   equal(e.ruvane_mount(0, 1, 1, 0), 0, "invalid root");
   equal(e.ruvane_last_error(), 1, "root error");
   equal(e.ruvane_mount(1, 2, 2, 2), 0, "invalid boolean");
@@ -33,11 +33,11 @@ await test("real Wasm ABI, props, invalid events and stale handles", async () =>
   assert(id > 0, "mount");
   equal(e.ruvane_mount(2, 1, 1, 0), 0, "pending batch");
   equal(e.ruvane_last_error(), 5, "busy error"); e.ruvane_commands_clear();
-  equal(e.ruvane_dispatch(id, 999), 0, "invalid event");
+  equal(e.ruvane_dispatch(id, 9, 999), 0, "invalid event");
   equal(e.ruvane_last_error(), 4, "event error");
-  equal(e.ruvane_dispatch(999999, 1), 0, "invalid view");
+  equal(e.ruvane_dispatch(999999, 9, 1), 0, "invalid view");
   equal(e.ruvane_dispose(id), 1, "dispose"); e.ruvane_commands_clear();
-  equal(e.ruvane_dispatch(id, 1), 0, "stale view");
+  equal(e.ruvane_dispatch(id, 9, 1), 0, "stale view");
   equal([e.ruvane_live_instances(), e.ruvane_live_signals(), e.ruvane_live_effects()], [0, 0, 0], "native cleanup");
   await rejects(() => validateExports({ ...e, ruvane_abi_version: () => 1 }));
 });
@@ -111,13 +111,13 @@ await test("wrong MIME, old ABI and cross-origin module rejection", async () => 
   await rejects(() => createRuntime("https://invalid.example/module.wasm"));
 });
 await test("strict command framing and typed mount props", async () => {
-  const header = new Uint8Array([82, 86, 78, 49, 0, 0, 0, 0]);
+  const header = new Uint8Array([82, 86, 78, 50, 0, 0, 0, 0]);
   equal(decodeCommands(header), [], "empty batch");
   const bom = new TextEncoder().encode("\uFEFFtext"), frame = new Uint8Array(21 + bom.length);
-  frame.set([82,86,78,49,1,0,0,0,2,1,0,0,0,1,0,0,0]);
+  frame.set([82,86,78,50,1,0,0,0,2,1,0,0,0,1,0,0,0]);
   new DataView(frame.buffer).setUint32(17, bom.length, true); frame.set(bom, 21);
   equal(decodeCommands(frame)[0].text, "\uFEFFtext", "BOM preserved");
-  for (const bytes of [header.slice(0, 7), new Uint8Array(65537), new Uint8Array([82,86,78,49,1,0,0,0,99,1,0,0,0]), new Uint8Array([...header, 0])]) await rejects(() => decodeCommands(bytes));
+  for (const bytes of [header.slice(0, 7), new Uint8Array(65537), new Uint8Array([82,86,78,50,1,0,0,0,99,1,0,0,0]), new Uint8Array([...header, 0])]) await rejects(() => decodeCommands(bytes));
   for (const value of [-1, 1.5, NaN, Infinity, 0x100000000, "5"]) await rejects(() => validateProps(counter(value)));
   await rejects(() => validateProps({ component: 1, state: { kind: "boolean", value: 1 } }));
 });
@@ -215,6 +215,101 @@ await test("post-hydration DOM failure preserves server content and removes all 
     equal(values(root), ["5", "10"], "server content preserved");
     assert(foreign.parentNode === root, "host sibling preserved"); assert(button.disabled, "controls disabled");
     button.disabled = false; button.click(); equal(values(root), ["5", "10"], "handler removed");
+  } finally { runtime.dispose(); root.remove(); }
+});
+const rows = root => [...root.querySelectorAll("li")];
+const row = (root, key) => root.querySelector(`li[data-ruvane-key="${key}"]`);
+const action = (root, label) => [...root.querySelectorAll("button")].find(button => button.textContent === label);
+
+await test("keyed SSR hydrates without replacement and reorder preserves nodes, state and focus", async () => {
+  const runtime = await load(), root = serverRoot("item-list");
+  try {
+    const initial = rows(root), labels = initial.map(node => node.firstChild);
+    const view = runtime.hydrate(root);
+    assert(rows(root).every((node, index) => node === initial[index]), "hydration identity");
+    initial[0].querySelector("button").click();
+    action(initial[1], "Remove").click();
+    const focused = action(initial[0], "Increase"); focused.focus();
+    view.dispatch(2);
+    assert(rows(root)[0] === initial[2] && rows(root)[1] === initial[0], "C and A reused");
+    assert(labels[0] === initial[0].firstChild && labels[2] === initial[2].firstChild, "labels kept");
+    assert(document.activeElement === focused, "focus follows moved row");
+    equal(values(initial[0]), ["1"], "item state retained");
+    equal(runtime.stats().rustSignals, 4, "removed item's scopes disposed");
+    action(initial[1], "Increase").click(); equal(values(initial[0]), ["1"], "removed button inert");
+    await rejects(() => view.dispatch(24));
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("filtering retires old bindings and restores item state with fresh DOM handles", async () => {
+  const runtime = await load(), root = serverRoot("item-list");
+  try {
+    runtime.hydrate(root);
+    const a = row(root, 1), b = row(root, 2), old = action(a, "Increase");
+    old.click(); action(a, "Done").click(); action(root, "Hide done").click();
+    assert(!root.contains(a) && row(root, 2) === b, "only hidden row removed");
+    equal(runtime.stats().eventListeners, 9, "hidden row listeners removed");
+    old.click();
+    action(root, "Show all").click();
+    const restored = row(root, 1);
+    assert(restored !== a && restored.getAttribute("data-ruvane-node") !== a.getAttribute("data-ruvane-node"), "fresh handle after hide");
+    equal(values(restored), ["1"], "hidden model preserved");
+    old.click(); equal(values(restored), ["1"], "old listener stays detached");
+    for (const item of [...rows(root)]) action(item, "Remove").click();
+    assert(root.textContent.includes("No visible items."), "empty conditional branch");
+    equal(runtime.stats().rustSignals, 0, "all item state released");
+    action(root, "Add item").click();
+    assert(!root.textContent.includes("No visible items."), "empty branch removed");
+    equal(rows(root).length, 1, "new list item");
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("1000 additions and removals return to the same live resource counts", async () => {
+  const runtime = await load(), root = serverRoot("empty-list");
+  try {
+    const view = runtime.hydrate(root), baseline = runtime.stats();
+    let lastHandle = 0;
+    for (let n = 0; n < 1000; n++) {
+      action(root, "Add item").click();
+      const item = rows(root)[0], handle = Number(item.getAttribute("data-ruvane-node"));
+      assert(handle > lastHandle, "node handles never reused"); lastHandle = handle;
+      const old = action(item, "Increase"); old.click(); equal(values(item), ["1"], "new item state");
+      const event = Number(old.getAttribute("data-ruvane-click"));
+      action(item, "Remove").click();
+      await rejects(() => view.dispatch(event)); old.click();
+      equal(runtime.stats(), baseline, "no retained handles, listeners or signals");
+      equal(rows(root).length, 0, "row removed");
+    }
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("key mismatches preserve SSR and leave existing components active", async () => {
+  const runtime = await load(), good = emptyRoot();
+  const mutations = [
+    root => rows(root)[1].setAttribute("data-ruvane-key", "1"),
+    root => rows(root)[0].removeAttribute("data-ruvane-key"),
+    root => rows(root)[0].setAttribute("data-ruvane-key", "01"),
+    root => root.querySelector("ul").appendChild(document.createElement("span")),
+    root => root.querySelector("ul").insertBefore(rows(root)[2], rows(root)[0]),
+    root => root.setAttribute("data-ruvane-state", "1:5"),
+  ];
+  try {
+    runtime.mount(good, counter(0)); const baseline = runtime.stats();
+    for (const mutate of mutations) {
+      const root = serverRoot("item-list");
+      try { mutate(root); const before = root.outerHTML; await rejects(() => runtime.hydrate(root)); equal(root.outerHTML, before, "SSR unchanged"); equal(runtime.stats(), baseline, "native rollback"); }
+      finally { root.remove(); }
+    }
+    good.querySelector("button").click(); equal(values(good), ["1", "2"], "other view active");
+  } finally { runtime.dispose(); good.remove(); }
+});
+await test("a valid text update followed by an invalid structural command applies no partial text", async () => {
+  const runtime = await createRuntime("/assets/invalid-patch.wasm"), root = emptyRoot();
+  try {
+    const view = runtime.mount(root, counter(0));
+    const button = root.querySelector("button"), text = button.firstChild;
+    await rejects(() => view.dispatch(1));
+    equal(button.textContent, "Before", "earlier text command was not applied");
+    assert(button.firstChild === text, "text node untouched");
+    equal(runtime.stats(), zero("faulted"), "failed runtime cleaned up");
+    button.click(); equal(root.childNodes.length, 0, "listener removed");
   } finally { runtime.dispose(); root.remove(); }
 });
 const passed = results.filter(result => result.passed).length;

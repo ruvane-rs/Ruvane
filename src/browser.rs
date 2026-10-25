@@ -1,12 +1,12 @@
-//! RVN1 browser command encoding.
+//! RVN2 browser command encoding.
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 2;
+pub const BROWSER_ABI_VERSION: u32 = 3;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.
-pub const MAX_BROWSER_COMMANDS: usize = 128;
+pub const MAX_BROWSER_COMMANDS: usize = 256;
 /// Maximum UTF-8 bytes in one text update.
 pub const MAX_BROWSER_TEXT_BYTES: usize = 1024;
 /// JavaScript source for the DOM bridge.
@@ -28,6 +28,10 @@ pub enum BrowserTag {
     Output = 5,
     /// A native button, always type=button.
     Button = 6,
+    /// An unordered list.
+    List = 7,
+    /// A list item.
+    ListItem = 8,
 }
 
 /// Command encoding errors.
@@ -65,10 +69,10 @@ impl Default for BrowserCommands {
 }
 
 impl BrowserCommands {
-    /// Creates an empty batch with an RVN1 header.
+    /// Creates an empty batch with an RVN2 header.
     pub fn new() -> Self {
         Self {
-            bytes: b"RVN1\0\0\0\0".to_vec(),
+            bytes: b"RVN2\0\0\0\0".to_vec(),
             count: 0,
         }
     }
@@ -106,7 +110,34 @@ impl BrowserCommands {
         tag: BrowserTag,
     ) -> Result<(), BrowserCommandError> {
         Self::ids(&[view, node])?;
-        self.push(1, &[view, node, parent], &[tag as u8])
+        self.create(view, node, parent, tag, 0)
+    }
+
+    /// Creates an element with a key scoped to its parent.
+    pub fn keyed_element(
+        &mut self,
+        view: u32,
+        node: u32,
+        parent: u32,
+        tag: BrowserTag,
+        key: u32,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node, key])?;
+        self.create(view, node, parent, tag, key)
+    }
+
+    fn create(
+        &mut self,
+        view: u32,
+        node: u32,
+        parent: u32,
+        tag: BrowserTag,
+        key: u32,
+    ) -> Result<(), BrowserCommandError> {
+        let mut data = [0; 5];
+        data[0] = tag as u8;
+        data[1..].copy_from_slice(&key.to_le_bytes());
+        self.push(1, &[view, node, parent], &data)
     }
 
     /// Sets leaf text, up to `MAX_BROWSER_TEXT_BYTES` UTF-8 bytes.
@@ -139,6 +170,21 @@ impl BrowserCommands {
     pub fn remove(&mut self, view: u32) -> Result<(), BrowserCommandError> {
         Self::ids(&[view])?;
         self.push(5, &[view], &[])
+    }
+
+    /// Removes an element subtree and its handlers.
+    pub fn remove_node(&mut self, view: u32, node: u32) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node])?;
+        self.push(6, &[view, node], &[])
+    }
+
+    /// Moves an element before a sibling. Before zero appends to the same parent.
+    pub fn place(&mut self, view: u32, node: u32, before: u32) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node])?;
+        if node == before {
+            return Err(BrowserCommandError::InvalidIdentifier);
+        }
+        self.push(7, &[view, node, before], &[])
     }
 
     /// Borrows the batch. The slice is valid only until the next mutation.

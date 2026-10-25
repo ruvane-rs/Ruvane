@@ -1,4 +1,4 @@
-//! Numeric exports for browser ABI v2.
+//! Numeric exports for browser ABI v3.
 use super::{BrowserError, BrowserRuntime};
 use std::cell::{Cell, RefCell};
 
@@ -48,9 +48,9 @@ pub extern "C" fn ruvane_mount(root: u32, component: u32, kind: u32, value: u32)
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruvane_dispatch(view: u32, event: u32) -> u32 {
+pub extern "C" fn ruvane_dispatch(view: u32, node: u32, event: u32) -> u32 {
     operation(|s| {
-        s.dispatch(view, event)?;
+        s.dispatch_node(view, node, event)?;
         Ok(1)
     })
 }

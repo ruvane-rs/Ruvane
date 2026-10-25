@@ -4,6 +4,8 @@ use crate::{
     text,
 };
 use std::fmt;
+mod snapshot;
+pub use snapshot::ViewSnapshot;
 
 /// Maximum elements in a shared view.
 pub const MAX_VIEW_NODES: usize = 32;
@@ -83,8 +85,8 @@ pub enum ViewError {
     InvalidText,
     /// A view must contain at least one element.
     Empty,
-    /// An update changed tags, parents or event bindings.
-    ShapeChanged,
+    /// Two siblings declare the same nonzero key.
+    DuplicateKey,
 }
 
 impl fmt::Display for ViewError {
@@ -96,7 +98,7 @@ impl fmt::Display for ViewError {
             Self::InvalidState => "invalid initial state",
             Self::InvalidText => "invalid view text",
             Self::Empty => "empty view",
-            Self::ShapeChanged => "view structure changed",
+            Self::DuplicateKey => "duplicate sibling key",
         })
     }
 }
@@ -113,6 +115,7 @@ impl From<BrowserCommandError> for ViewError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Node {
     parent: u32,
+    key: u32,
     depth: usize,
     tag: BrowserTag,
     text: Option<String>,
@@ -121,7 +124,7 @@ struct Node {
 }
 
 /// A small element tree shared by server rendering and Wasm.
-/// Node IDs follow insertion order. Parent zero is the host root.
+/// Builder IDs follow insertion order. Explicit keys identify siblings across updates.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct View {
     nodes: Vec<Node>,
@@ -136,6 +139,7 @@ impl View {
     fn push(
         &mut self,
         parent: u32,
+        key: u32,
         tag: BrowserTag,
         label: Option<&str>,
         event: Option<u32>,
@@ -144,6 +148,23 @@ impl View {
         if self.nodes.len() == MAX_VIEW_NODES {
             return Err(ViewError::Limit);
         }
+        if key != 0
+            && self
+                .nodes
+                .iter()
+                .any(|n| n.parent == parent && n.key == key)
+        {
+            return Err(ViewError::DuplicateKey);
+        }
+        if tag == BrowserTag::ListItem
+            && (parent == 0
+                || self
+                    .nodes
+                    .get(parent as usize - 1)
+                    .is_none_or(|n| n.tag != BrowserTag::List))
+        {
+            return Err(ViewError::InvalidStructure);
+        }
         let depth = if parent == 0 {
             1
         } else {
@@ -151,14 +172,21 @@ impl View {
                 .nodes
                 .get(parent as usize - 1)
                 .ok_or(ViewError::InvalidIdentifier)?;
-            if owner.tag != BrowserTag::Section && owner.tag != BrowserTag::Paragraph {
+            if !matches!(
+                owner.tag,
+                BrowserTag::Section
+                    | BrowserTag::Paragraph
+                    | BrowserTag::List
+                    | BrowserTag::ListItem
+            ) {
                 return Err(ViewError::InvalidStructure);
             }
-            if owner.tag == BrowserTag::Paragraph
-                && matches!(
+            if (owner.tag == BrowserTag::Paragraph
+                && !matches!(
                     tag,
-                    BrowserTag::Section | BrowserTag::Paragraph | BrowserTag::Heading
-                )
+                    BrowserTag::Span | BrowserTag::Output | BrowserTag::Button
+                ))
+                || (owner.tag == BrowserTag::List && tag != BrowserTag::ListItem)
             {
                 return Err(ViewError::InvalidStructure);
             }
@@ -183,6 +211,7 @@ impl View {
         }
         self.nodes.push(Node {
             parent,
+            key,
             depth,
             tag,
             text: label.map(str::to_owned),
@@ -192,12 +221,15 @@ impl View {
         Ok(self.nodes.len() as u32)
     }
 
-    /// Adds a section or paragraph container.
+    /// Adds a section, paragraph, list or list-item container.
     pub fn element(&mut self, parent: u32, tag: BrowserTag) -> Result<u32, ViewError> {
-        if !matches!(tag, BrowserTag::Section | BrowserTag::Paragraph) {
+        if !matches!(
+            tag,
+            BrowserTag::Section | BrowserTag::Paragraph | BrowserTag::List | BrowserTag::ListItem
+        ) {
             return Err(ViewError::InvalidStructure);
         }
-        self.push(parent, tag, None, None, false)
+        self.push(parent, 0, tag, None, None, false)
     }
 
     /// Adds a heading, span or output containing plain text.
@@ -208,7 +240,7 @@ impl View {
         ) {
             return Err(ViewError::InvalidStructure);
         }
-        self.push(parent, tag, Some(label), None, false)
+        self.push(parent, 0, tag, Some(label), None, false)
     }
 
     /// Adds a button with a nonzero event ID.
@@ -224,11 +256,78 @@ impl View {
         }
         self.push(
             parent,
+            0,
             BrowserTag::Button,
             Some(label),
             Some(event),
             disabled,
         )
+    }
+
+    /// Adds a container with a nonzero sibling key.
+    pub fn keyed_element(
+        &mut self,
+        parent: u32,
+        key: u32,
+        tag: BrowserTag,
+    ) -> Result<u32, ViewError> {
+        if key == 0 {
+            return Err(ViewError::InvalidIdentifier);
+        }
+        if !matches!(
+            tag,
+            BrowserTag::Section | BrowserTag::Paragraph | BrowserTag::List | BrowserTag::ListItem
+        ) {
+            return Err(ViewError::InvalidStructure);
+        }
+        self.push(parent, key, tag, None, None, false)
+    }
+
+    /// Adds plain text with a nonzero sibling key.
+    pub fn keyed_leaf(
+        &mut self,
+        parent: u32,
+        key: u32,
+        tag: BrowserTag,
+        label: &str,
+    ) -> Result<u32, ViewError> {
+        if key == 0 {
+            return Err(ViewError::InvalidIdentifier);
+        }
+        if !matches!(
+            tag,
+            BrowserTag::Heading | BrowserTag::Span | BrowserTag::Output
+        ) {
+            return Err(ViewError::InvalidStructure);
+        }
+        self.push(parent, key, tag, Some(label), None, false)
+    }
+
+    /// Adds a button with a nonzero sibling key and event ID.
+    pub fn keyed_button(
+        &mut self,
+        parent: u32,
+        key: u32,
+        label: &str,
+        event: u32,
+        disabled: bool,
+    ) -> Result<u32, ViewError> {
+        if key == 0 || event == 0 {
+            return Err(ViewError::InvalidIdentifier);
+        }
+        self.push(
+            parent,
+            key,
+            BrowserTag::Button,
+            Some(label),
+            Some(event),
+            disabled,
+        )
+    }
+
+    /// Assigns initial DOM handles. Keep the returned snapshot for future updates.
+    pub fn snapshot(&self) -> Result<ViewSnapshot, ViewError> {
+        ViewSnapshot::new(self)
     }
 
     /// Whether this view declares the event.
@@ -246,55 +345,16 @@ impl View {
 
     /// Encodes the initial DOM and event bindings.
     pub fn commands(&self, view: u32) -> Result<BrowserCommands, ViewError> {
-        self.check()?;
-        let mut commands = BrowserCommands::new();
-        for (index, node) in self.nodes.iter().enumerate() {
-            let id = index as u32 + 1;
-            commands.element(view, id, node.parent, node.tag)?;
-            if let Some(label) = &node.text {
-                commands.text(view, id, label)?;
-            }
-            if let Some(event) = node.event {
-                commands.click(view, id, event)?;
-            }
-            if node.tag == BrowserTag::Button {
-                commands.disabled(view, id, node.disabled)?;
-            }
-        }
-        Ok(commands)
+        self.snapshot()?.commands(view)
     }
 
-    /// Encodes changed text and button state. Structure and event IDs stay fixed.
+    /// Encodes one transition from a fresh previous view.
+    /// For repeated updates, retain a `ViewSnapshot` so retired handles stay retired.
     pub fn updates(&self, previous: &Self, view: u32) -> Result<BrowserCommands, ViewError> {
-        self.check()?;
-        if view == 0 {
-            return Err(ViewError::InvalidIdentifier);
-        }
-        if self.nodes.len() != previous.nodes.len() {
-            return Err(ViewError::ShapeChanged);
-        }
-        let mut commands = BrowserCommands::new();
-        for (index, (next, old)) in self.nodes.iter().zip(&previous.nodes).enumerate() {
-            if next.parent != old.parent || next.tag != old.tag || next.event != old.event {
-                return Err(ViewError::ShapeChanged);
-            }
-            let id = index as u32 + 1;
-            if next.text != old.text {
-                commands
-                    .text(
-                        view,
-                        id,
-                        next.text.as_deref().ok_or(ViewError::ShapeChanged)?,
-                    )
-                    .map_err(|_| ViewError::Limit)?;
-            }
-            if next.disabled != old.disabled {
-                commands
-                    .disabled(view, id, next.disabled)
-                    .map_err(|_| ViewError::Limit)?;
-            }
-        }
-        Ok(commands)
+        previous
+            .snapshot()?
+            .update(self, view)
+            .map(|(_, commands)| commands)
     }
 
     fn markup(&self, parent: u32, inert: bool, output: &mut String) {
@@ -313,8 +373,13 @@ impl View {
                 BrowserTag::Span => "span",
                 BrowserTag::Output => "output",
                 BrowserTag::Button => "button",
+                BrowserTag::List => "ul",
+                BrowserTag::ListItem => "li",
             };
             write!(output, "<{tag} data-ruvane-node=\"{id}\"").unwrap();
+            if node.key != 0 {
+                write!(output, " data-ruvane-key=\"{}\"", node.key).unwrap();
+            }
             if let Some(event) = node.event {
                 write!(output, " type=\"button\" data-ruvane-click=\"{event}\"").unwrap();
             }

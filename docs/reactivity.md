@@ -176,4 +176,6 @@ The reactive engine itself does not attach DOM events or hydrate server HTML.
 Alpha.12 adds the separate [browser adapter](browser.md), an explicit Wasm ABI
 and opt-in interactive responses. Alpha.13 adds shared `View` trees and hydration;
 application components own their reactive scopes and supply their view and events.
+Alpha.14 adds keyed structural updates and a list whose item scopes drop on
+logical removal. Filtering removes DOM bindings but keeps hidden item model state.
 Default server responses and static exports retain the script-blocking CSP.

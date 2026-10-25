@@ -12,7 +12,7 @@ fn shared_components_render_their_initial_state_and_update_independently() {
     let view = counter.view().unwrap();
     let html = view.hydratable(props).unwrap();
     assert!(html.as_str().starts_with(
-        "<div data-ruvane-version=\"2\" data-ruvane-component=\"1\" data-ruvane-state=\"1:5\">"
+        "<div data-ruvane-version=\"3\" data-ruvane-component=\"1\" data-ruvane-state=\"1:5\">"
     ));
     assert!(html.as_str().contains(">5</output>"));
     assert!(html.as_str().contains(">10</output>"));
@@ -126,7 +126,7 @@ fn node_depth_event_and_utf8_byte_limits_are_exact() {
 }
 
 #[test]
-fn prop_encoding_and_fixed_structure_updates_are_checked() {
+fn props_and_structure_updates_are_checked() {
     for state in [
         InitialState::Number(0),
         InitialState::Number(u32::MAX),
@@ -157,13 +157,164 @@ fn prop_encoding_and_fixed_structure_updates_are_checked() {
     );
     let mut changed = View::new();
     changed.button(0, "One", 2, false).unwrap();
-    assert_eq!(
-        changed.updates(&old, 1).unwrap_err(),
-        ViewError::ShapeChanged
-    );
+    assert!(changed.updates(&old, 1).unwrap().count() > 0);
     changed.leaf(0, Span, "new").unwrap();
+    assert!(changed.updates(&old, 1).unwrap().count() > 0);
+}
+
+fn rows(keys: &[u32]) -> View {
+    let mut view = View::new();
+    let list = view.keyed_element(0, 1, List).unwrap();
+    for key in keys {
+        let row = view.keyed_element(list, *key, ListItem).unwrap();
+        view.keyed_leaf(row, 1, Span, &format!("Row {key}"))
+            .unwrap();
+        view.keyed_button(row, 2, "Run", *key, false).unwrap();
+    }
+    view
+}
+
+#[test]
+fn keyed_reorder_retains_handles_and_removed_keys_get_fresh_handles() {
+    let original = rows(&[1, 2, 3]).snapshot().unwrap();
+    let list = original.node_for_key(0, 1).unwrap();
+    let a = original.node_for_key(list, 1).unwrap();
+    let b = original.node_for_key(list, 2).unwrap();
+    let c = original.node_for_key(list, 3).unwrap();
+    let event_b = original.node_for_event(2).unwrap();
+    let (changed, batch) = original.update(&rows(&[3, 1]), 1).unwrap();
+    assert!(batch.count() > 0);
+    assert_eq!(changed.node_for_key(0, 1), Some(list));
+    assert_eq!(changed.node_for_key(list, 1), Some(a));
+    assert_eq!(changed.node_for_key(list, 3), Some(c));
+    assert_eq!(changed.node_for_key(list, 2), None);
+    assert!(!changed.has_event(event_b, 2));
+    let (restored, _) = changed.update(&rows(&[2, 3, 1]), 1).unwrap();
+    assert!(restored.node_for_key(list, 2).unwrap() > b);
+    assert!(restored.node_for_event(2).unwrap() > event_b);
+    assert!(!restored.has_event(event_b, 2));
+}
+
+#[test]
+fn duplicate_keys_are_rejected_per_parent_without_mutating_the_view() {
+    let mut view = View::new();
+    let one = view.keyed_element(0, 1, Section).unwrap();
+    let two = view.keyed_element(0, 2, Section).unwrap();
+    view.keyed_leaf(one, 7, Span, "First").unwrap();
+    let before = view.clone();
     assert_eq!(
-        changed.updates(&old, 1).unwrap_err(),
-        ViewError::ShapeChanged
+        view.keyed_button(one, 7, "Duplicate", 1, false),
+        Err(ViewError::DuplicateKey)
+    );
+    assert_eq!(view, before);
+    assert!(view.keyed_leaf(two, 7, Span, "Other parent").is_ok());
+    assert_eq!(
+        view.keyed_leaf(two, 0, Span, "Zero"),
+        Err(ViewError::InvalidIdentifier)
+    );
+    assert!(view.keyed_leaf(two, u32::MAX, Span, "Maximum key").is_ok());
+    assert!(
+        view.render()
+            .unwrap()
+            .as_str()
+            .contains("data-ruvane-key=\"4294967295\"")
+    );
+    assert_eq!(view.element(0, ListItem), Err(ViewError::InvalidStructure));
+    let list = view.element(one, List).unwrap();
+    assert_eq!(
+        view.leaf(list, Span, "Wrong child"),
+        Err(ViewError::InvalidStructure)
+    );
+    let paragraph = view.element(one, Paragraph).unwrap();
+    assert_eq!(
+        view.leaf(paragraph, Heading, "Wrong heading"),
+        Err(ViewError::InvalidStructure)
+    );
+}
+
+#[test]
+fn thousand_key_lifecycles_do_not_alias_previous_bindings() {
+    let mut snapshot = rows(&[1]).snapshot().unwrap();
+    let list = snapshot.node_for_key(0, 1).unwrap();
+    let a = snapshot.node_for_key(list, 1).unwrap();
+    let mut last = 0;
+    for _ in 0..1000 {
+        let (next, _) = snapshot.update(&rows(&[1, 2]), 1).unwrap();
+        snapshot = next;
+        let binding = snapshot.node_for_event(2).unwrap();
+        assert!(binding > last);
+        assert!(!snapshot.has_event(last, 2));
+        last = binding;
+        let (next, _) = snapshot.update(&rows(&[1]), 1).unwrap();
+        snapshot = next;
+        assert!(!snapshot.has_event(binding, 2));
+        assert_eq!(snapshot.node_for_key(list, 1), Some(a));
+    }
+}
+
+#[test]
+fn tag_and_binding_changes_replace_the_node_lifetime() {
+    let mut first = View::new();
+    first.keyed_button(0, 1, "Run", 1, false).unwrap();
+    let snapshot = first.snapshot().unwrap();
+    let old = snapshot.node_for_event(1).unwrap();
+    let mut second = View::new();
+    second.keyed_button(0, 1, "Run", 2, false).unwrap();
+    let (changed, _) = snapshot.update(&second, 1).unwrap();
+    assert_ne!(changed.node_for_event(2), Some(old));
+    let (restored, _) = changed.update(&first, 1).unwrap();
+    assert_ne!(restored.node_for_event(1), Some(old));
+    let mut different = View::new();
+    different.keyed_leaf(0, 1, Output, "Result").unwrap();
+    let (changed, _) = restored.update(&different, 1).unwrap();
+    assert_eq!(changed.node_for_event(1), None);
+    assert!(changed.node_for_key(0, 1).unwrap() > restored.node_for_key(0, 1).unwrap());
+}
+
+#[test]
+fn list_state_survives_order_changes_and_scopes_drop_with_items() {
+    let props = ComponentProps::new(widgets::ITEM_LIST, InitialState::Number(3)).unwrap();
+    let mut component = widgets::create(props).unwrap();
+    assert_eq!(component.stats().signals, 6);
+    component.dispatch(20).unwrap();
+    component.dispatch(26).unwrap();
+    assert_eq!(component.stats().signals, 4);
+    component.dispatch(2).unwrap();
+    let html = component.view().unwrap().render().unwrap().into_string();
+    assert!(html.find("Item C:").unwrap() < html.find("Item A:").unwrap());
+    assert!(html.contains(">1</output>"));
+    component.dispatch(21).unwrap();
+    component.dispatch(3).unwrap();
+    assert!(
+        !component
+            .view()
+            .unwrap()
+            .render()
+            .unwrap()
+            .as_str()
+            .contains("Item A:")
+    );
+    assert_eq!(component.stats().signals, 4);
+    component.dispatch(3).unwrap();
+    assert!(
+        component
+            .view()
+            .unwrap()
+            .render()
+            .unwrap()
+            .as_str()
+            .contains(">1</output>")
+    );
+    component.dispatch(22).unwrap();
+    component.dispatch(30).unwrap();
+    assert_eq!(component.stats().signals, 0);
+    assert!(
+        component
+            .view()
+            .unwrap()
+            .render()
+            .unwrap()
+            .as_str()
+            .contains("No visible items.")
     );
 }

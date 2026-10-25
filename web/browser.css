@@ -5,3 +5,8 @@ button:disabled { opacity: .45; }
 output { font-weight: 700; }
 pre { white-space: pre-wrap; font-size: 14px; }
 #fixtures { display: none; }
+
+ul { list-style: none; padding: 0; }
+li { border-top: 1px solid #dce3df; padding: 10px 0; }
+li output { display: inline-block; min-width: 2ch; }
+li button { font-size: 15px; padding: 7px 10px; }

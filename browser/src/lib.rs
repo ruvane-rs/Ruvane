@@ -2,7 +2,7 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
-use ruvane::{BrowserCommands, Component, ComponentError, ComponentProps, View};
+use ruvane::{BrowserCommands, Component, ComponentError, ComponentProps, View, ViewSnapshot};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -40,7 +40,7 @@ pub enum BrowserError {
     Reactive = 6,
     /// The application rejected the component props.
     InvalidProps = 7,
-    /// The component returned an invalid view or changed its structure.
+    /// The component returned an invalid view or patch.
     InvalidView = 8,
 }
 
@@ -74,6 +74,7 @@ struct Instance {
     root: u32,
     component: Box<dyn Component>,
     view: View,
+    snapshot: ViewSnapshot,
 }
 
 /// Owns components and encodes their DOM updates. The factory belongs to the application.
@@ -126,41 +127,61 @@ impl BrowserRuntime {
         let component = (self.factory)(props)?;
         Self::resources(component.as_ref())?;
         let view = component.view()?;
-        let commands = view.commands(id).map_err(|_| BrowserError::InvalidView)?;
+        let snapshot = view.snapshot().map_err(|_| BrowserError::InvalidView)?;
+        let commands = snapshot
+            .commands(id)
+            .map_err(|_| BrowserError::InvalidView)?;
         self.instances.insert(
             id,
             Instance {
                 root,
                 component,
                 view,
+                snapshot,
             },
         );
         self.buffer = commands;
         Ok(id)
     }
 
-    /// Runs a declared event and queues changed text and button states.
+    /// Dispatches an application event through one of its live nodes.
     pub fn dispatch(&mut self, view: u32, event: u32) -> Result<(), BrowserError> {
+        self.ready()?;
+        let instance = self
+            .instances
+            .get(&view)
+            .ok_or(BrowserError::InvalidHandle)?;
+        let node = instance
+            .snapshot
+            .node_for_event(event)
+            .ok_or(BrowserError::InvalidEvent)?;
+        self.dispatch_node(view, node, event)
+    }
+
+    /// Runs a node-bound event. Retired node handles cannot trigger new bindings.
+    pub fn dispatch_node(&mut self, view: u32, node: u32, event: u32) -> Result<(), BrowserError> {
         self.ready()?;
         let instance = self
             .instances
             .get_mut(&view)
             .ok_or(BrowserError::InvalidHandle)?;
-        if !instance.view.has_event(event) {
+        if !instance.snapshot.has_event(node, event) {
             return Err(BrowserError::InvalidEvent);
         }
         let update = (|| {
             instance.component.dispatch(event)?;
             Self::resources(instance.component.as_ref())?;
             let next = instance.component.view()?;
-            let commands = next
-                .updates(&instance.view, view)
+            let (snapshot, commands) = instance
+                .snapshot
+                .update(&next, view)
                 .map_err(|_| BrowserError::InvalidView)?;
-            Ok::<_, BrowserError>((next, commands))
+            Ok::<_, BrowserError>((next, snapshot, commands))
         })();
         match update {
-            Ok((next, commands)) => {
+            Ok((next, snapshot, commands)) => {
                 instance.view = next;
+                instance.snapshot = snapshot;
                 self.buffer = commands;
                 Ok(())
             }
@@ -374,7 +395,8 @@ mod tests {
                 let mut view = View::new();
                 view.button(0, "Run", 42, false)?;
                 if self.fired {
-                    view.button(0, "Extra", 43, false)?;
+                    view.keyed_button(0, 1, "Extra", 43, false)?;
+                    view.keyed_button(0, 1, "Duplicate", 44, false)?;
                 }
                 Ok(view)
             }
@@ -412,7 +434,7 @@ mod tests {
             };
             assert_eq!(runtime.dispatch(id, 42), Err(expected));
             assert_eq!(runtime.live_instances(), 0);
-            assert_eq!(runtime.command_bytes(), b"RVN1\0\0\0\0");
+            assert_eq!(runtime.command_bytes(), b"RVN2\0\0\0\0");
             assert_eq!(runtime.dispatch(id, 42), Err(BrowserError::InvalidHandle));
         }
         assert_eq!(runtime.mount(1, counter(1)), Err(BrowserError::Limit));

@@ -3,6 +3,8 @@ use ruvane::{
     BROWSER_BRIDGE_MODULE, Document, InternalUrl, MediaType, Response, Router, Server, Tag,
     element, fragment, module_script,
 };
+#[path = "support/browser_fixtures.rs"]
+mod fixtures;
 #[path = "support/widgets.rs"]
 mod widgets;
 
@@ -34,6 +36,19 @@ fn page(tests: bool, scripts: bool) -> ruvane::Html {
                 .attr(Attribute::Id, "toggle")
                 .child(island(widgets::TOGGLE, InitialState::Boolean(true))),
         )
+        .child(
+            element(Tag::Div)
+                .attr(Attribute::Id, "item-list")
+                .child(island(widgets::ITEM_LIST, InitialState::Number(3))),
+        )
+        .child(if tests {
+            element(Tag::Div)
+                .attr(Attribute::Id, "empty-list")
+                .child(island(widgets::ITEM_LIST, InitialState::Number(0)))
+                .render()
+        } else {
+            ruvane::Html::default()
+        })
         .render();
     let script = if scripts {
         module_script(
@@ -48,7 +63,7 @@ fn page(tests: bool, scripts: bool) -> ruvane::Html {
         ruvane::Html::default()
     };
     Document::new(
-        "Ruvane alpha.13 — Shared views and hydration",
+        "Ruvane alpha.14 — Keyed views and dynamic lists",
         fragment([
             element(Tag::H1)
                 .child("Ruvane / Server HTML + Rust/Wasm")
@@ -79,7 +94,7 @@ fn wrong_version() -> Vec<u8> {
     bytes.extend(b"memory");
     bytes.extend([2, 0, 18]);
     bytes.extend(b"ruvane_abi_version");
-    bytes.extend([0, 0, 10, 6, 1, 4, 0, 65, 1, 11]);
+    bytes.extend([0, 0, 10, 6, 1, 4, 0, 65, 2, 11]);
     bytes
 }
 
@@ -111,6 +126,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     router.get("/health", |_| Response::text("ok\n"))?;
     router.get("/assets/app.wasm", move |_| {
         Response::bytes(bytes.to_vec(), MediaType::WebAssembly)
+    })?;
+    let invalid_patch = fixtures::invalid_patch();
+    router.get("/assets/invalid-patch.wasm", move |_| {
+        Response::bytes(invalid_patch.clone(), MediaType::WebAssembly)
     })?;
     let wrong = wrong_version();
     router.get("/assets/wrong-version.wasm", move |_| {

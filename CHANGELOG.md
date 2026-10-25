@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.0-alpha.14 — Unreleased
+
+- Add explicit sibling keys and ViewSnapshot reconciliation with checked monotonic
+  DOM handles. Surviving keyed subtrees keep their nodes across reorder; removed
+  handles are never reused. Tag or event changes replace the node lifetime.
+- Add list/list-item elements, conditional branches and structural updates for
+  inserting, deleting and ordering subtrees. Keep per-view node/depth/event caps;
+  allow 256 commands per 64 KiB frame for complete structural transitions.
+- Introduce RVN2 and browser ABI v3. Creation carries keys; new commands remove a
+  subtree or place a node before a sibling. Dispatch identifies view, node and
+  application event so expired bindings cannot alias a new element.
+- Validate complete patch plans against copied metadata before DOM changes.
+  Remove deleted handlers, retain surviving handlers and restore focus for a
+  moved element that remains enabled. Preserve SSR on failed initial hydration.
+- Add a shared item-list component with scoped item state, add/remove, counters,
+  reverse order, filtering and an empty branch. Filtering retains hidden model
+  state; logical deletion releases it. The demo caps live logical items at four.
+- Test sibling-key collisions, handle exhaustion/retirement, SSR key mismatches,
+  real DOM identity/focus and malformed patches without partial text updates.
+  Exercise 1,000 add/remove cycles in native, Wasm and browser tests.
+- Keep zero third-party dependencies and the core unsafe-code prohibition.
+
 ## 0.1.0-alpha.13 — Unreleased
 
 - Add shared View trees, Component, typed initial props and numeric/boolean state.

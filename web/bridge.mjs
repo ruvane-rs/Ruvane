@@ -1,7 +1,7 @@
-// DOM bridge for RVN1 commands.
-export const ABI_VERSION = 2;
-export const LIMITS = Object.freeze({ bytes: 65536, commands: 128, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
-const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button" });
+// DOM bridge for RVN2 commands.
+export const ABI_VERSION = 3;
+export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
+const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li" });
 const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects"];
 const invalid = () => new Error("Invalid Ruvane browser protocol");
 function uint(value, zero = false) {
@@ -24,7 +24,7 @@ export function validateExports(exports) {
 /** Decodes a batch before touching the DOM. */
 export function decodeCommands(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 8 || bytes.length > LIMITS.bytes) throw invalid();
-  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 49) throw invalid();
+  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 50) throw invalid();
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 4;
   const u8 = () => { if (offset >= bytes.length) throw invalid(); return bytes[offset++]; };
@@ -36,12 +36,12 @@ export function decodeCommands(bytes) {
   for (let i = 0; i < count; i++) {
     const op = u8(), view = uint(u32());
     if (op === 5) { commands.push({ op, view }); continue; }
-    if (![1, 2, 3, 4].includes(op)) throw invalid();
+    if (![1, 2, 3, 4, 6, 7].includes(op)) throw invalid();
     const node = uint(u32());
     if (op === 1) {
-      const parent = u32(), tag = u8();
+      const parent = u32(), tag = u8(), key = u32();
       if (!Object.hasOwn(TAGS, tag)) throw invalid();
-      commands.push({ op, view, node, parent, tag });
+      commands.push({ op, view, node, parent, tag, key });
     } else if (op === 2) {
       const size = u32();
       if (size > LIMITS.text || offset + size > bytes.length) throw invalid();
@@ -50,6 +50,12 @@ export function decodeCommands(bytes) {
       commands.push({ op, view, node, text });
     } else if (op === 3) {
       commands.push({ op, view, node, event: uint(u32()) });
+    } else if (op === 6) {
+      commands.push({ op, view, node });
+    } else if (op === 7) {
+      const before = u32();
+      if (before === node) throw invalid();
+      commands.push({ op, view, node, before });
     } else {
       const disabled = u8();
       if (disabled > 1) throw invalid();
@@ -99,7 +105,7 @@ class MountRejected extends Error {
   constructor() { super("Ruvane component props or mount rejected"); }
 }
 const mismatch = () => { throw new HydrationMismatch(); };
-const container = tag => tag === 0 || tag === 1 || tag === 3;
+const container = tag => [0, 1, 3, 7, 8].includes(tag);
 const leaf = tag => [2, 4, 5, 6].includes(tag);
 
 /** Checks and copies public mount props. */
@@ -131,32 +137,69 @@ function host(root) {
     parent = parent.parentElement;
   }
 }
-function initialPlan(commands, id, root) {
-  const nodes = new Map([[0, { element: root, tag: 0, depth: 0, children: [] }]]);
-  let listeners = 0;
+function accepts(parent, tag) {
+  if (parent === 7) return tag === 8;
+  if (tag === 8) return false;
+  if (parent === 3) return [4, 5, 6].includes(tag);
+  return [0, 1, 8].includes(parent);
+}
+
+/** Validates decoded commands against a copy of the live tree. */
+export function planCommands(commands, id, previous, initial = false) {
+  uint(id);
+  if (!Array.isArray(commands) || commands.length > LIMITS.commands) throw invalid();
+  const nodes = new Map([...previous.nodes].map(([key, node]) => [key, { ...node, children: [...node.children] }]));
+  const fresh = new Set(), seen = new Set();
+  let nextNode = uint(previous.nextNode, true);
   for (const command of commands) {
     if (command.view !== id) throw invalid();
+    uint(command.node);
+    const key = `${command.node}:${command.op}`;
+    if (seen.has(key)) throw invalid();
+    seen.add(key);
     if (command.op === 1) {
-      const parent = nodes.get(command.parent);
-      if (command.node !== nodes.size || nodes.size > LIMITS.nodes || !parent || !container(parent.tag) || parent.depth >= 8) throw invalid();
-      if (parent.tag === 3 && [1, 2, 3].includes(command.tag)) throw invalid();
-      nodes.set(command.node, { element: null, tag: command.tag, parent: command.parent, depth: parent.depth + 1, children: [], text: null, event: null, disabled: null });
-      parent.children.push(command.node);
-    } else {
-      const node = nodes.get(command.node);
-      if (!node) throw invalid();
-      if (command.op === 2 && leaf(node.tag) && node.text === null) node.text = command.text;
-      else if (command.op === 3 && node.tag === 6 && node.event === null && ++listeners <= LIMITS.listeners) node.event = command.event;
-      else if (command.op === 4 && node.tag === 6 && node.disabled === null) node.disabled = command.disabled;
-      else throw invalid();
+      const parent = nodes.get(uint(command.parent, true));
+      uint(command.key, true);
+      if (!Object.hasOwn(TAGS, command.tag) || command.node <= nextNode || nodes.size > LIMITS.nodes || !parent || !accepts(parent.tag, command.tag) || parent.depth >= 8) throw invalid();
+      if (command.key && parent.children.some(id => nodes.get(id).key === command.key)) throw invalid();
+      nodes.set(command.node, { element: null, key: command.key, tag: command.tag, parent: command.parent, depth: parent.depth + 1, children: [], text: null, event: null, disabled: null });
+      fresh.add(command.node); nextNode = command.node; parent.children.push(command.node);
+      continue;
     }
+    const node = nodes.get(command.node);
+    if (!node) throw invalid();
+    if (command.op === 2 && leaf(node.tag)) {
+      if (typeof command.text !== "string" || command.text.length > LIMITS.text || new TextEncoder().encode(command.text).length > LIMITS.text) throw invalid();
+      node.text = command.text;
+    } else if (command.op === 3 && node.tag === 6 && fresh.has(command.node) && node.event === null) {
+      node.event = uint(command.event);
+    } else if (command.op === 4 && node.tag === 6 && typeof command.disabled === "boolean") {
+      node.disabled = command.disabled;
+    } else if (command.op === 6 && !initial && !fresh.has(command.node)) {
+      const siblings = nodes.get(node.parent).children;
+      siblings.splice(siblings.indexOf(command.node), 1);
+      const pending = [command.node];
+      while (pending.length) {
+        const id = pending.pop(); pending.push(...nodes.get(id).children); nodes.delete(id);
+      }
+    } else if (command.op === 7 && !initial) {
+      const before = uint(command.before, true);
+      if (before === command.node || (before && nodes.get(before)?.parent !== node.parent)) throw invalid();
+      const siblings = nodes.get(node.parent).children;
+      siblings.splice(siblings.indexOf(command.node), 1);
+      siblings.splice(before ? siblings.indexOf(before) : siblings.length, 0, command.node);
+    } else throw invalid();
   }
-  if (nodes.size === 1) throw invalid();
+  for (const command of commands) {
+    if (command.op !== 6 && (!nodes.has(command.node) || (command.op === 7 && command.before && !nodes.has(command.before)))) throw invalid();
+  }
+  if (nodes.size < 2) throw invalid();
+  let listeners = 0;
   for (const [id, node] of nodes) {
     if (id && leaf(node.tag) && node.text === null) throw invalid();
-    if (node.tag === 6 && (node.event === null || node.disabled === null)) throw invalid();
+    if (node.tag === 6 && (node.event === null || node.disabled === null || ++listeners > LIMITS.listeners)) throw invalid();
   }
-  return nodes;
+  return { nodes, nextNode };
 }
 function matchDom(nodes, root, inert) {
   function children(parent, element) {
@@ -166,6 +209,7 @@ function matchDom(nodes, root, inert) {
       if (!(actual instanceof HTMLElement) || actual.ownerDocument !== document || actual.namespaceURI !== "http://www.w3.org/1999/xhtml" || actual.localName !== TAGS[node.tag] || CLAIMS.has(actual)) mismatch();
       if (node.element && node.element !== actual) mismatch();
       const attributes = { "data-ruvane-node": String(id) };
+      if (node.key) attributes["data-ruvane-key"] = String(node.key);
       if (node.tag === 6) {
         attributes.type = "button";
         attributes["data-ruvane-click"] = String(node.event);
@@ -181,21 +225,6 @@ function matchDom(nodes, root, inert) {
   }
   children(nodes.get(0), root);
 }
-function updatePlan(commands, id, view) {
-  matchDom(view.nodes, view.root, false);
-  const nodes = new Map([...view.nodes].map(([id, node]) => [id, { ...node }]));
-  const seen = new Set();
-  for (const command of commands) {
-    const node = nodes.get(command.node), key = `${command.node}:${command.op}`;
-    if (command.view !== id || !node || seen.has(key)) throw invalid();
-    seen.add(key);
-    if (command.op === 2 && leaf(node.tag)) node.text = command.text;
-    else if (command.op === 4 && node.tag === 6) node.disabled = command.disabled;
-    else throw invalid();
-  }
-  return nodes;
-}
-
 /** Loads a module and manages mounted or hydrated views. Disposal is final. */
 export async function createRuntime(url) {
   let exports = await loadModule(url);
@@ -253,12 +282,20 @@ export async function createRuntime(url) {
   }
   function bind(view, id, nodeId, node) {
     const listener = () => {
-      if (closed || !views.has(id)) return;
-      try { dispatch(id, node.event); }
+      if (closed || views.get(id)?.nodes.get(nodeId)?.element !== node.element) return;
+      try { dispatchNode(id, nodeId, node.event); }
       catch { stop(true); console.error("Ruvane browser runtime stopped"); }
     };
     node.element.addEventListener("click", listener);
     view.listeners.set(nodeId, listener); view.events.add(node.event);
+  }
+  function createElement(nodes, command) {
+    const node = nodes.get(command.node);
+    node.element = document.createElement(TAGS[node.tag]);
+    node.element.setAttribute("data-ruvane-node", String(command.node));
+    if (node.key) node.element.setAttribute("data-ruvane-key", String(node.key));
+    if (node.tag === 6) { node.element.type = "button"; node.element.disabled = true; }
+    nodes.get(node.parent).element.appendChild(node.element);
   }
   function drain(id, phase) {
     const batch = commands(), view = views.get(id);
@@ -269,35 +306,43 @@ export async function createRuntime(url) {
       forget(id); return;
     }
     const initial = phase !== "dispatch";
-    const nodes = initial ? initialPlan(batch, id, view.root) : updatePlan(batch, id, view);
+    if (!initial) matchDom(view.nodes, view.root, false);
+    const plan = planCommands(batch, id, view, initial), nodes = plan.nodes;
     if (phase === "hydrate") matchDom(nodes, view.root, true);
     if (phase === "mount" && view.root.childNodes.length) throw invalid();
     if (result(exports.ruvane_commands_clear()) !== 1) throw invalid();
-    view.nodes = nodes;
-    if (initial) {
-      for (const [nodeId, node] of nodes) {
-        if (nodeId === 0) continue;
-        if (phase === "mount") {
-          node.element = document.createElement(TAGS[node.tag]);
-          node.element.setAttribute("data-ruvane-node", String(nodeId));
-          if (node.tag === 6) {
-            node.element.type = "button";
-            node.element.setAttribute("data-ruvane-click", String(node.event));
-          }
-          if (node.text !== null) node.element.textContent = node.text;
-          nodes.get(node.parent).element.appendChild(node.element);
-        }
-      }
-      for (const [nodeId, node] of nodes) {
-        if (node.tag === 6) { bind(view, id, nodeId, node); node.element.disabled = node.disabled; }
-      }
-    } else {
+    const old = view.nodes;
+    const focused = view.root.contains(document.activeElement) ? document.activeElement : null;
+    for (const [nodeId, listener] of view.listeners) {
+      if (!nodes.has(nodeId)) { old.get(nodeId).element.removeEventListener("click", listener); view.listeners.delete(nodeId); }
+    }
+    view.nodes = nodes; view.nextNode = plan.nextNode;
+    if (phase !== "hydrate") {
       for (const command of batch) {
+        if (command.op === 6) { old.get(command.node).element.remove(); continue; }
+        if (command.op === 1) { createElement(nodes, command); continue; }
         const node = nodes.get(command.node);
         if (command.op === 2) node.element.textContent = command.text;
-        else node.element.disabled = command.disabled;
+        else if (command.op === 3) node.element.setAttribute("data-ruvane-click", String(command.event));
+        else if (command.op === 7) {
+          const before = command.before ? nodes.get(command.before).element : null;
+          if (node.element.nextSibling !== before) nodes.get(node.parent).element.insertBefore(node.element, before);
+        }
       }
     }
+    view.events.clear();
+    for (const [nodeId, node] of nodes) {
+      if (node.tag === 6) {
+        node.element.disabled = node.disabled;
+        view.events.add(node.event);
+      }
+    }
+    matchDom(nodes, view.root, false);
+    for (const [nodeId, node] of nodes) {
+      if (node.tag === 6 && !view.listeners.has(nodeId)) bind(view, id, nodeId, node);
+    }
+    // insertBefore can blur a moved button. Restore focus only if it survived.
+    if (focused && view.root.contains(focused) && !focused.disabled && document.activeElement !== focused) focused.focus({ preventScroll: true });
   }
   function start(root, props, hydrated) {
     live(); host(root);
@@ -313,7 +358,7 @@ export async function createRuntime(url) {
         throw invalid();
       }
       if (views.has(id)) throw invalid();
-      views.set(id, { root, hydrated, nodes: new Map(), listeners: new Map(), events: new Set() });
+      views.set(id, { root, hydrated, nodes: new Map([[0, { element: root, tag: 0, depth: 0, children: [], key: 0 }]]), nextNode: 0, listeners: new Map(), events: new Set() });
       CLAIMS.add(root);
       drain(id, hydrated ? "hydrate" : "mount");
       return Object.freeze({ id, dispatch: event => dispatch(id, event), dispose: () => disposeView(id) });
@@ -329,11 +374,18 @@ export async function createRuntime(url) {
     live(); uint(id); uint(event);
     const view = views.get(id);
     if (!view) throw new Error("Ruvane view disposed");
-    if (!view.events.has(event)) throw new RangeError("Unknown Ruvane component event");
+    const found = [...view.nodes].find(([, node]) => node.event === event);
+    if (!found) throw new RangeError("Unknown Ruvane component event");
+    return dispatchNode(id, found[0], event);
+  }
+  function dispatchNode(id, nodeId, event) {
+    live(); uint(id); uint(nodeId); uint(event);
+    const view = views.get(id), node = view?.nodes.get(nodeId);
+    if (!node || node.event !== event) throw new RangeError("Expired Ruvane event binding");
     if (busy) throw new Error("Ruvane bridge busy");
     busy = true;
     try {
-      if (result(exports.ruvane_dispatch(id, event)) !== 1) throw invalid();
+      if (result(exports.ruvane_dispatch(id, nodeId, event)) !== 1) throw invalid();
       drain(id, "dispatch");
     } catch (error) { stop(true); throw error; }
     finally { busy = false; }
