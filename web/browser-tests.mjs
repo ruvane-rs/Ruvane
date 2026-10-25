@@ -24,7 +24,7 @@ const load = () => createRuntime("/assets/app.wasm");
 await test("real Wasm ABI, props, invalid events and stale handles", async () => {
   const { instance } = await WebAssembly.instantiate(await (await fetch("/assets/app.wasm")).arrayBuffer(), {});
   const e = validateExports(instance.exports);
-  equal(e.ruvane_abi_version(), 3, "ABI");
+  equal(e.ruvane_abi_version(), 4, "ABI");
   equal(e.ruvane_mount(0, 1, 1, 0), 0, "invalid root");
   equal(e.ruvane_last_error(), 1, "root error");
   equal(e.ruvane_mount(1, 2, 2, 2), 0, "invalid boolean");
@@ -111,13 +111,13 @@ await test("wrong MIME, old ABI and cross-origin module rejection", async () => 
   await rejects(() => createRuntime("https://invalid.example/module.wasm"));
 });
 await test("strict command framing and typed mount props", async () => {
-  const header = new Uint8Array([82, 86, 78, 50, 0, 0, 0, 0]);
+  const header = new Uint8Array([82, 86, 78, 51, 0, 0, 0, 0]);
   equal(decodeCommands(header), [], "empty batch");
   const bom = new TextEncoder().encode("\uFEFFtext"), frame = new Uint8Array(21 + bom.length);
-  frame.set([82,86,78,50,1,0,0,0,2,1,0,0,0,1,0,0,0]);
+  frame.set([82,86,78,51,1,0,0,0,2,1,0,0,0,1,0,0,0]);
   new DataView(frame.buffer).setUint32(17, bom.length, true); frame.set(bom, 21);
   equal(decodeCommands(frame)[0].text, "\uFEFFtext", "BOM preserved");
-  for (const bytes of [header.slice(0, 7), new Uint8Array(65537), new Uint8Array([82,86,78,50,1,0,0,0,99,1,0,0,0]), new Uint8Array([...header, 0])]) await rejects(() => decodeCommands(bytes));
+  for (const bytes of [header.slice(0, 7), new Uint8Array(65537), new Uint8Array([82,86,78,51,1,0,0,0,99,1,0,0,0]), new Uint8Array([...header, 0])]) await rejects(() => decodeCommands(bytes));
   for (const value of [-1, 1.5, NaN, Infinity, 0x100000000, "5"]) await rejects(() => validateProps(counter(value)));
   await rejects(() => validateProps({ component: 1, state: { kind: "boolean", value: 1 } }));
 });
@@ -128,6 +128,7 @@ await test("server-only response contains initial HTML with scripts blocked", as
   equal(values(document.querySelector("#counter")), ["5", "10"], "SSR values before Wasm");
   equal(values(document.querySelector("#toggle")), ["Enabled"], "SSR boolean");
   assert([...document.querySelectorAll("button")].every(button => button.disabled), "SSR controls inert");
+  assert([...document.querySelectorAll("input, textarea")].every(field => field.disabled), "SSR fields inert");
   equal(document.querySelectorAll("script").length, 0, "no scripts needed for content");
 });
 await test("hydration reuses elements and text nodes, preserves focus and starts at 5", async () => {
@@ -310,6 +311,180 @@ await test("a valid text update followed by an invalid structural command applie
     assert(button.firstChild === text, "text node untouched");
     equal(runtime.stats(), zero("faulted"), "failed runtime cleaned up");
     button.click(); equal(root.childNodes.length, 0, "listener removed");
+  } finally { runtime.dispose(); root.remove(); }
+});
+const type = (element, value, composing = false) => {
+  element.value = value;
+  element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", isComposing: composing }));
+};
+const send = form => {
+  const event = new Event("submit", { bubbles: true, cancelable: true });
+  form.dispatchEvent(event); assert(event.defaultPrevented, "native navigation prevented");
+};
+const fields = root => [root.querySelector('input[type="text"]'), root.querySelector("textarea"), root.querySelector('input[type="checkbox"]')];
+
+await test("field SSR escapes defaults and hydrates without replacing text or controls", async () => {
+  const runtime = await load(), root = serverRoot("field-probe");
+  try {
+    const [title, notes, checked] = fields(root), nodes = [...root.querySelectorAll("*")];
+    equal([title.value, notes.value, checked.checked], ["Rust 🦀 <tag>", "\nNotes </textarea> & 🦀\n", true], "parsed SSR defaults");
+    assert(title.disabled && notes.disabled && checked.disabled, "SSR fields inert");
+    assert(!root.querySelector("script, tag"), "defaults cannot create markup");
+    const observer = new MutationObserver(() => {}); observer.observe(root, { subtree: true, childList: true, characterData: true });
+    runtime.hydrate(root);
+    equal(observer.takeRecords().length, 0, "no child or text replacement"); observer.disconnect();
+    assert(nodes.every((node, index) => node === root.querySelectorAll("*")[index]), "all elements reused");
+    assert(!title.disabled && !notes.disabled && !checked.disabled, "fields activated");
+    type(title, "Changed 🦀"); type(notes, "Line 1\nLine 2\t&");
+    equal([title.defaultValue, notes.defaultValue], ["Rust 🦀 <tag>", "\nNotes </textarea> & 🦀\n"], "HTML seeds unchanged");
+    equal([title.value, notes.value], ["Changed 🦀", "Line 1\nLine 2\t&"], "live values updated");
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("hydration adopts all dirty values and preserves the active field selection", async () => {
+  const runtime = await load(), root = serverRoot("field-probe");
+  try {
+    const [title, notes, checked] = fields(root);
+    title.disabled = false; notes.disabled = false; checked.disabled = false;
+    title.value = "Before hydration"; notes.value = "Autofill 🦀\nsecond line"; checked.checked = false;
+    notes.focus(); notes.setSelectionRange(2, 9, "backward");
+    const view = runtime.hydrate(root);
+    equal([title.value, notes.value, checked.checked], ["Before hydration", "Autofill 🦀\nsecond line", false], "all values adopted");
+    assert(document.activeElement === notes, "focus preserved");
+    equal([notes.selectionStart, notes.selectionEnd, notes.selectionDirection], [2, 9, "backward"], "selection preserved");
+    view.dispatch(1);
+    equal([title.value, notes.value, checked.checked], ["Before hydration", "Autofill 🦀\nsecond line", false], "Rust retained adopted values");
+    view.dispatch(2); equal([title.value, notes.value, checked.checked], ["", "", false], "Rust reset");
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("task forms validate in Rust, flush dirty fields on submit and keep user text inert", async () => {
+  const runtime = await load(), root = serverRoot("tasks");
+  try {
+    const view = runtime.hydrate(root), [title, notes] = fields(root), form = root.querySelector("form");
+    send(form); equal(values(root), ["Enter a task name."], "required validation");
+    equal(title.getAttribute("aria-invalid"), "true", "invalid state");
+    type(title, "🦀".repeat(21)); send(form);
+    assert(values(root)[0].includes("80 UTF-8 bytes"), "byte-based domain limit");
+    title.value = '<script>alert("x")</script>'; notes.value = "Notes 🦀\n& more";
+    send(form);
+    equal(rows(root).length, 1, "task added from both dirty fields");
+    assert(rows(root)[0].textContent.includes('<script>alert("x")</script> — Notes 🦀\n& more'), "literal task text");
+    assert(!root.querySelector("script"), "no user markup");
+    equal([title.value, notes.value, values(root)[0]], ["", "", ""], "success resets form and errors");
+    const checkbox = root.querySelector('input[type="checkbox"]'); checkbox.click();
+    assert(checkbox.checked, "typed checkbox event");
+    action(root, "Hide completed").click(); equal(rows(root).length, 0, "filter removes row");
+    checkbox.click(); action(root, "Show completed").click();
+    assert(root.querySelector('input[type="checkbox"]').checked, "detached checkbox cannot change state");
+    action(root, "Remove task").click(); equal(runtime.stats().rustSignals, 0, "task scope released");
+    await rejects(() => view.dispatch(5, true)); await rejects(() => view.dispatch(1, "wrong"));
+    equal(runtime.stats().state, "active", "payload errors stay local");
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("field reordering keeps focus, identity, UTF-16 cursor positions and selection", async () => {
+  const runtime = await load(), root = serverRoot("field-probe");
+  try {
+    const view = runtime.hydrate(root), [title, notes] = fields(root);
+    type(title, "A🦀BC"); title.focus(); title.setSelectionRange(1, 3, "backward");
+    for (let n = 0; n < 20; n++) {
+      view.dispatch(1);
+      assert(fields(root)[0] === title && document.activeElement === title, "input identity and focus");
+      equal([title.value, title.selectionStart, title.selectionEnd, title.selectionDirection], ["A🦀BC", 1, 3, "backward"], "input selection");
+    }
+    notes.focus(); notes.setSelectionRange(1, 6, "forward"); view.dispatch(1);
+    assert(document.activeElement === notes, "textarea focus");
+    equal([notes.selectionStart, notes.selectionEnd, notes.selectionDirection], [1, 6, "forward"], "textarea selection");
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("IME composition survives reordering, defers submission and respects explicit resets", async () => {
+  const runtime = await load(), root = serverRoot("field-probe");
+  try {
+    const view = runtime.hydrate(root), [title] = fields(root), form = root.querySelector("form");
+    title.focus(); title.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    type(title, "日本語", true); title.setSelectionRange(3, 3);
+    const observer = new MutationObserver(() => {}); observer.observe(form, { subtree: true, childList: true });
+    view.dispatch(1);
+    const removed = observer.takeRecords().flatMap(record => [...record.removedNodes]); observer.disconnect();
+    assert(!removed.some(node => node === title || node.contains(title)), "active IME subtree never detached");
+    assert(document.activeElement === title && title.value === "日本語", "composition value and focus retained");
+    send(form); equal(values(root), ["0"], "composition submit ignored");
+    title.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "日本語" }));
+    title.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    view.dispatch(1); equal(title.value, "日本語", "committed Rust value");
+    send(form); equal(values(root), ["1"], "submit after composition");
+    title.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })); type(title, "未確定", true);
+    view.dispatch(2); equal(title.value, "未確定", "reset waits for composition end");
+    title.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    equal(title.value, "", "explicit reset wins on composition end");
+    view.dispatch(1); equal(title.value, "", "reset retained in Rust");
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("retired text fields lose all listeners and fresh fields use the current Rust value", async () => {
+  const runtime = await load(), root = serverRoot("field-probe");
+  try {
+    const view = runtime.hydrate(root), notes = fields(root)[1], baseline = runtime.stats();
+    type(notes, "Kept notes"); view.dispatch(4);
+    equal(runtime.stats().eventListeners, baseline.eventListeners - 3, "three listeners removed");
+    type(notes, "Stale notes"); view.dispatch(4);
+    const fresh = fields(root)[1]; assert(fresh !== notes, "new field identity");
+    equal(fresh.value, "Kept notes", "old listener inert");
+    equal(runtime.stats(), baseline, "same live resource counts");
+    view.dispose(); type(fresh, "Disposed notes");
+    equal(runtime.stats(), zero("active"), "all form listeners and handles released");
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("UTF-8 event quotas and invalid input do not dispose a healthy form", async () => {
+  const runtime = await load(), root = serverRoot("tasks");
+  try {
+    const view = runtime.hydrate(root), [title, notes] = fields(root);
+    view.dispatch(5, "🦀".repeat(256)); equal(title.value, "🦀".repeat(256), "exact byte quota accepted");
+    for (const value of ["🦀".repeat(257), "bad\u0000value", "line\nbreak", "\ud800", "\udc00", false, undefined]) await rejects(() => view.dispatch(5, value));
+    equal(title.value, "🦀".repeat(256), "rejected events preserve model");
+    type(title, "x".repeat(1025)); equal(title.value, "🦀".repeat(256), "invalid DOM input restored");
+    title.value = "x".repeat(1025); send(root.querySelector("form"));
+    equal(title.value, "🦀".repeat(256), "invalid dirty submit restored");
+    equal(rows(root).length, 0, "invalid payload cannot submit");
+    type(notes, "Line\nTwo\t🦀"); equal(notes.value, "Line\nTwo\t🦀", "textarea allows line breaks and tabs");
+    view.dispatch(4); equal([title.value, notes.value], ["", ""], "view still usable");
+    equal(runtime.stats().state, "active", "local rejection");
+  } finally { runtime.dispose(); root.remove(); }
+});
+await test("field default and attribute mismatches preserve server content and isolate live views", async () => {
+  const runtime = await load(), good = emptyRoot();
+  const mutations = [
+    root => fields(root)[0].setAttribute("value", "Wrong default"),
+    root => fields(root)[0].setAttribute("type", "password"),
+    root => fields(root)[0].setAttribute("name", "unexpected"),
+    root => fields(root)[1].textContent = "Wrong notes",
+    root => fields(root)[2].removeAttribute("checked"),
+    root => root.querySelector("form").setAttribute("action", "/unexpected"),
+    root => root.querySelector("label span").textContent = "",
+    root => fields(root)[0].setAttribute("data-ruvane-epoch", "1"),
+  ];
+  try {
+    runtime.mount(good, counter(0)); const baseline = runtime.stats();
+    for (const mutate of mutations) {
+      const root = serverRoot("field-probe");
+      try {
+        mutate(root); const before = root.outerHTML;
+        await rejects(() => runtime.hydrate(root));
+        equal(root.outerHTML, before, "SSR remains intact"); equal(runtime.stats(), baseline, "native rollback");
+      } finally { root.remove(); }
+    }
+    good.querySelector("button").click(); equal(values(good), ["1", "2"], "other component active");
+  } finally { runtime.dispose(); good.remove(); }
+});
+await test("1000 typed task additions and removals release field listeners and item scopes", async () => {
+  const runtime = await load(), root = serverRoot("tasks");
+  try {
+    runtime.hydrate(root); const baseline = runtime.stats(), [title, notes] = fields(root), form = root.querySelector("form");
+    for (let n = 0; n < 1000; n++) {
+      type(title, `Task ${n} 🦀`); type(notes, `Notes ${n}\nsecond line`); send(form);
+      equal(rows(root).length, 1, "typed task added");
+      const checked = root.querySelector('input[type="checkbox"]'); checked.click();
+      assert(checked.checked, "boolean accepted"); action(root, "Remove task").click();
+      checked.click(); equal(runtime.stats(), baseline, "no retained task resources");
+      equal([title.value, notes.value], ["", ""], "reset values");
+    }
   } finally { runtime.dispose(); root.remove(); }
 });
 const passed = results.filter(result => result.passed).length;

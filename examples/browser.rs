@@ -49,6 +49,19 @@ fn page(tests: bool, scripts: bool) -> ruvane::Html {
         } else {
             ruvane::Html::default()
         })
+        .child(
+            element(Tag::Div)
+                .attr(Attribute::Id, "tasks")
+                .child(island(widgets::TASK_FORM, InitialState::Number(0))),
+        )
+        .child(if tests {
+            element(Tag::Div)
+                .attr(Attribute::Id, "field-probe")
+                .child(island(widgets::FIELDS_PROBE, InitialState::Number(0)))
+                .render()
+        } else {
+            ruvane::Html::default()
+        })
         .render();
     let script = if scripts {
         module_script(
@@ -63,7 +76,7 @@ fn page(tests: bool, scripts: bool) -> ruvane::Html {
         ruvane::Html::default()
     };
     Document::new(
-        "Ruvane alpha.14 — Keyed views and dynamic lists",
+        "Ruvane alpha.15 — Typed controls and forms",
         fragment([
             element(Tag::H1)
                 .child("Ruvane / Server HTML + Rust/Wasm")
@@ -94,7 +107,7 @@ fn wrong_version() -> Vec<u8> {
     bytes.extend(b"memory");
     bytes.extend([2, 0, 18]);
     bytes.extend(b"ruvane_abi_version");
-    bytes.extend([0, 0, 10, 6, 1, 4, 0, 65, 2, 11]);
+    bytes.extend([0, 0, 10, 6, 1, 4, 0, 65, 3, 11]);
     bytes
 }
 

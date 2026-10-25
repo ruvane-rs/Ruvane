@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { decodeCommands, validateExports, validateProps, planCommands, LIMITS } from "../../web/bridge.mjs";
 
 function frame(payload = [], count = 0) {
-  return new Uint8Array([82, 86, 78, 50, ...word(count), ...payload]);
+  return new Uint8Array([82, 86, 78, 51, ...word(count), ...payload]);
 }
 const word = n => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
 
@@ -52,7 +52,7 @@ test("compiled Rust module has no host imports and executes the real reactor", a
     assert.equal(e.ruvane_commands_clear(), 1);
     return commands;
   };
-  assert.equal(e.ruvane_abi_version(), 3);
+  assert.equal(e.ruvane_abi_version(), 4);
   assert.equal(e.ruvane_mount(0, 1, 1, 0), 0);
   assert.equal(e.ruvane_last_error(), 1);
   for (const args of [[1, 1, 2, 1], [1, 2, 2, 2], [1, 1, 1, 1001], [1, 99, 1, 0]]) {
@@ -166,6 +166,88 @@ test("compiled keyed list preserves handles, retires bindings and releases remov
     assert.equal(e.ruvane_dispatch(id, old, 16 + last * 4), 0);
     assert.equal(model.nodes.size, 20);
   }
+  assert.equal(e.ruvane_dispose(id), 1); e.ruvane_commands_clear();
+  assert.deepEqual([e.ruvane_live_instances(), e.ruvane_live_signals(), e.ruvane_live_effects()], [0, 0, 0]);
+});
+
+test("typed field commands are complete, bounded and monotonic", () => {
+  const commands = [create(1, 1, 0, 9, 1), { op: 3, view: 1, node: 1, event: 1 },
+    create(1, 2, 1, 10, 1), create(1, 3, 2, 4, 1), label(3, "Name"), create(1, 4, 2, 11, 2),
+    { op: 3, view: 1, node: 4, event: 5 }, { op: 4, view: 1, node: 4, disabled: false },
+    { op: 8, view: 1, node: 4, value: "Rust 🦀", epoch: 0 }, { op: 10, view: 1, node: 4, invalid: false }];
+  const initial = planCommands(commands, 1, blank(), true);
+  const changed = planCommands([{ op: 8, view: 1, node: 4, value: "", epoch: 1 }], 1, initial);
+  assert.equal(changed.nodes.get(4).value, "");
+  assert.equal(changed.nodes.get(4).seed, "Rust 🦀");
+  assert.equal(initial.nodes.get(4).value, "Rust 🦀");
+  for (const batch of [
+    [{ op: 8, view: 1, node: 4, value: "x", epoch: 0 }],
+    [{ op: 8, view: 1, node: 4, value: "🦀".repeat(257), epoch: 1 }],
+    [{ op: 8, view: 1, node: 4, value: "line\nbreak", epoch: 1 }],
+    [{ op: 9, view: 1, node: 4, checked: true, epoch: 1 }],
+    [create(1, 5, 1, 9, 2)],
+  ]) assert.throws(() => planCommands(batch, 1, changed));
+  for (const index of [1, 6, 7, 8, 9]) assert.throws(() => planCommands(commands.filter((_, i) => i !== index), 1, blank(), true));
+  const value = new TextEncoder().encode("🦀");
+  const encoded = frame([8, ...word(1), ...word(4), ...word(7), ...word(value.length), ...value], 1);
+  assert.deepEqual(decodeCommands(encoded), [{ op: 8, view: 1, node: 4, epoch: 7, value: "🦀" }]);
+  for (let size = 0; size < encoded.length; size++) assert.throws(() => decodeCommands(encoded.slice(0, size)));
+});
+
+test("compiled forms validate staged UTF-8, typed events and stale field handles", async () => {
+  const file = process.env.RUVANE_WASM_FILE || new URL("../../target/wasm32-unknown-unknown/release/ruvane_browser.wasm", import.meta.url);
+  const { instance } = await WebAssembly.instantiate(await readFile(file), {});
+  const e = validateExports(instance.exports), id = e.ruvane_mount(1, 4, 1, 0);
+  let model = blank();
+  const drain = initial => {
+    const commands = decodeCommands(new Uint8Array(e.memory.buffer, e.ruvane_commands_ptr() >>> 0, e.ruvane_commands_len() >>> 0).slice());
+    model = planCommands(commands, id, model, initial); e.ruvane_commands_clear(); return commands;
+  };
+  const binding = event => [...model.nodes].find(([, node]) => node.event === event)[0];
+  const run = (event, value) => {
+    const node = binding(event); let kind = 0, scalar = 0;
+    if (typeof value === "string") {
+      kind = 1; const bytes = new TextEncoder().encode(value);
+      assert.equal(e.ruvane_event_begin(id, node, event, bytes.length), 1);
+      for (let offset = 0; offset < bytes.length; offset += 4) {
+        const count = Math.min(4, bytes.length - offset); let word = 0;
+        for (let n = 0; n < count; n++) word |= bytes[offset + n] << (8 * n);
+        assert.equal(e.ruvane_event_chunk(word >>> 0, count), 1);
+      }
+    } else if (typeof value === "boolean") { kind = 2; scalar = Number(value); }
+    assert.equal(e.ruvane_dispatch(id, node, event, kind, scalar), 1); return drain(false);
+  };
+  drain(true); const input = binding(5);
+  assert.equal(e.ruvane_event_begin(id, input, 5, 1025), 0);
+  assert.equal(e.ruvane_last_error(), 9);
+  assert.equal(e.ruvane_dispatch(id, input, 5, 2, 1), 0);
+  assert.equal(e.ruvane_last_error(), 9);
+  for (const [length, chunks] of [[2, [[0xc3, 1]]], [1, [[255, 1]]], [1, [[256, 1]]], [1, [[0, 0]]], [1, [[0, 5]]]]) {
+    assert.equal(e.ruvane_event_begin(id, input, 5, length), 1);
+    assert.equal(e.ruvane_dispose(id), 0); assert.equal(e.ruvane_last_error(), 5);
+    for (const chunk of chunks) e.ruvane_event_chunk(...chunk);
+    assert.equal(e.ruvane_dispatch(id, input, 5, 1, 0), 0); assert.equal(e.ruvane_last_error(), 9);
+    e.ruvane_commands_clear(); assert.equal(e.ruvane_live_instances(), 1);
+  }
+  assert.equal(e.ruvane_event_begin(id, input, 5, 0), 1);
+  e.ruvane_commands_clear(); run(1);
+  assert.equal(model.nodes.get(input).invalid, true);
+  run(5, "🦀".repeat(256)); run(1);
+  assert.ok([...model.nodes.values()].some(node => node.text?.includes("80 UTF-8 bytes")));
+  run(5, '<script>alert("x")</script>'); run(6, "Notes 🦀\nline two\t&"); run(1);
+  assert.equal(model.nodes.get(input).value, "");
+  assert.equal(model.nodes.get(input).invalid, false);
+  assert.equal(model.nodes.get(input).epoch, 1);
+  assert.ok([...model.nodes.values()].some(node => node.text?.includes('<script>alert("x")</script>')));
+  assert.equal(e.ruvane_live_signals(), 1);
+  const checked = binding(20); run(20, true);
+  assert.equal(model.nodes.get(checked).checked, true);
+  run(3); assert.equal(model.nodes.has(checked), false);
+  assert.equal(e.ruvane_dispatch(id, checked, 20, 2, 0), 0); assert.equal(e.ruvane_last_error(), 4);
+  run(3); assert.notEqual(binding(20), checked); run(21);
+  assert.equal(e.ruvane_live_signals(), 0);
+  for (let n = 0; n < 3; n++) { run(5, `Task ${n}`); run(1); }
+  assert.equal(e.ruvane_live_signals(), 3); assert.ok(model.nodes.size <= 33);
   assert.equal(e.ruvane_dispose(id), 1); e.ruvane_commands_clear();
   assert.deepEqual([e.ruvane_live_instances(), e.ruvane_live_signals(), e.ruvane_live_effects()], [0, 0, 0]);
 });

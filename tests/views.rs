@@ -12,7 +12,7 @@ fn shared_components_render_their_initial_state_and_update_independently() {
     let view = counter.view().unwrap();
     let html = view.hydratable(props).unwrap();
     assert!(html.as_str().starts_with(
-        "<div data-ruvane-version=\"3\" data-ruvane-component=\"1\" data-ruvane-state=\"1:5\">"
+        "<div data-ruvane-version=\"4\" data-ruvane-component=\"1\" data-ruvane-state=\"1:5\">"
     ));
     assert!(html.as_str().contains(">5</output>"));
     assert!(html.as_str().contains(">10</output>"));
@@ -317,4 +317,135 @@ fn list_state_survives_order_changes_and_scopes_drop_with_items() {
             .as_str()
             .contains("No visible items.")
     );
+}
+
+#[test]
+fn controls_require_labels_and_valid_html_and_escape_initial_values() {
+    let mut view = View::new();
+    assert_eq!(
+        view.input(0, 1, "text", 1, false),
+        Err(ViewError::InvalidStructure)
+    );
+    assert_eq!(
+        view.submit(0, 1, "Go", false),
+        Err(ViewError::InvalidStructure)
+    );
+    let form = view.form(0, 1, 1).unwrap();
+    assert_eq!(view.form(form, 1, 2), Err(ViewError::InvalidStructure));
+    let label = view.keyed_element(form, 1, Label).unwrap();
+    view.keyed_leaf(label, 1, Span, "Name").unwrap();
+    let title = view.input(label, 2, "\"<script>& 🦀", 2, false).unwrap();
+    let snapshot = view.snapshot().unwrap();
+    let handle = snapshot.node_for_event(2).unwrap();
+    assert!(snapshot.accepts_value(handle, 2, &ruvane::EventValue::Text("Rust 🦀".into())));
+    assert!(!snapshot.accepts_value(handle, 2, &ruvane::EventValue::Text("a\nb".into())));
+    assert!(!snapshot.accepts_value(handle, 2, &ruvane::EventValue::Boolean(true)));
+    let html = view.render().unwrap();
+    assert!(
+        html.as_str()
+            .contains("value=\"&quot;&lt;script&gt;&amp; 🦀\"")
+    );
+    assert!(!html.as_str().contains("</input>"));
+    assert!(
+        view.hydratable(ComponentProps::new(5, InitialState::Number(0)).unwrap())
+            .unwrap()
+            .as_str()
+            .contains("disabled>")
+    );
+    view.field_disabled(title, true).unwrap();
+    assert!(!view.snapshot().unwrap().accepts_value(
+        handle,
+        2,
+        &ruvane::EventValue::Text("x".into())
+    ));
+    assert!(view.input(label, 3, "second", 3, false).is_ok());
+    assert_eq!(view.render(), Err(ViewError::InvalidStructure));
+}
+
+#[test]
+fn textarea_newlines_and_field_reset_epochs_roundtrip() {
+    let mut view = View::new();
+    let label = view.keyed_element(0, 1, Label).unwrap();
+    view.keyed_leaf(label, 1, Span, "Notes").unwrap();
+    let field = view
+        .textarea(label, 2, "\n</textarea> & 🦀\n\t", 1, false)
+        .unwrap();
+    assert!(
+        view.render()
+            .unwrap()
+            .as_str()
+            .contains(">\n\n&lt;/textarea&gt; &amp; 🦀\n\t</textarea>")
+    );
+    let initial = view.snapshot().unwrap();
+    assert!(initial.accepts_value(
+        initial.node_for_event(1).unwrap(),
+        1,
+        &ruvane::EventValue::Text("\n\t".into())
+    ));
+    view.field_epoch(field, 1).unwrap();
+    let (snapshot, commands) = initial.update(&view, 1).unwrap();
+    assert!(commands.count() > 0);
+    view.field_epoch(field, 0).unwrap();
+    assert!(matches!(
+        snapshot.update(&view, 1),
+        Err(ViewError::InvalidState)
+    ));
+}
+
+#[test]
+fn task_form_validates_and_keeps_user_strings_as_text() {
+    use ruvane::EventValue;
+    let mut component =
+        widgets::create(ComponentProps::new(widgets::TASK_FORM, InitialState::Number(0)).unwrap())
+            .unwrap();
+    component.dispatch(1).unwrap();
+    assert!(
+        component
+            .view()
+            .unwrap()
+            .render()
+            .unwrap()
+            .as_str()
+            .contains("Enter a task name.")
+    );
+    component
+        .dispatch_value(5, EventValue::Text("🦀".repeat(21)))
+        .unwrap();
+    component.dispatch(1).unwrap();
+    assert!(
+        component
+            .view()
+            .unwrap()
+            .render()
+            .unwrap()
+            .as_str()
+            .contains("80 UTF-8 bytes")
+    );
+    component
+        .dispatch_value(5, EventValue::Text("<script>task</script>".into()))
+        .unwrap();
+    component
+        .dispatch_value(6, EventValue::Text("notes & text".into()))
+        .unwrap();
+    component.dispatch(1).unwrap();
+    let html = component.view().unwrap().render().unwrap().into_string();
+    assert!(html.contains("&lt;script&gt;task&lt;/script&gt;"));
+    assert!(!html.contains("<script>"));
+    assert_eq!(component.stats().signals, 1);
+    component
+        .dispatch_value(20, EventValue::Boolean(true))
+        .unwrap();
+    component.dispatch(3).unwrap();
+    assert!(
+        component
+            .view()
+            .unwrap()
+            .render()
+            .unwrap()
+            .as_str()
+            .contains("No visible tasks.")
+    );
+    component.dispatch(3).unwrap();
+    component.dispatch(21).unwrap();
+    assert_eq!(component.stats().signals, 0);
 }

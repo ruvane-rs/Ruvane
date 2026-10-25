@@ -1,8 +1,8 @@
-//! RVN2 browser command encoding.
+//! RVN3 browser command encoding.
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 3;
+pub const BROWSER_ABI_VERSION: u32 = 4;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.
@@ -32,6 +32,18 @@ pub enum BrowserTag {
     List = 7,
     /// A list item.
     ListItem = 8,
+    /// A client-side form.
+    Form = 9,
+    /// A label wrapping one control.
+    Label = 10,
+    /// A single-line text input.
+    Input = 11,
+    /// A boolean checkbox.
+    Checkbox = 12,
+    /// A multiline text input.
+    TextArea = 13,
+    /// A native submit button.
+    Submit = 14,
 }
 
 /// Command encoding errors.
@@ -69,10 +81,10 @@ impl Default for BrowserCommands {
 }
 
 impl BrowserCommands {
-    /// Creates an empty batch with an RVN2 header.
+    /// Creates an empty batch with an RVN3 header.
     pub fn new() -> Self {
         Self {
-            bytes: b"RVN2\0\0\0\0".to_vec(),
+            bytes: b"RVN3\0\0\0\0".to_vec(),
             count: 0,
         }
     }
@@ -155,7 +167,12 @@ impl BrowserCommands {
         self.push(3, &[view, node, event], &[])
     }
 
-    /// Enables or disables a button.
+    /// Binds the event implied by an element's type.
+    pub fn bind(&mut self, view: u32, node: u32, event: u32) -> Result<(), BrowserCommandError> {
+        self.click(view, node, event)
+    }
+
+    /// Enables or disables a control.
     pub fn disabled(
         &mut self,
         view: u32,
@@ -185,6 +202,48 @@ impl BrowserCommands {
             return Err(BrowserCommandError::InvalidIdentifier);
         }
         self.push(7, &[view, node, before], &[])
+    }
+
+    /// Sets a text control's value and reset epoch.
+    pub fn value(
+        &mut self,
+        view: u32,
+        node: u32,
+        value: &str,
+        epoch: u32,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node])?;
+        if value.len() > MAX_BROWSER_TEXT_BYTES {
+            return Err(BrowserCommandError::Limit);
+        }
+        self.push(
+            8,
+            &[view, node, epoch, value.len() as u32],
+            value.as_bytes(),
+        )
+    }
+
+    /// Sets a checkbox's value and reset epoch.
+    pub fn checked(
+        &mut self,
+        view: u32,
+        node: u32,
+        checked: bool,
+        epoch: u32,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node])?;
+        self.push(9, &[view, node, epoch], &[u8::from(checked)])
+    }
+
+    /// Sets a control's accessible validation state.
+    pub fn invalid(
+        &mut self,
+        view: u32,
+        node: u32,
+        invalid: bool,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node])?;
+        self.push(10, &[view, node], &[u8::from(invalid)])
     }
 
     /// Borrows the batch. The slice is valid only until the next mutation.

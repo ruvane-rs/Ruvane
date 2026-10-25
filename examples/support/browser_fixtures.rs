@@ -55,11 +55,15 @@ pub fn invalid_patch() -> Vec<u8> {
         &mut output,
         1,
         vec![
-            4, 0x60, 4, 0x7f, 0x7f, 0x7f, 0x7f, 1, 0x7f, 0x60, 3, 0x7f, 0x7f, 0x7f, 1, 0x7f, 0x60,
-            1, 0x7f, 1, 0x7f, 0x60, 0, 1, 0x7f,
+            5, 0x60, 4, 0x7f, 0x7f, 0x7f, 0x7f, 1, 0x7f, 0x60, 5, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 1,
+            0x7f, 0x60, 1, 0x7f, 1, 0x7f, 0x60, 0, 1, 0x7f, 0x60, 2, 0x7f, 0x7f, 1, 0x7f,
         ],
     );
-    section(&mut output, 3, vec![11, 3, 0, 1, 2, 3, 3, 3, 3, 3, 3, 3]);
+    section(
+        &mut output,
+        3,
+        vec![13, 3, 0, 1, 2, 3, 3, 3, 3, 3, 3, 3, 0, 4],
+    );
     section(&mut output, 5, vec![1, 0, 1]);
     section(&mut output, 6, vec![1, 0x7f, 1, 0x41, 0, 0x0b]);
     let names = [
@@ -74,8 +78,10 @@ pub fn invalid_patch() -> Vec<u8> {
         "ruvane_live_instances",
         "ruvane_live_signals",
         "ruvane_live_effects",
+        "ruvane_event_begin",
+        "ruvane_event_chunk",
     ];
-    let mut exports = vec![12, 6];
+    let mut exports = vec![14, 6];
     exports.extend(b"memory");
     exports.extend([2, 0]);
     for (index, name) in names.iter().enumerate() {
@@ -104,8 +110,10 @@ pub fn invalid_patch() -> Vec<u8> {
         choose(1, 1, 0),
         constant(0),
         constant(0),
+        constant(1),
+        constant(1),
     ];
-    let mut code = vec![11];
+    let mut code = vec![13];
     for body in bodies {
         code.extend(leb(body.len() as u32 + 2));
         code.push(0);

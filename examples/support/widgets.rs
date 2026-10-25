@@ -4,6 +4,16 @@ use ruvane::{
     ReactiveRuntime, Scope, Signal, View,
 };
 
+#[path = "fields_probe.rs"]
+mod fields_probe;
+#[path = "tasks.rs"]
+mod tasks;
+/// Field lifecycle fixture registry ID.
+pub const FIELDS_PROBE: u32 = 5;
+
+/// Task form registry ID.
+pub const TASK_FORM: u32 = 4;
+
 /// Counter registry ID.
 pub const COUNTER: u32 = 1;
 /// Toggle registry ID.
@@ -286,6 +296,8 @@ pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentErro
             }
             Ok(Box::new(list))
         }
+        (TASK_FORM, InitialState::Number(count)) => tasks::create(count),
+        (FIELDS_PROBE, InitialState::Number(0)) => Ok(fields_probe::create()),
         _ => Err(ComponentError::InvalidProps),
     }
 }

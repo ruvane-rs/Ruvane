@@ -1,6 +1,26 @@
 # Security
 
-Alpha.14 uses browser ABI v3 and RVN2 structural batches. Keys are nonzero u32
+Alpha.15 uses browser ABI v4 and RVN3 batches. Text payloads enter through a
+bounded numeric chunk API, without input pointers or host imports. A pending
+payload belongs to one live view/node/event. Its exact length, UTF-8, field type,
+disabled state and control characters are checked before application code runs.
+Booleans accept only 0 or 1. Invalid payloads do not drop a healthy component.
+Clear aborts staged input; pending input prevents other mutations.
+
+Fields have fixed types and wrapping labels. Forms cannot nest; they expose no
+arbitrary action, method or field name. Submit is handled locally in Wasm with
+native navigation prevented. There is no new HTTP mutation endpoint. The
+1024-byte transport quota is separate from application validation and the DOM
+UTF-16 maxlength. Client validation is not a server authorization boundary.
+
+Hydration validates escaped defaults and adopts valid dirty live values only
+after the complete tree matches. Initial defaults remain fixed while live value
+and checked properties change. Composition defers text dispatch; explicit model
+resets win after composition ends. Field removal releases all input/composition
+listeners. Logical bindings remain capped at 16 per view, with at most 48 actual
+DOM listeners. See [client forms](docs/client-forms.md) for the supported profile.
+
+Alpha.14 introduced structural batches. Keys are nonzero u32
 values unique among siblings, with a separate namespace from unkeyed positions.
 DOM handles are checked monotonic values within one live view. Deletion retires
 handles permanently; restoring a key allocates new handles. Tag or event-binding
@@ -29,8 +49,8 @@ not authorization or secret storage. No JSON parser or inline script is used.
 Views cap node count, nesting, handlers and UTF-8 text. The shared HTML profile
 rejects invalid parents and text controls that do not round-trip through HTML.
 Hydration checks the complete expected tree: version, props, tags, IDs, child
-order, leaf text, event IDs and button attributes before attaching any handler.
-It reuses elements and text nodes, then enables the appropriate buttons.
+order, leaf text, event IDs and control attributes before attaching any handler.
+It reuses elements and text nodes, then enables the appropriate controls.
 
 A mismatch preserves the supplied DOM, releases its root claim and disposes the
 new native component. Other views continue running. A later protocol or DOM
@@ -62,7 +82,7 @@ pointer/length bounds against fresh memory and copies before acknowledging it.
 
 The bridge rejects unsupported versions, oversized/truncated/invalid UTF-8
 frames, unknown tags/opcodes, cross-view references, invalid DOM ownership and
-duplicate events before applying a complete batch. Client mounts require empty
+duplicate command entries before applying a complete batch. Client mounts require empty
 roots; hydration validates existing server nodes. textContent never interprets
 command text as HTML.
 There is no arbitrary selector, attribute, URL, function name, eval or HTML sink.

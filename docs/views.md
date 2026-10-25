@@ -2,7 +2,8 @@
 
 `View` is a bounded tree shared by server rendering and Wasm. It leaves the
 existing `Html`, `Element` and `Document` APIs unchanged. Supported elements are
-sections, paragraphs, h2 headings, spans, outputs, buttons, lists and list items.
+sections, paragraphs, h2 headings, spans, outputs, buttons, lists, list items,
+forms, labels, text inputs, checkboxes, textareas and submit buttons.
 
 ```rust
 use ruvane::{BrowserTag, View};
@@ -40,7 +41,8 @@ A `ViewSnapshot` resolves the tree to live DOM handles. Retain it between update
 commit the returned snapshot together with its batch. The browser registry does
 this automatically. A key retains its handle when its parent, tag and event
 binding remain the same. Text and disabled state can change without replacement.
-A moved keyed subtree retains its descendant handles too.
+A moved keyed subtree retains its descendant handles too. Field values, checked
+state, validation state and reset epochs can also change without replacement.
 
 Removal retires every descendant handle. If a hidden key returns, it receives
 fresh handles. Tag or event changes replace the affected node and descendants.
@@ -66,8 +68,8 @@ text. Controls other than tabs and LF are rejected so text round-trips through H
 
 `render()` emits HTML with node markers and optional numeric key markers.
 `hydratable(props)` adds a host div with versioned numeric/boolean state and
-initially disables every button. Hydration validates the complete expected
-structure and keys before attaching handlers or enabling buttons. No inline
+initially disables every control. Hydration validates the complete expected
+structure and keys before attaching handlers or enabling controls. No inline
 script or executable state is emitted. Keep private data out of initial props.
 
 ## Components and resource lifetime
@@ -85,25 +87,35 @@ button cannot trigger a new binding, even when an application reuses an event ID
 Public controller `dispatch(event)` resolves an explicitly requested action to
 one of its current live bindings.
 
+Fields use `dispatch_value(event, EventValue)` with `Text(String)` or
+`Boolean(bool)`. The default implementation forwards `None` to `dispatch` and
+rejects other values. The snapshot checks the field type, disabled state,
+UTF-8 quota and control characters before application code receives data.
+Use `form`, `input`, `textarea`, `checkbox` and `submit` with nonzero sibling
+keys. Every field needs a wrapping `Label` with a nonblank `Span`.
+See [client forms](client-forms.md) for a complete example and browser behavior.
+
 The factory maps `ComponentProps` to `Box<dyn Component>`. Construct
 `BrowserRuntime::new(factory)` with it. The registry handles ownership, limits,
 patches and disposal without knowing a specific widget.
 
 The shared examples in `examples/support/widgets.rs` include a counter, toggle
-and item list. The list has at most four logical items, with a child scope for
+and item list, plus a task form. The list has at most four logical items, with a child scope for
 each item's counter and done flag. Reordering preserves the scopes. Filtering
 removes DOM and event bindings while retaining hidden item model state; logical
 removal drops the item scope. The empty message is a conditional subtree.
 
 Initial props support one `Number(u32)` or `Boolean(bool)`. Factories validate
 state kinds and ranges. The list's number selects its initial item count, 0..=4.
-Rich object/string props, nested hydration roots, inputs and compiler macros
+Rich object/string props, nested hydration roots and compiler macros
 remain future work.
 
 ## Limits
 
-Views allow 32 live elements, depth 8, 16 click handlers and 1024 UTF-8 bytes per
-text leaf. Structural transitions allow at most 256 commands in a 64 KiB batch.
+Views allow 32 live elements, depth 8, 16 logical event bindings and 1024 UTF-8
+bytes per text leaf or field value. Text fields install input, compositionstart
+and compositionend listeners; other bindings install one listener.
+Structural transitions allow at most 256 commands in a 64 KiB batch.
 This leaves room to replace a full bounded tree and place new nodes in order.
 
 A browser instance allows 16 live components and up to 1024 reported signals

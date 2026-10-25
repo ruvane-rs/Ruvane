@@ -1,6 +1,6 @@
 # Browser runtime and hydration
 
-Alpha.14 uses the same Rust components for server HTML and browser interaction.
+Alpha.15 uses the same Rust components for server HTML and browser interaction.
 The `ruvane-browser` workspace member depends only on the local core crate. Our
 JavaScript bridge uses browser APIs, with no wasm-bindgen, web-sys or npm package.
 
@@ -19,8 +19,9 @@ The complete checkout is required: the unpublished adapter imports the shared
 example components and is not included in the standalone core package.
 
 The server renders a counter at 5 with a double of 10 and a toggle initially
-Enabled, plus a keyed item list. The list supports adding, removing, counting,
-reversing and filtering items. Its buttons are disabled until the Wasm loads and hydration validates
+Enabled, plus a keyed item list and a task form. The list supports adding, removing,
+counting, reversing and filtering items. The task form validates a name and notes
+in Rust, creates tasks and tracks completion with checkboxes. Controls are disabled until the Wasm loads and hydration validates
 the DOM. Hydration reuses elements and text nodes, preserves focus and connects
 handlers once. After one increment the same output elements display 6 and 12.
 The demo's lifecycle button can unmount and client-mount the counter again.
@@ -29,7 +30,8 @@ Counter arithmetic, derived state and the toggle event live in Rust.
 `/ssr` returns the same content without a module script and with the blocking CSP.
 `/tests` runs the browser harness, including 1,000 client mounts and 1,000
 hydrations, node/text identity, focus, mismatches, claims, 1,000 additions/removals
-and cleanup. A test-only Wasm fixture emits an invalid structural patch to check
+and cleanup. Field tests cover UTF-8 quotas, dirty hydration, selection, composition
+events and 1,000 task additions/removals. A test-only Wasm fixture emits an invalid structural patch to check
 that an earlier valid command in the batch is not partially applied. Counts
 measure live registry resources, not GC timing or shrinking Wasm memory.
 
@@ -45,13 +47,14 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="3" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="4" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
 canonical decimal spelling, with no sign, spaces or leading zeros. Factories
 check the component ID, state kind and domain range. The demo registry uses
-1=counter, 2=toggle and 3=item list. State is public page data; no arbitrary JSON, source code,
+1=counter, 2=toggle, 3=item list and 4=task form. Component 5 is a field lifecycle test fixture.
+State is public page data; no arbitrary JSON, source code,
 function name or input pointer is accepted.
 
 ## Bridge API
@@ -72,8 +75,11 @@ runtime.dispose();
 
 `hydrate(root)` reads server props and validates the full expected tree before
 mutating DOM or attaching handlers. Tags, namespace, IDs, parents, child order,
-leaf text, sibling keys, event IDs and the exact button attributes must match. Server buttons
-must still be disabled. Whitespace/comment nodes outside text leaves, extra
+leaf text, sibling keys, event IDs and exact control attributes must match. Server buttons
+must still be disabled. Field defaults must match the Rust model; live values and
+checked state may differ before hydration and are adopted after validation.
+Fields may already be enabled by host code when the model permits it.
+Whitespace/comment nodes outside text leaves, extra
 attributes and version/state mismatches are rejected. There is no automatic
 HTML replacement or remount fallback.
 
@@ -86,10 +92,15 @@ Client mounts require an empty HTML container from the current document. Valid
 host tags are div, section, main, article and aside. Nodes belong to one view;
 host code must not change them while the view is active. Updates verify the existing DOM before applying a complete structural plan.
 Surviving keys keep nodes and handlers; removed subtrees lose all handlers.
-Reordering restores focus to a moved element that remains present and enabled.
+Reordering preserves the active field's subtree and restores selection where needed.
 Insertion uses native element creation and sibling placement, without HTML strings.
 
-`dispatch` accepts only events declared by that view. Unknown public events are
+`dispatch(event, value?)` accepts only events declared by that view. Text fields take
+strings, checkboxes take booleans, and clicks/submissions take no value. The bridge
+validates values before encoding them; Rust checks their type, length and live binding
+again. Invalid payloads are local errors and leave the component active.
+See [client forms](client-forms.md) for validation, resets and composition behavior.
+Unknown public events are
 rejected locally. The counter uses 1/2/3 for increment/decrement/reset; the toggle
 uses 7. List controls use 1/2/3; each item has its own actions. A controller's
 `dispose()` removes its nodes and handlers and returns
@@ -127,30 +138,42 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v3
+## Browser ABI v4
 
-Alpha.14 changes dispatch from alpha.13 and uses RVN2 command frames. Rebuild the Wasm and use its
-matching bridge together. The module exports memory and these eleven functions,
+Alpha.15 adds typed payloads and uses RVN3 command frames. Rebuild the Wasm and use its
+matching bridge together. The module exports memory and these thirteen functions,
 with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 3 |
+| `ruvane_abi_version()` | Returns 4 |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
-| `ruvane_dispatch(view, node, event)` | 1 on success, zero for an expired/invalid binding or other error |
+| `ruvane_dispatch(view, node, event, kind, value)` | Commit an event; 1 on success, zero on error |
+| `ruvane_event_begin(view, node, event, length)` | Start one text payload of 0..=1024 bytes |
+| `ruvane_event_chunk(word, count)` | Append 1..=4 little-endian bytes |
 | `ruvane_dispose(view)` | 1 on success, zero for a stale/invalid view |
 | `ruvane_commands_ptr()` | Borrowed output offset |
 | `ruvane_commands_len()` | Output bytes including the frame header |
-| `ruvane_commands_clear()` | Acknowledge the batch; 1 on success |
+| `ruvane_commands_clear()` | Acknowledge the batch or abort staged input; 1 on success |
 | `ruvane_last_error()` | Fixed numeric error; zero after a successful mutation |
 | `ruvane_live_instances()` | Live application components |
 | `ruvane_live_signals()` | Reported signals, including memo caches |
 | `ruvane_live_effects()` | Reported effects, including memos |
 
 Errors are 1=invalid/duplicate root, 2=limit, 3=unknown view, 4=unknown event,
-5=busy/unacknowledged batch, 6=reactive failure, 7=invalid props and 8=invalid
-view/patch. Mutations refuse a pending batch. Root/view IDs are numeric;
+5=busy/unacknowledged batch, 6=reactive failure, 7=invalid props, 8=invalid
+view/patch and 9=invalid payload. Mutations refuse a pending batch or text payload.
+Root/view IDs are numeric;
 view IDs increase with checked arithmetic and never wrap or get reused.
+
+Payload kind 0 requires value 0 and carries no data. Kind 2 carries a boolean,
+value 0 or 1. Kind 1 requires value 0 and commits the staged text for the exact
+view/node/event supplied to `event_begin`. Text must have the exact declared
+byte length and valid UTF-8. Empty text needs begin and commit with no chunks.
+For short chunks, unused high bytes must be zero. Invalid chunks, malformed
+commits and `commands_clear` discard staged input. A pending input prevents other
+mutations until commit or clear; reads remain available. No input pointer crosses
+the ABI. The bridge performs the complete sequence synchronously.
 
 The ABI registry belongs to one Wasm instance. Only the ABI module permits
 Rust 2024 `#[unsafe(no_mangle)]` export attributes. Export names are unique to
@@ -163,30 +186,38 @@ memory view, checks ranges and copies the bounded batch before acknowledging
 it. Signed JavaScript i32 results are interpreted as u32 bit patterns; public
 JavaScript inputs are validated before crossing the ABI.
 
-## RVN2 command frames
+## RVN3 command frames
 
-Integers are little-endian. The header is `RVN2` plus a u32 count, with no trailing
+Integers are little-endian. The header is `RVN3` plus a u32 count, with no trailing
 bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 
 | Opcode | Remaining fields | Operation |
 | --- | --- | --- |
 | 1 | node u32, parent u32, tag u8, key u32 | Create/claim an element; key zero means unkeyed |
 | 2 | node u32, byte length u32, UTF-8 bytes | Set or validate leaf text |
-| 3 | node u32, nonzero event u32 | Declare one new button binding |
-| 4 | node u32, boolean u8 | Set the button's disabled state |
+| 3 | node u32, nonzero event u32 | Declare a click, submit, input or change binding |
+| 4 | node u32, boolean u8 | Set a control's disabled state |
 | 5 | none | Remove a complete view |
 | 6 | node u32 | Remove an existing subtree and its handlers |
 | 7 | node u32, before u32 | Place before a sibling; before zero appends within the same parent |
+| 8 | node u32, epoch u32, byte length u32, UTF-8 bytes | Set a text field's live value |
+| 9 | node u32, epoch u32, boolean u8 | Set a checkbox's live checked state |
+| 10 | node u32, boolean u8 | Set a field's aria-invalid state |
 
-Tags are section=1, h2=2, p=3, span=4, output=5, button=6, ul=7 and li=8. New
+Tags are section=1, h2=2, p=3, span=4, output=5, button=6, ul=7, li=8,
+form=9, label=10, text input=11, checkbox=12, textarea=13 and submit button=14. New
 handles must increase beyond every handle previously allocated in that view.
 Keys are nonzero u32 values unique among siblings. They are separate from node
 handles and unkeyed positions. A tag/event change creates a new node lifetime.
 
-Initial batches can create nodes, set text/disabled state and bind events.
+Initial batches can create nodes, set text/disabled/field state and bind events.
 Patch batches can also remove and place nodes. Bindings are created only on new
-buttons; removal retires a binding. Each leaf has text, each button has one
-binding and disabled state. Disposal remains exactly one opcode-5 command.
+event targets; removal retires a binding. Each text leaf has text. Buttons,
+forms and fields have one binding, except submit buttons which use their form's
+binding. Each field has disabled, invalid, epoch and typed value state. Epochs
+cannot decrease during a field's lifetime. Labels wrap exactly one field and a
+nonblank span label. Forms cannot nest; submit buttons require a form ancestor.
+Disposal remains exactly one opcode-5 command.
 
 The planner rejects cross-view references, unknown or reused handles, duplicate
 keys, invalid parents, list nesting, sibling targets and incomplete nodes before
@@ -205,15 +236,16 @@ transactional rollback of arbitrary application state or host side effects.
 | Live components | 16 |
 | Elements per view | 32, plus the host root |
 | Element depth | 8 |
-| Click bindings per view | 16 |
+| Logical event bindings per view | 16 |
+| DOM listeners per view | At most 48; text fields use 3 per binding |
 | Command frame | 64 KiB including header, 256 commands |
-| One text leaf | 1024 UTF-8 bytes |
+| One text leaf, field value or staged payload | 1024 UTF-8 bytes |
 | Reported signals/effects per component | 1024 each |
 
 Factories and components are trusted Rust code. These limits do not bound all
 CPU, allocations or reference cycles, and a fetch timeout cannot preempt Wasm.
 There are no mutation HTTP endpoints, server actions, sessions or cryptography.
-Nested islands, inputs and richer props remain future work.
+Nested islands and richer initial props remain future work.
 
 Python 3.9+, Node 18+ built-ins and a real browser are test tools; no npm or Python
 packages are installed. Build Wasm before running Node tests:

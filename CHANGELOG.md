@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-alpha.15 — Unreleased
+
+- Add typed text inputs, textareas, checkboxes, wrapping labels, client forms
+  and submit buttons to shared views, with Rust validation and aria-invalid state.
+- Add bounded UTF-8 event staging and typed dispatch through numeric browser
+  ABI v4. RVN3 adds live value, checked and invalid-state commands. Rebuild Wasm
+  with its matching bridge; older ABI/frames are rejected.
+- Preserve dirty fields during hydration, cursor/selection during updates, and
+  active field subtrees during keyed reorder. Defer composition input and apply
+  explicit reset epochs when composition ends.
+- Add a task form demo with name/notes validation, completion filtering and
+  per-task scope cleanup. Add native, compiled Wasm and real-browser coverage
+  for payload bounds, field lifetimes, composition and 1,000 task lifecycles.
+- Keep Cargo limited to the two first-party workspace packages. No third-party
+  crates, npm packages, input pointers or HTTP mutation routes are added.
+
 ## 0.1.0-alpha.14 — Unreleased
 
 - Add explicit sibling keys and ViewSnapshot reconciliation with checked monotonic

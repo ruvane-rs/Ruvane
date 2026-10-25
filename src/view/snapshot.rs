@@ -1,4 +1,4 @@
-use super::{BrowserCommands, Node, View, ViewError};
+use super::{BrowserCommands, EventValue, Node, View, ViewError, is_control, valid_value};
 use crate::BrowserTag;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,10 +72,19 @@ impl ViewSnapshot {
             commands.text(view, entry.id, label)?;
         }
         if let Some(event) = node.event {
-            commands.click(view, entry.id, event)?;
+            commands.bind(view, entry.id, event)?;
         }
-        if node.tag == BrowserTag::Button {
+        if matches!(node.tag, BrowserTag::Button | BrowserTag::Submit) || is_control(node.tag) {
             commands.disabled(view, entry.id, node.disabled)?;
+        }
+        if let Some(field) = &node.field {
+            if let Some(value) = &field.value {
+                commands.value(view, entry.id, value, field.epoch)?;
+            }
+            if let Some(checked) = field.checked {
+                commands.checked(view, entry.id, checked, field.epoch)?;
+            }
+            commands.invalid(view, entry.id, field.invalid)?;
         }
         Ok(())
     }
@@ -113,6 +122,28 @@ impl ViewSnapshot {
         self.nodes
             .iter()
             .any(|n| n.id == node && n.node.event == Some(event))
+    }
+
+    /// Validates typed event data against the live node binding.
+    pub fn accepts_value(&self, node: u32, event: u32, value: &EventValue) -> bool {
+        let Some(entry) = self
+            .nodes
+            .iter()
+            .find(|n| n.id == node && n.node.event == Some(event))
+        else {
+            return false;
+        };
+        if is_control(entry.node.tag) && entry.node.disabled {
+            return false;
+        }
+        match (entry.node.tag, value) {
+            (BrowserTag::Input | BrowserTag::TextArea, EventValue::Text(value)) => {
+                valid_value(entry.node.tag, value)
+            }
+            (BrowserTag::Checkbox, EventValue::Boolean(_)) => true,
+            (BrowserTag::Button | BrowserTag::Form, EventValue::None) => true,
+            _ => false,
+        }
     }
 
     /// Validates and encodes a transition. Commit the returned snapshot with its batch.
@@ -157,6 +188,24 @@ impl ViewSnapshot {
                             .as_deref()
                             .ok_or(ViewError::InvalidStructure)?,
                     )?;
+                }
+                if let (Some(field), Some(old)) = (&entry.node.field, &previous.field) {
+                    if field.epoch < old.epoch {
+                        return Err(ViewError::InvalidState);
+                    }
+                    if field.value != old.value || field.epoch != old.epoch {
+                        if let Some(value) = &field.value {
+                            commands.value(view_id, entry.id, value, field.epoch)?;
+                        }
+                    }
+                    if field.checked != old.checked || field.epoch != old.epoch {
+                        if let Some(checked) = field.checked {
+                            commands.checked(view_id, entry.id, checked, field.epoch)?;
+                        }
+                    }
+                    if field.invalid != old.invalid {
+                        commands.invalid(view_id, entry.id, field.invalid)?;
+                    }
                 }
                 if entry.node.disabled != previous.disabled {
                     commands.disabled(view_id, entry.id, entry.node.disabled)?;

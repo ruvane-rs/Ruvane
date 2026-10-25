@@ -4,14 +4,17 @@ use crate::{
     text,
 };
 use std::fmt;
+mod fields;
 mod snapshot;
+pub use fields::EventValue;
+use fields::{Control, accepts, is_control, valid_value};
 pub use snapshot::ViewSnapshot;
 
 /// Maximum elements in a shared view.
 pub const MAX_VIEW_NODES: usize = 32;
 /// Maximum element depth below the host root.
 pub const MAX_VIEW_DEPTH: usize = 8;
-/// Maximum click handlers in a view.
+/// Maximum logical event bindings in a view.
 pub const MAX_VIEW_EVENTS: usize = 16;
 
 /// Initial state supported by the hydration format.
@@ -121,6 +124,7 @@ struct Node {
     text: Option<String>,
     event: Option<u32>,
     disabled: bool,
+    field: Option<Control>,
 }
 
 /// A small element tree shared by server rendering and Wasm.
@@ -156,41 +160,33 @@ impl View {
         {
             return Err(ViewError::DuplicateKey);
         }
-        if tag == BrowserTag::ListItem
-            && (parent == 0
-                || self
-                    .nodes
+        let parent_tag = if parent == 0 {
+            None
+        } else {
+            Some(
+                self.nodes
                     .get(parent as usize - 1)
-                    .is_none_or(|n| n.tag != BrowserTag::List))
-        {
+                    .ok_or(ViewError::InvalidIdentifier)?
+                    .tag,
+            )
+        };
+        if !accepts(parent_tag, tag) {
+            return Err(ViewError::InvalidStructure);
+        }
+        let mut ancestor = parent;
+        let mut in_form = false;
+        while ancestor != 0 {
+            let node = &self.nodes[ancestor as usize - 1];
+            in_form |= node.tag == BrowserTag::Form;
+            ancestor = node.parent;
+        }
+        if (tag == BrowserTag::Form && in_form) || (tag == BrowserTag::Submit && !in_form) {
             return Err(ViewError::InvalidStructure);
         }
         let depth = if parent == 0 {
             1
         } else {
-            let owner = self
-                .nodes
-                .get(parent as usize - 1)
-                .ok_or(ViewError::InvalidIdentifier)?;
-            if !matches!(
-                owner.tag,
-                BrowserTag::Section
-                    | BrowserTag::Paragraph
-                    | BrowserTag::List
-                    | BrowserTag::ListItem
-            ) {
-                return Err(ViewError::InvalidStructure);
-            }
-            if (owner.tag == BrowserTag::Paragraph
-                && !matches!(
-                    tag,
-                    BrowserTag::Span | BrowserTag::Output | BrowserTag::Button
-                ))
-                || (owner.tag == BrowserTag::List && tag != BrowserTag::ListItem)
-            {
-                return Err(ViewError::InvalidStructure);
-            }
-            owner.depth + 1
+            self.nodes[parent as usize - 1].depth + 1
         };
         if depth > MAX_VIEW_DEPTH
             || (event.is_some()
@@ -217,6 +213,7 @@ impl View {
             text: label.map(str::to_owned),
             event,
             disabled,
+            field: None,
         });
         Ok(self.nodes.len() as u32)
     }
@@ -225,7 +222,11 @@ impl View {
     pub fn element(&mut self, parent: u32, tag: BrowserTag) -> Result<u32, ViewError> {
         if !matches!(
             tag,
-            BrowserTag::Section | BrowserTag::Paragraph | BrowserTag::List | BrowserTag::ListItem
+            BrowserTag::Section
+                | BrowserTag::Paragraph
+                | BrowserTag::List
+                | BrowserTag::ListItem
+                | BrowserTag::Label
         ) {
             return Err(ViewError::InvalidStructure);
         }
@@ -276,7 +277,11 @@ impl View {
         }
         if !matches!(
             tag,
-            BrowserTag::Section | BrowserTag::Paragraph | BrowserTag::List | BrowserTag::ListItem
+            BrowserTag::Section
+                | BrowserTag::Paragraph
+                | BrowserTag::List
+                | BrowserTag::ListItem
+                | BrowserTag::Label
         ) {
             return Err(ViewError::InvalidStructure);
         }
@@ -339,6 +344,23 @@ impl View {
         if self.nodes.is_empty() {
             Err(ViewError::Empty)
         } else {
+            for (index, node) in self.nodes.iter().enumerate() {
+                if node.tag == BrowserTag::Label {
+                    let children: Vec<_> = self
+                        .nodes
+                        .iter()
+                        .filter(|n| n.parent == index as u32 + 1)
+                        .collect();
+                    if children.iter().filter(|n| is_control(n.tag)).count() != 1
+                        || !children.iter().any(|n| {
+                            n.tag == BrowserTag::Span
+                                && n.text.as_ref().is_some_and(|s| !s.trim().is_empty())
+                        })
+                    {
+                        return Err(ViewError::InvalidStructure);
+                    }
+                }
+            }
             Ok(())
         }
     }
@@ -372,23 +394,73 @@ impl View {
                 BrowserTag::Paragraph => "p",
                 BrowserTag::Span => "span",
                 BrowserTag::Output => "output",
-                BrowserTag::Button => "button",
+                BrowserTag::Button | BrowserTag::Submit => "button",
                 BrowserTag::List => "ul",
                 BrowserTag::ListItem => "li",
+                BrowserTag::Form => "form",
+                BrowserTag::Label => "label",
+                BrowserTag::Input | BrowserTag::Checkbox => "input",
+                BrowserTag::TextArea => "textarea",
             };
             write!(output, "<{tag} data-ruvane-node=\"{id}\"").unwrap();
             if node.key != 0 {
                 write!(output, " data-ruvane-key=\"{}\"", node.key).unwrap();
             }
-            if let Some(event) = node.event {
-                write!(output, " type=\"button\" data-ruvane-click=\"{event}\"").unwrap();
+            match node.tag {
+                BrowserTag::Button => output.push_str(" type=\"button\""),
+                BrowserTag::Submit => output.push_str(" type=\"submit\""),
+                BrowserTag::Form => output.push_str(" novalidate"),
+                BrowserTag::Input => output.push_str(" type=\"text\" maxlength=\"1024\""),
+                BrowserTag::Checkbox => output.push_str(" type=\"checkbox\""),
+                BrowserTag::TextArea => output.push_str(" maxlength=\"1024\""),
+                _ => {}
             }
-            if node.tag == BrowserTag::Button && (inert || node.disabled) {
+            if let Some(event) = node.event {
+                let name = match node.tag {
+                    BrowserTag::Form => "submit",
+                    BrowserTag::Input | BrowserTag::TextArea => "input",
+                    BrowserTag::Checkbox => "change",
+                    _ => "click",
+                };
+                write!(output, " data-ruvane-{name}=\"{event}\"").unwrap();
+            }
+            if let Some(field) = &node.field {
+                write!(
+                    output,
+                    " aria-invalid=\"{}\" data-ruvane-epoch=\"{}\"",
+                    field.invalid, field.epoch
+                )
+                .unwrap();
+                if node.tag == BrowserTag::Input {
+                    write!(
+                        output,
+                        " value=\"{}\"",
+                        text(field.value.as_deref().unwrap()).as_str()
+                    )
+                    .unwrap();
+                }
+                if field.checked == Some(true) {
+                    output.push_str(" checked");
+                }
+            }
+            if (matches!(node.tag, BrowserTag::Button | BrowserTag::Submit) || is_control(node.tag))
+                && (inert || node.disabled)
+            {
                 output.push_str(" disabled");
             }
             output.push('>');
+            if matches!(node.tag, BrowserTag::Input | BrowserTag::Checkbox) {
+                continue;
+            }
             if let Some(label) = &node.text {
                 output.push_str(text(label).as_str());
+            }
+            if node.tag == BrowserTag::TextArea {
+                let value = node.field.as_ref().unwrap().value.as_deref().unwrap();
+                if value.starts_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str(text(value).as_str());
             }
             self.markup(id, inert, output);
             write!(output, "</{tag}>").unwrap();
@@ -403,7 +475,7 @@ impl View {
         Ok(Html::rendered(output))
     }
 
-    /// Wraps server HTML with versioned props. Buttons stay disabled until hydration.
+    /// Wraps server HTML with versioned props. Controls stay disabled until hydration.
     pub fn hydratable(&self, props: ComponentProps) -> Result<Html, ViewError> {
         self.check()?;
         let (kind, value) = props.state.to_wire();
@@ -467,6 +539,13 @@ pub trait Component {
     fn view(&self) -> Result<View, ComponentError>;
     /// Handles a declared event.
     fn dispatch(&mut self, event: u32) -> Result<(), ComponentError>;
+    /// Handles typed control data. The default accepts only data-free events.
+    fn dispatch_value(&mut self, event: u32, value: EventValue) -> Result<(), ComponentError> {
+        match value {
+            EventValue::None => self.dispatch(event),
+            _ => Err(ComponentError::InvalidEvent),
+        }
+    }
     /// Reports reactive resources. Components without a reactive graph return zero.
     fn stats(&self) -> ComponentStats {
         ComponentStats::default()

@@ -2,7 +2,9 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
-use ruvane::{BrowserCommands, Component, ComponentError, ComponentProps, View, ViewSnapshot};
+use ruvane::{
+    BrowserCommands, Component, ComponentError, ComponentProps, EventValue, View, ViewSnapshot,
+};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -42,6 +44,8 @@ pub enum BrowserError {
     InvalidProps = 7,
     /// The component returned an invalid view or patch.
     InvalidView = 8,
+    /// Event data has the wrong type, encoding or size.
+    InvalidPayload = 9,
 }
 
 impl fmt::Display for BrowserError {
@@ -55,6 +59,7 @@ impl fmt::Display for BrowserError {
             Self::Reactive => "browser reactive computation failed",
             Self::InvalidProps => "invalid component props",
             Self::InvalidView => "invalid component view",
+            Self::InvalidPayload => "invalid event payload",
         })
     }
 }
@@ -77,12 +82,21 @@ struct Instance {
     snapshot: ViewSnapshot,
 }
 
+struct PendingText {
+    view: u32,
+    node: u32,
+    event: u32,
+    length: usize,
+    bytes: Vec<u8>,
+}
+
 /// Owns components and encodes their DOM updates. The factory belongs to the application.
 pub struct BrowserRuntime {
     instances: BTreeMap<u32, Instance>,
     buffer: BrowserCommands,
     factory: ComponentFactory,
     next: u32,
+    pending: Option<PendingText>,
 }
 
 impl BrowserRuntime {
@@ -93,11 +107,12 @@ impl BrowserRuntime {
             buffer: BrowserCommands::new(),
             factory,
             next: 0,
+            pending: None,
         }
     }
 
     fn ready(&self) -> Result<(), BrowserError> {
-        if self.buffer.is_empty() {
+        if self.buffer.is_empty() && self.pending.is_none() {
             Ok(())
         } else {
             Err(BrowserError::Busy)
@@ -160,6 +175,17 @@ impl BrowserRuntime {
 
     /// Runs a node-bound event. Retired node handles cannot trigger new bindings.
     pub fn dispatch_node(&mut self, view: u32, node: u32, event: u32) -> Result<(), BrowserError> {
+        self.dispatch_value(view, node, event, EventValue::None)
+    }
+
+    /// Dispatches validated control data to a live binding.
+    pub fn dispatch_value(
+        &mut self,
+        view: u32,
+        node: u32,
+        event: u32,
+        value: EventValue,
+    ) -> Result<(), BrowserError> {
         self.ready()?;
         let instance = self
             .instances
@@ -168,8 +194,11 @@ impl BrowserRuntime {
         if !instance.snapshot.has_event(node, event) {
             return Err(BrowserError::InvalidEvent);
         }
+        if !instance.snapshot.accepts_value(node, event, &value) {
+            return Err(BrowserError::InvalidPayload);
+        }
         let update = (|| {
-            instance.component.dispatch(event)?;
+            instance.component.dispatch_value(event, value)?;
             Self::resources(instance.component.as_ref())?;
             let next = instance.component.view()?;
             let (snapshot, commands) = instance
@@ -193,6 +222,91 @@ impl BrowserRuntime {
         }
     }
 
+    /// Starts one bounded text payload. Other mutations wait until commit or clear.
+    pub fn begin_text(
+        &mut self,
+        view: u32,
+        node: u32,
+        event: u32,
+        length: u32,
+    ) -> Result<(), BrowserError> {
+        self.ready()?;
+        if length as usize > ruvane::MAX_BROWSER_TEXT_BYTES {
+            return Err(BrowserError::InvalidPayload);
+        }
+        let instance = self
+            .instances
+            .get(&view)
+            .ok_or(BrowserError::InvalidHandle)?;
+        if !instance.snapshot.has_event(node, event) {
+            return Err(BrowserError::InvalidEvent);
+        }
+        if !instance
+            .snapshot
+            .accepts_value(node, event, &EventValue::Text(String::new()))
+        {
+            return Err(BrowserError::InvalidPayload);
+        }
+        self.pending = Some(PendingText {
+            view,
+            node,
+            event,
+            length: length as usize,
+            bytes: Vec::with_capacity(length as usize),
+        });
+        Ok(())
+    }
+
+    /// Appends one to four little-endian bytes. Invalid chunks discard the payload.
+    pub fn text_chunk(&mut self, word: u32, count: u32) -> Result<(), BrowserError> {
+        let mut pending = self.pending.take().ok_or(BrowserError::InvalidPayload)?;
+        if !(1..=4).contains(&count)
+            || (count < 4 && word >> (count * 8) != 0)
+            || pending.bytes.len() + count as usize > pending.length
+        {
+            return Err(BrowserError::InvalidPayload);
+        }
+        pending
+            .bytes
+            .extend_from_slice(&word.to_le_bytes()[..count as usize]);
+        self.pending = Some(pending);
+        Ok(())
+    }
+
+    /// Decodes the numeric ABI payload: 0=none, 1=staged text, 2=boolean.
+    pub fn dispatch_wire(
+        &mut self,
+        view: u32,
+        node: u32,
+        event: u32,
+        kind: u32,
+        scalar: u32,
+    ) -> Result<(), BrowserError> {
+        let value = match (kind, scalar) {
+            (0, 0) => EventValue::None,
+            (2, 0) => EventValue::Boolean(false),
+            (2, 1) => EventValue::Boolean(true),
+            (1, 0) => {
+                let pending = self.pending.take().ok_or(BrowserError::InvalidPayload)?;
+                if pending.view != view
+                    || pending.node != node
+                    || pending.event != event
+                    || pending.bytes.len() != pending.length
+                {
+                    return Err(BrowserError::InvalidPayload);
+                }
+                EventValue::Text(
+                    String::from_utf8(pending.bytes).map_err(|_| BrowserError::InvalidPayload)?,
+                )
+            }
+            _ => {
+                self.pending = None;
+                return Err(BrowserError::InvalidPayload);
+            }
+        };
+        self.dispatch_value(view, node, event, value)
+    }
+
     /// Drops a component and queues removal. Stale handles are errors.
     pub fn dispose(&mut self, view: u32) -> Result<(), BrowserError> {
         self.ready()?;
@@ -212,9 +326,10 @@ impl BrowserRuntime {
     pub fn commands(&self) -> Vec<u8> {
         self.buffer.as_bytes().to_vec()
     }
-    /// Acknowledges the pending batch.
+    /// Acknowledges the pending batch and aborts staged text.
     pub fn clear_commands(&mut self) {
         self.buffer.clear();
+        self.pending = None;
     }
     /// Number of live components.
     pub fn live_instances(&self) -> usize {
@@ -434,12 +549,74 @@ mod tests {
             };
             assert_eq!(runtime.dispatch(id, 42), Err(expected));
             assert_eq!(runtime.live_instances(), 0);
-            assert_eq!(runtime.command_bytes(), b"RVN2\0\0\0\0");
+            assert_eq!(runtime.command_bytes(), b"RVN3\0\0\0\0");
             assert_eq!(runtime.dispatch(id, 42), Err(BrowserError::InvalidHandle));
         }
         assert_eq!(runtime.mount(1, counter(1)), Err(BrowserError::Limit));
         assert_eq!(runtime.mount(1, counter(4)), Err(BrowserError::InvalidView));
         assert_eq!(runtime.live_instances(), 0);
         assert_eq!(DROPS.load(Ordering::SeqCst), 5);
+    }
+    #[test]
+    fn typed_payload_staging_is_bounded_exact_and_can_be_aborted() {
+        let mut runtime = BrowserRuntime::new(demo::create);
+        let id = runtime
+            .mount(
+                1,
+                ComponentProps::new(demo::TASK_FORM, InitialState::Number(0)).unwrap(),
+            )
+            .unwrap();
+        runtime.clear_commands();
+        let node = runtime.instances[&id].snapshot.node_for_event(5).unwrap();
+        assert_eq!(
+            runtime.begin_text(id, node, 5, 1025),
+            Err(BrowserError::InvalidPayload)
+        );
+        assert_eq!(
+            runtime.dispatch_wire(id, node, 5, 2, 2),
+            Err(BrowserError::InvalidPayload)
+        );
+        runtime.begin_text(id, node, 5, 2).unwrap();
+        assert_eq!(runtime.dispose(id), Err(BrowserError::Busy));
+        assert_eq!(runtime.dispatch(id, 1), Err(BrowserError::Busy));
+        runtime.text_chunk(0xf0, 1).unwrap();
+        assert_eq!(
+            runtime.dispatch_wire(id, node, 5, 1, 0),
+            Err(BrowserError::InvalidPayload)
+        );
+        runtime.begin_text(id, node, 5, 1).unwrap();
+        assert_eq!(
+            runtime.text_chunk(256, 1),
+            Err(BrowserError::InvalidPayload)
+        );
+        assert!(runtime.pending.is_none());
+        runtime.begin_text(id, node, 5, 1).unwrap();
+        runtime.clear_commands();
+        assert!(runtime.pending.is_none());
+        let value = "Rust 🦀";
+        runtime.begin_text(id, node, 5, value.len() as u32).unwrap();
+        for chunk in value.as_bytes().chunks(4) {
+            let mut bytes = [0; 4];
+            bytes[..chunk.len()].copy_from_slice(chunk);
+            runtime
+                .text_chunk(u32::from_le_bytes(bytes), chunk.len() as u32)
+                .unwrap();
+        }
+        runtime.dispatch_wire(id, node, 5, 1, 0).unwrap();
+        runtime.clear_commands();
+        runtime.dispatch(id, 1).unwrap();
+        runtime.clear_commands();
+        assert_eq!(runtime.live_signals(), 1);
+        assert!(
+            runtime.instances[&id]
+                .view
+                .render()
+                .unwrap()
+                .as_str()
+                .contains("Rust 🦀")
+        );
+        runtime.dispose(id).unwrap();
+        runtime.clear_commands();
+        assert_eq!(runtime.live_signals(), 0);
     }
 }

@@ -1,4 +1,4 @@
-//! Numeric exports for browser ABI v3.
+//! Numeric exports for browser ABI v4.
 use super::{BrowserError, BrowserRuntime};
 use std::cell::{Cell, RefCell};
 
@@ -32,7 +32,7 @@ fn read(f: impl FnOnce(&BrowserRuntime) -> u32) -> u32 {
     })
 }
 
-// SAFETY: This module is the sole definition of all eleven ruvane_ export names.
+// SAFETY: This module is the sole definition of all thirteen ruvane_ export names.
 #[unsafe(no_mangle)]
 pub extern "C" fn ruvane_abi_version() -> u32 {
     ruvane::BROWSER_ABI_VERSION
@@ -48,9 +48,9 @@ pub extern "C" fn ruvane_mount(root: u32, component: u32, kind: u32, value: u32)
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruvane_dispatch(view: u32, node: u32, event: u32) -> u32 {
+pub extern "C" fn ruvane_dispatch(view: u32, node: u32, event: u32, kind: u32, value: u32) -> u32 {
     operation(|s| {
-        s.dispatch_node(view, node, event)?;
+        s.dispatch_wire(view, node, event, kind, value)?;
         Ok(1)
     })
 }
@@ -92,4 +92,19 @@ pub extern "C" fn ruvane_live_signals() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ruvane_live_effects() -> u32 {
     read(|s| s.live_effects() as u32)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ruvane_event_begin(view: u32, node: u32, event: u32, length: u32) -> u32 {
+    operation(|s| {
+        s.begin_text(view, node, event, length)?;
+        Ok(1)
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn ruvane_event_chunk(word: u32, count: u32) -> u32 {
+    operation(|s| {
+        s.text_chunk(word, count)?;
+        Ok(1)
+    })
 }

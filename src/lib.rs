@@ -64,6 +64,6 @@ pub use url::{
     ParamError, Query, QueryMode, UrlError,
 };
 pub use view::{
-    Component, ComponentError, ComponentProps, ComponentStats, InitialState, MAX_VIEW_DEPTH,
-    MAX_VIEW_EVENTS, MAX_VIEW_NODES, View, ViewError, ViewSnapshot,
+    Component, ComponentError, ComponentProps, ComponentStats, EventValue, InitialState,
+    MAX_VIEW_DEPTH, MAX_VIEW_EVENTS, MAX_VIEW_NODES, View, ViewError, ViewSnapshot,
 };

@@ -1,8 +1,8 @@
-// DOM bridge for RVN2 commands.
-export const ABI_VERSION = 3;
+// DOM bridge for RVN3 commands.
+export const ABI_VERSION = 4;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
-const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li" });
-const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects"];
+const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button" });
+const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk"];
 const invalid = () => new Error("Invalid Ruvane browser protocol");
 function uint(value, zero = false) {
   if (!Number.isInteger(value) || value < (zero ? 0 : 1) || value > 0xffffffff) throw invalid();
@@ -24,7 +24,7 @@ export function validateExports(exports) {
 /** Decodes a batch before touching the DOM. */
 export function decodeCommands(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 8 || bytes.length > LIMITS.bytes) throw invalid();
-  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 50) throw invalid();
+  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 51) throw invalid();
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 4;
   const u8 = () => { if (offset >= bytes.length) throw invalid(); return bytes[offset++]; };
@@ -36,18 +36,19 @@ export function decodeCommands(bytes) {
   for (let i = 0; i < count; i++) {
     const op = u8(), view = uint(u32());
     if (op === 5) { commands.push({ op, view }); continue; }
-    if (![1, 2, 3, 4, 6, 7].includes(op)) throw invalid();
+    if (![1, 2, 3, 4, 6, 7, 8, 9, 10].includes(op)) throw invalid();
     const node = uint(u32());
     if (op === 1) {
       const parent = u32(), tag = u8(), key = u32();
       if (!Object.hasOwn(TAGS, tag)) throw invalid();
       commands.push({ op, view, node, parent, tag, key });
-    } else if (op === 2) {
+    } else if (op === 2 || op === 8) {
+      const epoch = op === 8 ? u32() : null;
       const size = u32();
       if (size > LIMITS.text || offset + size > bytes.length) throw invalid();
       const text = decoder.decode(bytes.subarray(offset, offset + size));
       offset += size;
-      commands.push({ op, view, node, text });
+      commands.push(op === 8 ? { op, view, node, value: text, epoch } : { op, view, node, text });
     } else if (op === 3) {
       commands.push({ op, view, node, event: uint(u32()) });
     } else if (op === 6) {
@@ -57,9 +58,10 @@ export function decodeCommands(bytes) {
       if (before === node) throw invalid();
       commands.push({ op, view, node, before });
     } else {
+      const epoch = op === 9 ? u32() : null;
       const disabled = u8();
       if (disabled > 1) throw invalid();
-      commands.push({ op, view, node, disabled: disabled === 1 });
+      commands.push(op === 9 ? { op, view, node, checked: disabled === 1, epoch } : op === 10 ? { op, view, node, invalid: disabled === 1 } : { op, view, node, disabled: disabled === 1 });
     }
   }
   if (offset !== bytes.length) throw invalid();
@@ -105,8 +107,22 @@ class MountRejected extends Error {
   constructor() { super("Ruvane component props or mount rejected"); }
 }
 const mismatch = () => { throw new HydrationMismatch(); };
-const container = tag => [0, 1, 3, 7, 8].includes(tag);
-const leaf = tag => [2, 4, 5, 6].includes(tag);
+const container = tag => [0, 1, 3, 7, 8, 9, 10].includes(tag);
+const field = tag => [11, 12, 13].includes(tag);
+const textField = tag => tag === 11 || tag === 13;
+const disableable = tag => field(tag) || tag === 6 || tag === 14;
+const eventName = tag => tag === 9 ? "submit" : tag === 12 ? "change" : textField(tag) ? "input" : "click";
+const eventAttribute = tag => `data-ruvane-${eventName(tag)}`;
+class PayloadRejected extends Error { constructor() { super("Invalid Ruvane event payload"); } }
+function validText(tag, value) {
+  if (typeof value !== "string" || value.length > LIMITS.text || new TextEncoder().encode(value).length > LIMITS.text) return false;
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code >= 0xd800 && code <= 0xdfff) return false;
+  }
+  return !(tag === 13 ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/ : /[\u0000-\u001f\u007f-\u009f]/).test(value);
+}
+const leaf = tag => [2, 4, 5, 6, 14].includes(tag);
 
 /** Checks and copies public mount props. */
 export function validateProps(props) {
@@ -141,7 +157,9 @@ function accepts(parent, tag) {
   if (parent === 7) return tag === 8;
   if (tag === 8) return false;
   if (parent === 3) return [4, 5, 6].includes(tag);
-  return [0, 1, 8].includes(parent);
+  if (parent === 10) return tag === 4 || field(tag);
+  if (field(tag)) return false;
+  return [0, 1, 8, 9].includes(parent);
 }
 
 /** Validates decoded commands against a copy of the live tree. */
@@ -162,7 +180,10 @@ export function planCommands(commands, id, previous, initial = false) {
       uint(command.key, true);
       if (!Object.hasOwn(TAGS, command.tag) || command.node <= nextNode || nodes.size > LIMITS.nodes || !parent || !accepts(parent.tag, command.tag) || parent.depth >= 8) throw invalid();
       if (command.key && parent.children.some(id => nodes.get(id).key === command.key)) throw invalid();
-      nodes.set(command.node, { element: null, key: command.key, tag: command.tag, parent: command.parent, depth: parent.depth + 1, children: [], text: null, event: null, disabled: null });
+      let ancestor = command.parent, inForm = false;
+      while (ancestor) { inForm ||= nodes.get(ancestor).tag === 9; ancestor = nodes.get(ancestor).parent; }
+      if ((command.tag === 9 && inForm) || (command.tag === 14 && !inForm)) throw invalid();
+      nodes.set(command.node, { value: null, checked: null, invalid: null, epoch: null, seed: null, element: null, key: command.key, tag: command.tag, parent: command.parent, depth: parent.depth + 1, children: [], text: null, event: null, disabled: null });
       fresh.add(command.node); nextNode = command.node; parent.children.push(command.node);
       continue;
     }
@@ -171,10 +192,23 @@ export function planCommands(commands, id, previous, initial = false) {
     if (command.op === 2 && leaf(node.tag)) {
       if (typeof command.text !== "string" || command.text.length > LIMITS.text || new TextEncoder().encode(command.text).length > LIMITS.text) throw invalid();
       node.text = command.text;
-    } else if (command.op === 3 && node.tag === 6 && fresh.has(command.node) && node.event === null) {
+    } else if (command.op === 3 && (node.tag === 6 || node.tag === 9 || field(node.tag)) && fresh.has(command.node) && node.event === null) {
       node.event = uint(command.event);
-    } else if (command.op === 4 && node.tag === 6 && typeof command.disabled === "boolean") {
+    } else if (command.op === 4 && disableable(node.tag) && typeof command.disabled === "boolean") {
       node.disabled = command.disabled;
+    } else if (command.op === 8 && textField(node.tag)) {
+      if (!validText(node.tag, command.value)) throw invalid();
+      const epoch = uint(command.epoch, true);
+      if (node.epoch !== null && epoch < node.epoch) throw invalid();
+      node.value = command.value; node.epoch = epoch;
+      if (fresh.has(command.node)) node.seed = command.value;
+    } else if (command.op === 9 && node.tag === 12 && typeof command.checked === "boolean") {
+      const epoch = uint(command.epoch, true);
+      if (node.epoch !== null && epoch < node.epoch) throw invalid();
+      node.checked = command.checked; node.epoch = epoch;
+      if (fresh.has(command.node)) node.seed = command.checked;
+    } else if (command.op === 10 && field(node.tag) && typeof command.invalid === "boolean") {
+      node.invalid = command.invalid;
     } else if (command.op === 6 && !initial && !fresh.has(command.node)) {
       const siblings = nodes.get(node.parent).children;
       siblings.splice(siblings.indexOf(command.node), 1);
@@ -197,7 +231,10 @@ export function planCommands(commands, id, previous, initial = false) {
   let listeners = 0;
   for (const [id, node] of nodes) {
     if (id && leaf(node.tag) && node.text === null) throw invalid();
-    if (node.tag === 6 && (node.event === null || node.disabled === null || ++listeners > LIMITS.listeners)) throw invalid();
+    if ((node.tag === 6 || node.tag === 9 || field(node.tag)) && (node.event === null || ++listeners > LIMITS.listeners)) throw invalid();
+    if (disableable(node.tag) && node.disabled === null) throw invalid();
+    if (field(node.tag) && (node.epoch === null || node.invalid === null || (textField(node.tag) ? node.value === null : node.checked === null))) throw invalid();
+    if (node.tag === 10 && (node.children.filter(id => field(nodes.get(id).tag)).length !== 1 || !node.children.some(id => nodes.get(id).tag === 4 && nodes.get(id).text?.trim()))) throw invalid();
   }
   return { nodes, nextNode };
 }
@@ -210,17 +247,29 @@ function matchDom(nodes, root, inert) {
       if (node.element && node.element !== actual) mismatch();
       const attributes = { "data-ruvane-node": String(id) };
       if (node.key) attributes["data-ruvane-key"] = String(node.key);
-      if (node.tag === 6) {
-        attributes.type = "button";
-        attributes["data-ruvane-click"] = String(node.event);
-        if (inert || node.disabled) attributes.disabled = "";
-        if (actual.disabled !== (inert || node.disabled)) mismatch();
+      if (node.event !== null) attributes[eventAttribute(node.tag)] = String(node.event);
+      if (node.tag === 6 || node.tag === 14) attributes.type = node.tag === 6 ? "button" : "submit";
+      if (node.tag === 9) attributes.novalidate = "";
+      if (field(node.tag)) {
+        attributes["aria-invalid"] = String(node.invalid); attributes["data-ruvane-epoch"] = String(node.epoch);
+        if (textField(node.tag)) attributes.maxlength = "1024";
+        if (node.tag === 11) { attributes.type = "text"; attributes.value = node.seed; }
+        if (node.tag === 12) { attributes.type = "checkbox"; if (node.seed) attributes.checked = ""; }
+      }
+      if (disableable(node.tag)) {
+        const disabled = inert && field(node.tag) && !node.disabled ? actual.disabled : inert || node.disabled;
+        if (disabled) attributes.disabled = "";
+        if (actual.disabled !== disabled) mismatch();
       }
       if (actual.attributes.length !== Object.keys(attributes).length || Object.entries(attributes).some(([key, value]) => actual.getAttribute(key) !== value)) mismatch();
       node.element = actual;
       if (container(node.tag)) children(node, actual);
-      else if (node.text === "") { if (actual.childNodes.length !== 0) mismatch(); }
-      else if (actual.childNodes.length !== 1 || actual.firstChild.nodeType !== 3 || actual.firstChild.data !== node.text) mismatch();
+      else if (node.tag === 11 || node.tag === 12) { if (actual.childNodes.length) mismatch(); }
+      else {
+        const expected = node.tag === 13 ? node.seed : node.text;
+        if (expected === "") { if (actual.childNodes.length) mismatch(); }
+        else if (actual.childNodes.length !== 1 || actual.firstChild.nodeType !== 3 || actual.firstChild.data !== expected) mismatch();
+      }
     }
   }
   children(nodes.get(0), root);
@@ -235,15 +284,15 @@ export async function createRuntime(url) {
   function forget(id, preserve = false) {
     const view = views.get(id);
     if (!view) return;
-    for (const [node, listener] of view.listeners) view.nodes.get(node).element.removeEventListener("click", listener);
+    for (const [node, listeners] of view.listeners) for (const [type, listener] of listeners) view.nodes.get(node).element.removeEventListener(type, listener);
     view.listeners.clear();
     // A failed hydration leaves the server's content in place.
     for (const node of view.nodes.values()) {
       if (preserve) {
-        if (node.tag === 6 && view.root.contains(node.element)) node.element.disabled = true;
+        if (disableable(node.tag) && view.root.contains(node.element)) node.element.disabled = true;
       } else if (node.parent === 0 && node.element?.parentNode === view.root) node.element.remove();
     }
-    view.nodes.clear(); view.events.clear(); CLAIMS.delete(view.root); views.delete(id);
+    view.nodes.clear(); view.events.clear(); view.edits.clear(); view.ingress.clear(); CLAIMS.delete(view.root); views.delete(id);
   }
   function nativeStats() {
     const instances = result(exports.ruvane_live_instances());
@@ -280,22 +329,113 @@ export async function createRuntime(url) {
     if (size < 8 || size > LIMITS.bytes || pointer + size > memory.byteLength) throw invalid();
     return decodeCommands(new Uint8Array(memory, pointer, size).slice());
   }
+  function context(view, id) {
+    if (!view.edits.has(id)) view.edits.set(id, { composing: false, pending: null });
+    return view.edits.get(id);
+  }
+  function selection(element) {
+    if (!element || !["input", "textarea"].includes(element.localName) || element.type === "checkbox") return null;
+    return { start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection };
+  }
+  function restoreSelection(element, saved) {
+    if (!saved || saved.start === null || !element.isConnected) return;
+    const start = Math.min(saved.start, element.value.length), end = Math.min(saved.end, element.value.length);
+    if (element.selectionStart !== start || element.selectionEnd !== end || element.selectionDirection !== saved.direction) element.setSelectionRange(start, end, saved.direction);
+  }
+  function setValue(element, value) {
+    if (element.value === value) return;
+    const saved = element === document.activeElement ? selection(element) : null;
+    element.value = value; restoreSelection(element, saved);
+  }
+  function restoreField(view, id) {
+    const node = view.nodes.get(id);
+    if (!node) return;
+    if (textField(node.tag)) setValue(node.element, node.value);
+    if (node.tag === 12) node.element.checked = node.checked;
+  }
+  function input(view, id, nodeId, type, event) {
+    const node = view.nodes.get(nodeId);
+    if (!node || closed) return;
+    const edit = context(view, nodeId);
+    if (type === "compositionstart") { edit.composing = true; return; }
+    if (type === "input" && (event.isComposing || edit.composing)) { edit.composing = true; return; }
+    if (type === "compositionend") {
+      edit.composing = false;
+      if (edit.pending !== null) { setValue(node.element, edit.pending); edit.pending = null; return; }
+    }
+    const value = node.tag === 12 ? node.element.checked : node.element.value;
+    if (value === (node.tag === 12 ? node.checked : node.value)) return;
+    try { dispatchNode(id, nodeId, node.event, value); }
+    catch (error) {
+      if (error instanceof PayloadRejected) { restoreField(view, nodeId); console.warn("Ruvane input rejected"); }
+      else { stop(true); console.error("Ruvane browser runtime stopped"); }
+    }
+  }
+  function adopt(view, id, edits) {
+    view.ingress = new Set(edits.map(([key]) => key));
+    try {
+      for (const [key, value] of edits) {
+        view.ingress.delete(key); const node = view.nodes.get(key); if (!node) continue;
+        try { dispatchNode(id, key, node.event, value); }
+        catch (error) { if (error instanceof PayloadRejected) restoreField(view, key); throw error; }
+      }
+    } finally { view.ingress.clear(); }
+  }
+  function submit(view, id, nodeId) {
+    if ([...view.edits.values()].some(edit => edit.composing)) return;
+    const edits = [];
+    for (const [key, node] of view.nodes) {
+      if (!field(node.tag) || node.disabled) continue;
+      const value = node.tag === 12 ? node.element.checked : node.element.value;
+      if (value !== (node.tag === 12 ? node.checked : node.value)) edits.push([key, value]);
+    }
+    adopt(view, id, edits);
+    const node = view.nodes.get(nodeId);
+    if (node) dispatchNode(id, nodeId, node.event);
+  }
   function bind(view, id, nodeId, node) {
-    const listener = () => {
-      if (closed || views.get(id)?.nodes.get(nodeId)?.element !== node.element) return;
-      try { dispatchNode(id, nodeId, node.event); }
-      catch { stop(true); console.error("Ruvane browser runtime stopped"); }
-    };
-    node.element.addEventListener("click", listener);
-    view.listeners.set(nodeId, listener); view.events.add(node.event);
+    const types = textField(node.tag) ? ["input", "compositionstart", "compositionend"] : [eventName(node.tag)];
+    const listeners = types.map(type => {
+      const listener = event => {
+        if (closed || views.get(id)?.nodes.get(nodeId)?.element !== node.element) return;
+        if (node.tag === 9) event.preventDefault();
+        if (field(node.tag)) { input(view, id, nodeId, type, event); return; }
+        try { if (node.tag === 9) submit(view, id, nodeId); else dispatchNode(id, nodeId, node.event); }
+        catch (error) {
+          if (error instanceof PayloadRejected) console.warn("Ruvane input rejected");
+          else { stop(true); console.error("Ruvane browser runtime stopped"); }
+        }
+      };
+      node.element.addEventListener(type, listener); return [type, listener];
+    });
+    view.listeners.set(nodeId, listeners); view.events.add(node.event);
   }
   function createElement(nodes, command) {
     const node = nodes.get(command.node);
     node.element = document.createElement(TAGS[node.tag]);
     node.element.setAttribute("data-ruvane-node", String(command.node));
     if (node.key) node.element.setAttribute("data-ruvane-key", String(node.key));
-    if (node.tag === 6) { node.element.type = "button"; node.element.disabled = true; }
+    if (node.tag === 6 || node.tag === 14) node.element.type = node.tag === 6 ? "button" : "submit";
+    if (node.tag === 9) node.element.noValidate = true;
+    if (textField(node.tag)) { node.element.maxLength = LIMITS.text; if (node.tag === 11) node.element.type = "text"; node.element.defaultValue = node.seed; }
+    if (node.tag === 12) { node.element.type = "checkbox"; node.element.defaultChecked = node.seed; }
+    if (disableable(node.tag)) node.element.disabled = true;
     nodes.get(node.parent).element.appendChild(node.element);
+  }
+  function order(nodes, focused) {
+    for (const parent of nodes.values()) {
+      if (!parent.children.length) continue;
+      const children = parent.children.map(id => nodes.get(id).element);
+      const anchor = children.find(element => focused && element.contains(focused));
+      const place = (elements, before) => {
+        for (const element of [...elements].reverse()) {
+          if (element.nextSibling !== before) parent.element.insertBefore(element, before);
+          before = element;
+        }
+      };
+      if (anchor) { const index = children.indexOf(anchor); place(children.slice(0, index), anchor); place(children.slice(index + 1), null); }
+      else place(children, null);
+    }
   }
   function drain(id, phase) {
     const batch = commands(), view = views.get(id);
@@ -312,9 +452,9 @@ export async function createRuntime(url) {
     if (phase === "mount" && view.root.childNodes.length) throw invalid();
     if (result(exports.ruvane_commands_clear()) !== 1) throw invalid();
     const old = view.nodes;
-    const focused = view.root.contains(document.activeElement) ? document.activeElement : null;
-    for (const [nodeId, listener] of view.listeners) {
-      if (!nodes.has(nodeId)) { old.get(nodeId).element.removeEventListener("click", listener); view.listeners.delete(nodeId); }
+    const focused = view.root.contains(document.activeElement) ? document.activeElement : null, saved = selection(focused);
+    for (const [nodeId, listeners] of view.listeners) {
+      if (!nodes.has(nodeId)) { for (const [type, listener] of listeners) old.get(nodeId).element.removeEventListener(type, listener); view.listeners.delete(nodeId); view.edits.delete(nodeId); }
     }
     view.nodes = nodes; view.nextNode = plan.nextNode;
     if (phase !== "hydrate") {
@@ -323,26 +463,38 @@ export async function createRuntime(url) {
         if (command.op === 1) { createElement(nodes, command); continue; }
         const node = nodes.get(command.node);
         if (command.op === 2) node.element.textContent = command.text;
-        else if (command.op === 3) node.element.setAttribute("data-ruvane-click", String(command.event));
-        else if (command.op === 7) {
-          const before = command.before ? nodes.get(command.before).element : null;
-          if (node.element.nextSibling !== before) nodes.get(node.parent).element.insertBefore(node.element, before);
-        }
+        else if (command.op === 3) node.element.setAttribute(eventAttribute(node.tag), String(command.event));
       }
+      order(nodes, focused);
     }
     view.events.clear();
+    const edits = [];
     for (const [nodeId, node] of nodes) {
-      if (node.tag === 6) {
-        node.element.disabled = node.disabled;
-        view.events.add(node.event);
-      }
+      if (disableable(node.tag)) node.element.disabled = node.disabled;
+      if (node.event !== null && node.event !== undefined) view.events.add(node.event);
+      if (!field(node.tag)) continue;
+      node.element.setAttribute("aria-invalid", String(node.invalid)); node.element.setAttribute("data-ruvane-epoch", String(node.epoch));
+      const edit = context(view, nodeId), previous = old.get(nodeId);
+      if (phase === "hydrate" && !node.disabled) {
+        const value = node.tag === 12 ? node.element.checked : node.element.value;
+        if (value !== (node.tag === 12 ? node.checked : node.value)) edits.push([nodeId, value]);
+      } else if (view.ingress.has(nodeId)) { continue; }
+      else if (textField(node.tag)) {
+        if (edit.composing) {
+          if (previous && (previous.value !== node.value || previous.epoch !== node.epoch)) edit.pending = node.value;
+        } else setValue(node.element, node.value);
+      } else node.element.checked = node.checked;
     }
     matchDom(nodes, view.root, false);
     for (const [nodeId, node] of nodes) {
-      if (node.tag === 6 && !view.listeners.has(nodeId)) bind(view, id, nodeId, node);
+      if (node.event !== null && node.event !== undefined && !view.listeners.has(nodeId)) bind(view, id, nodeId, node);
     }
-    // insertBefore can blur a moved button. Restore focus only if it survived.
-    if (focused && view.root.contains(focused) && !focused.disabled && document.activeElement !== focused) focused.focus({ preventScroll: true });
+    view.hydrationEdits = edits;
+    if (focused && view.root.contains(focused) && !focused.disabled) {
+      if (document.activeElement !== focused) focused.focus({ preventScroll: true });
+      const active = [...nodes].find(([, node]) => node.element === focused);
+      if (!active || !view.edits.get(active[0])?.composing) restoreSelection(focused, saved);
+    }
   }
   function start(root, props, hydrated) {
     live(); host(root);
@@ -358,10 +510,10 @@ export async function createRuntime(url) {
         throw invalid();
       }
       if (views.has(id)) throw invalid();
-      views.set(id, { root, hydrated, nodes: new Map([[0, { element: root, tag: 0, depth: 0, children: [], key: 0 }]]), nextNode: 0, listeners: new Map(), events: new Set() });
+      views.set(id, { root, hydrated, nodes: new Map([[0, { element: root, tag: 0, depth: 0, children: [], key: 0 }]]), nextNode: 0, listeners: new Map(), events: new Set(), edits: new Map(), ingress: new Set(), hydrationEdits: [] });
       CLAIMS.add(root);
       drain(id, hydrated ? "hydrate" : "mount");
-      return Object.freeze({ id, dispatch: event => dispatch(id, event), dispose: () => disposeView(id) });
+      return Object.freeze({ id, dispatch: (event, value) => dispatch(id, event, value), dispose: () => disposeView(id) });
     } catch (error) {
       if (error instanceof HydrationMismatch || error instanceof MountRejected) {
         try { if (id) { releaseNative(id); forget(id, true); } }
@@ -370,25 +522,44 @@ export async function createRuntime(url) {
       throw error;
     } finally { busy = false; }
   }
-  function dispatch(id, event) {
+  function dispatch(id, event, value) {
     live(); uint(id); uint(event);
     const view = views.get(id);
     if (!view) throw new Error("Ruvane view disposed");
     const found = [...view.nodes].find(([, node]) => node.event === event);
     if (!found) throw new RangeError("Unknown Ruvane component event");
-    return dispatchNode(id, found[0], event);
+    if (found[1].tag === 9 && value === undefined) return submit(view, id, found[0]);
+    return dispatchNode(id, found[0], event, value);
   }
-  function dispatchNode(id, nodeId, event) {
+  function dispatchNode(id, nodeId, event, value) {
     live(); uint(id); uint(nodeId); uint(event);
     const view = views.get(id), node = view?.nodes.get(nodeId);
     if (!node || node.event !== event) throw new RangeError("Expired Ruvane event binding");
+    let kind = 0, scalar = 0, bytes;
+    if (textField(node.tag)) { if (!validText(node.tag, value) || node.disabled) throw new PayloadRejected(); kind = 1; bytes = new TextEncoder().encode(value); }
+    else if (node.tag === 12) { if (typeof value !== "boolean" || node.disabled) throw new PayloadRejected(); kind = 2; scalar = Number(value); }
+    else if (value !== undefined) throw new PayloadRejected();
     if (busy) throw new Error("Ruvane bridge busy");
     busy = true;
     try {
-      if (result(exports.ruvane_dispatch(id, nodeId, event)) !== 1) throw invalid();
+      if (bytes) {
+        if (result(exports.ruvane_event_begin(id, nodeId, event, bytes.length)) !== 1) throw new PayloadRejected();
+        for (let offset = 0; offset < bytes.length; offset += 4) {
+          const count = Math.min(4, bytes.length - offset); let word = 0;
+          for (let i = 0; i < count; i++) word |= bytes[offset + i] << (i * 8);
+          if (result(exports.ruvane_event_chunk(word >>> 0, count)) !== 1) throw new PayloadRejected();
+        }
+      }
+      if (result(exports.ruvane_dispatch(id, nodeId, event, kind, scalar)) !== 1) {
+        if (result(exports.ruvane_last_error()) === 9) throw new PayloadRejected();
+        throw invalid();
+      }
       drain(id, "dispatch");
-    } catch (error) { stop(true); throw error; }
-    finally { busy = false; }
+    } catch (error) {
+      if (error instanceof PayloadRejected) { if (result(exports.ruvane_commands_clear()) !== 1) stop(true); }
+      else stop(true);
+      throw error;
+    } finally { busy = false; }
   }
   function disposeView(id) {
     if (!views.has(id) || closed) return false;
@@ -402,10 +573,21 @@ export async function createRuntime(url) {
   }
   return Object.freeze({
     mount(root, props) { return start(root, validateProps(props), false); },
-    hydrate(root) { live(); host(root); return start(root, readProps(root), true); },
+    hydrate(root) {
+      live(); host(root); const controller = start(root, readProps(root), true), view = views.get(controller.id);
+      const edits = view.hydrationEdits; view.hydrationEdits = [];
+      const valid = [];
+      for (const [id, value] of edits) {
+        const node = view.nodes.get(id);
+        if (node && (node.tag === 12 ? typeof value === "boolean" : validText(node.tag, value))) valid.push([id, value]);
+        else restoreField(view, id);
+      }
+      adopt(view, controller.id, valid);
+      return controller;
+    },
     stats() {
       let domHandles = 0, eventListeners = 0;
-      for (const view of views.values()) { domHandles += Math.max(0, view.nodes.size - 1); eventListeners += view.listeners.size; }
+      for (const view of views.values()) { domHandles += Math.max(0, view.nodes.size - 1); eventListeners += [...view.listeners.values()].reduce((sum, listeners) => sum + listeners.length, 0); }
       const native = closed ? finalRust : nativeStats();
       return Object.freeze({ state: closed ? (faulted ? "faulted" : "disposed") : "active", views: views.size, domHandles, eventListeners,
         rustInstances: native?.rustInstances ?? null, rustSignals: native?.rustSignals ?? null, rustEffects: native?.rustEffects ?? null });

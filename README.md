@@ -20,6 +20,8 @@ JavaScript bridge run shared Rust components in the browser. Typed views render
 server HTML and hydrate its existing nodes with versioned initial state. Keyed
 subtrees support conditional rendering, insertion, removal and reordering while
 retaining surviving DOM nodes and component state.
+Typed text inputs, textareas and checkboxes send bounded values to Rust.
+Client forms support Rust validation, reset tokens and selection/composition handling.
 Interactive HTTP pages explicitly opt into a fixed module/Wasm CSP. Server
 actions and client-side navigation remain future work.
 
@@ -42,7 +44,7 @@ cargo run --offline --locked -p ruvane --example browser
 ```
 
 Open the printed address. The server renders a counter at 5/10, a boolean toggle
-and an item list. Wasm hydrates those same DOM nodes and connects their events.
+an item list and a task form. Wasm hydrates those same DOM nodes and connects their events.
 The list supports add/remove, per-item counters, ordering and filtering. Keys keep
 surviving rows and state attached to their identities. Both targets compile
 `examples/support/widgets.rs`; the registry contains no widget-specific rules.
@@ -50,9 +52,11 @@ surviving rows and state attached to their identities. Both targets compile
 The `/ssr` page serves the same content with scripts blocked and controls
 disabled. The `/tests` page checks node and text identity, state transfer,
 mismatches, isolation, stale handles, focus during reorder, 1,000 mount/hydration
-cycles each and 1,000 additions/removals with resource counts returning to baseline.
+cycles each, composition events, dirty field hydration and 1,000 additions/removals
+for both lists and typed task forms, with resource counts returning to baseline.
 The bridge also supports client mounts with explicit component props.
 See [shared views](docs/views.md) for the component API.
+See [client forms](docs/client-forms.md) for fields, validation and resets.
 
 The workspace contains only two explicit first-party packages. The browser crate
 depends locally on Ruvane; no registry, Git, build or test dependency is added.

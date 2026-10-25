@@ -8,6 +8,7 @@ try {
   try { view = runtime.hydrate(root); } catch { failures++; }
   try { runtime.hydrate(document.querySelector("#toggle > div")); } catch { failures++; }
   try { runtime.hydrate(document.querySelector("#item-list > div")); } catch { failures++; }
+  try { runtime.hydrate(document.querySelector("#tasks > div")); } catch { failures++; }
   status.textContent = failures
     ? "Some components could not hydrate. Their server HTML is still available."
     : "Server HTML hydrated. State and events run in Rust/Wasm.";
