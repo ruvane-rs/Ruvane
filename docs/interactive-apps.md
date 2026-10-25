@@ -27,7 +27,9 @@ blocked. Native mutations redirect to `/tasks`.
 Alpha.23 generated projects also attach an explicit native `/stream` route to
 the router. The **Streaming SSR** link loads a script-free document progressively;
 it does not use the client navigator. See [streaming](streaming.md) for the
-producer API, budgets and failure examples.
+producer API, budgets and failure examples. Alpha.24 also enables
+[progressive client navigation](progressive-navigation.md) on the project page;
+its workspace layout becomes usable before the slow leaf arrives.
 
 ## Shared declarations
 

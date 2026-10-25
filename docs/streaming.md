@@ -143,10 +143,10 @@ link to it. `?q=...` demonstrates escaped deferred content; `?fail=early` and
 `?fail=late` demonstrate failure before and after headers. The route is attached
 explicitly to the router after `App::router`; it is not a client-page loader.
 
-Existing App page packets, caches, layouts and error boundaries still wait for
-complete validated RVP1/RVP2/RVP3 replies before preparing a client branch.
-Browser ABI v10 and its 22 numeric exports are unchanged. Incremental client
-segment loading, partial hydration, parallel outlets and out-of-order replacement
-require a separate protocol and ownership design. This release supplies native
-HTTP progress, not those client behaviors. The loopback development transport
-still has no TLS, HTTP/2 or public deployment profile.
+Alpha.24 also offers [progressive client navigation](progressive-navigation.md)
+for opted-in App pages, with typed layouts and a pending leaf. That RVS1 data
+transport shares the bounded socket writer but has its own ownership protocol.
+Complete RVP1/RVP2/RVP3 navigation remains available. Interactive initial document
+streaming, partial hydration, parallel outlets and out-of-order replacement
+remain separate work. The loopback development transport still has no TLS,
+HTTP/2 or public deployment profile.

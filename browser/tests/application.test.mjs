@@ -71,5 +71,18 @@ await test("a generated application ships an independent, revision-matched Wasm 
       assert.deepEqual(metadata.packages.map(p=>p.name).sort(),["application-fixture","ruvane","ruvane-application-browser","ruvane-browser"]);
       for(const pkg of metadata.packages)assert.equal(pkg.source,null);
     });
+    await t.test("pending prefixes validate without a leaf seed and mount only owned layouts",()=>{
+      const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
+      const pending=(expected=1,name="workspace",key="/tasks",url="/tasks/project",count=1)=>{
+        const leaf=packet(url,17,0,200,true),empty=[82,86,65,49,0,0,0];
+        return new Uint8Array([82,86,80,52,0,expected,...leaf.slice(4),count,...(count?[...text(name),...text(key),...word(12),...word(1),...word(0),...word(empty.length),...empty]:[])]);
+      };
+      for(const bytes of [pending(2),pending(1,"forged"),pending(1,"workspace","/other"),pending(1,"workspace","/tasks","/tasks")]){assert.equal(stage(bytes,true),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),0);drain();}
+      const manifest=pending(1,"workspace","/tasks","/tasks/project",0);assert.equal(stage(manifest,true),1);assert.equal(stage(manifest),0);assert.equal(e.ruvane_last_error(),11);drain();
+      const bytes=pending();for(let n=0;n<1000;n++){assert.equal(stage(bytes,true),1);assert.equal(e.ruvane_live_instances(),0);assert.deepEqual(drain(),[]);}
+      assert.equal(stage(bytes),0);assert.equal(e.ruvane_last_error(),11);drain();
+      bytes[4]=1;const layout=stage(bytes);assert.ok(layout);assert.ok(drain().some(c=>c.op===2&&c.text==="Tasks workspace"));assert.equal(e.ruvane_dispose(layout),1);drain();
+      bytes[4]=2;assert.equal(stage(bytes),0);assert.equal(e.ruvane_live_instances(),0);drain();
+    });
   } finally { await rm(directory,{recursive:true,force:true}); }
 });

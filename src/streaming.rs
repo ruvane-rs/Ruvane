@@ -196,12 +196,80 @@ impl HtmlStream {
     pub fn prefix(&self) -> &Html {
         &self.prefix
     }
+    pub(crate) fn into_body(self) -> BodyStream {
+        let factory = self.factory;
+        BodyStream::new(
+            self.prefix.into_string().into_bytes(),
+            END,
+            self.limits,
+            move |context| {
+                let mut producer = factory(context)?;
+                Ok(Box::new(move |context: &StreamContext| {
+                    producer
+                        .next(context)
+                        .map(|value| value.map(|html| html.into_string().into_bytes()))
+                }) as Box<dyn ByteProducer>)
+            },
+        )
+    }
+}
+
+pub(crate) trait ByteProducer: Send {
+    fn next(&mut self, context: &StreamContext) -> Result<Option<Vec<u8>>, StreamError>;
+}
+impl<F> ByteProducer for F
+where
+    F: FnMut(&StreamContext) -> Result<Option<Vec<u8>>, StreamError> + Send,
+{
+    fn next(&mut self, context: &StreamContext) -> Result<Option<Vec<u8>>, StreamError> {
+        self(context)
+    }
+}
+type ByteFactory =
+    dyn Fn(&StreamContext) -> Result<Box<dyn ByteProducer>, StreamError> + Send + Sync;
+pub(crate) struct BodyStream {
+    prefix: Vec<u8>,
+    suffix: &'static [u8],
+    limits: StreamLimits,
+    factory: Arc<ByteFactory>,
+}
+impl fmt::Debug for BodyStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BodyStream")
+            .field("prefix_bytes", &self.prefix.len())
+            .field("limits", &self.limits)
+            .finish_non_exhaustive()
+    }
+}
+impl BodyStream {
+    pub(crate) fn new(
+        prefix: Vec<u8>,
+        suffix: &'static [u8],
+        limits: StreamLimits,
+        factory: impl Fn(&StreamContext) -> Result<Box<dyn ByteProducer>, StreamError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self {
+            prefix,
+            suffix,
+            limits,
+            factory: Arc::new(factory),
+        }
+    }
+    pub(crate) fn prefix(&self) -> &[u8] {
+        &self.prefix
+    }
+    pub(crate) fn configured_limits(&self) -> StreamLimits {
+        self.limits
+    }
     pub(crate) fn validate(&self, server_bytes: usize) -> Result<usize, StreamError> {
         self.limits.validate()?;
         let cap = self.limits.body_bytes.min(server_bytes);
-        if self.prefix.as_str().len() > self.limits.chunk_bytes
-            || END.len() > self.limits.chunk_bytes
-            || self.prefix.as_str().len().saturating_add(END.len()) > cap
+        if self.prefix.len() > self.limits.chunk_bytes
+            || self.suffix.len() > self.limits.chunk_bytes
+            || self.prefix.len().saturating_add(self.suffix.len()) > cap
         {
             return Err(StreamError::Limit);
         }
@@ -210,7 +278,7 @@ impl HtmlStream {
     pub(crate) fn start(
         &self,
         context: &StreamContext,
-    ) -> Result<Box<dyn HtmlProducer>, StreamError> {
+    ) -> Result<Box<dyn ByteProducer>, StreamError> {
         context.check()?;
         let producer = catch_unwind(AssertUnwindSafe(|| (self.factory)(context)))
             .unwrap_or(Err(StreamError::Producer))?;
@@ -218,14 +286,14 @@ impl HtmlStream {
     }
     pub(crate) fn send(
         &self,
-        producer: &mut dyn HtmlProducer,
+        producer: &mut dyn ByteProducer,
         context: &StreamContext,
         cap: usize,
         mut emit: impl FnMut(&[u8]) -> Result<(), StreamError>,
     ) -> Result<(), StreamError> {
         context.check()?;
-        emit(self.prefix.as_str().as_bytes())?;
-        let mut bytes = self.prefix.as_str().len();
+        emit(&self.prefix)?;
+        let mut bytes = self.prefix.len();
         let mut chunks = 1usize;
         loop {
             context.check()?;
@@ -237,21 +305,21 @@ impl HtmlStream {
             };
             chunks += 1;
             if chunks >= self.limits.chunks
-                || fragment.as_str().len() > self.limits.chunk_bytes
+                || fragment.len() > self.limits.chunk_bytes
                 || bytes
-                    .saturating_add(fragment.as_str().len())
-                    .saturating_add(END.len())
+                    .saturating_add(fragment.len())
+                    .saturating_add(self.suffix.len())
                     > cap
             {
                 return Err(StreamError::Limit);
             }
-            bytes += fragment.as_str().len();
-            if !fragment.as_str().is_empty() {
-                emit(fragment.as_str().as_bytes())?;
+            bytes += fragment.len();
+            if !fragment.is_empty() {
+                emit(&fragment)?;
             }
         }
         context.check()?;
-        emit(END)
+        emit(self.suffix)
     }
 }
 const END: &[u8] = b"</body></html>";
@@ -273,6 +341,7 @@ mod tests {
             })
         });
         let context = StreamContext::new(Duration::from_secs(1), Arc::new(AtomicBool::new(false)));
+        let plan = plan.into_body();
         let cap = plan.validate(1024).unwrap();
         let mut producer = plan.start(&context).unwrap();
         assert_eq!(
@@ -306,6 +375,7 @@ mod tests {
         })
         .unwrap();
         let context = StreamContext::new(Duration::from_secs(1), Arc::new(AtomicBool::new(false)));
+        let plan = plan.into_body();
         let cap = plan.validate(bytes).unwrap();
         let mut producer = plan.start(&context).unwrap();
         let mut output = Vec::new();

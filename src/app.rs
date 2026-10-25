@@ -217,8 +217,13 @@ pub struct PageContext<'a> {
     request: Option<&'a Request>,
     origin: Option<&'a SiteOrigin>,
     exporting: bool,
+    stream: Option<&'a crate::StreamContext>,
 }
 impl PageContext<'_> {
+    /// Cooperative cancellation/deadline context during progressive GET loading.
+    pub fn stream_context(&self) -> Option<&crate::StreamContext> {
+        self.stream
+    }
     /// Returns the selected registered page name; error layouts have none.
     pub fn route_name(&self) -> Option<&str> {
         self.route.map(PageRoute::name)
@@ -629,6 +634,7 @@ impl App {
                     request: matches!(page.mode, PageMode::ServerOnly(_)).then_some(request),
                     origin: origin.as_ref(),
                     exporting: false,
+                    stream: None,
                 };
                 if page.client.is_some() {
                     return app.client_response(index, &context, request);
@@ -690,6 +696,7 @@ impl App {
                         request: None,
                         origin: None,
                         exporting: false,
+                        stream: None,
                     };
                     let mut page = (error.render)();
                     page.metadata = page.metadata.for_error();
@@ -767,6 +774,7 @@ impl App {
                             request: None,
                             origin: Some(origin),
                             exporting: true,
+                            stream: None,
                         };
                         let rendered =
                             (page.render)(&context).map_err(|_| AppError::RenderFailed)?;

@@ -47,7 +47,7 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="10" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="11" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
@@ -140,7 +140,12 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v10
+## Browser ABI v11
+
+Alpha.24 adds RVP4 pending prefixes for ordered client navigation. Validation
+checks their loaded layouts without a leaf seed; pending leaves cannot mount.
+The same 22 numeric exports remain. See
+[progressive navigation](progressive-navigation.md).
 
 Alpha.22 adds read-only presentation mounts and RVP3 typed error scopes. See
 [segment boundaries](segment-boundaries.md).
@@ -154,7 +159,7 @@ with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 10 |
+| `ruvane_abi_version()` | Returns 11 |
 | `ruvane_application_revision()` | Returns the application build revision as u64/BigInt |
 | `ruvane_boundary_mount(root, component, kind, value)` | Empty-seed, event-free presentation owner, or zero on rejection |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |

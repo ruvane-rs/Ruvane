@@ -4,8 +4,8 @@ use crate::{NavigationCachePolicy, NavigationLayout};
 /// Read-only loading and error components for one page or layout's children.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ClientBoundary {
-    loading: u32,
-    error: u32,
+    pub(super) loading: u32,
+    pub(super) error: u32,
 }
 impl ClientBoundary {
     /// Loading accepts Number(0); errors accept Number(0/408/400/404/500).
@@ -42,7 +42,11 @@ impl App {
         self.client_layouts[index].boundary = boundary;
         Ok(())
     }
-    fn error_boundary(&self, index: usize, failed: usize) -> Option<(usize, ClientBoundary)> {
+    pub(super) fn error_boundary(
+        &self,
+        index: usize,
+        failed: usize,
+    ) -> Option<(usize, ClientBoundary)> {
         let client = self.pages[index].client?;
         let chain = self.layout_chain(client.layout);
         if failed > chain.len() {
@@ -100,7 +104,7 @@ impl App {
                     && self.validate_layout_prefix(packet, Some(depth))
             })
     }
-    fn guarded<T>(f: impl FnOnce() -> Result<T, PageError>) -> Result<T, PageError> {
+    pub(super) fn guarded<T>(f: impl FnOnce() -> Result<T, PageError>) -> Result<T, PageError> {
         catch_unwind(AssertUnwindSafe(f)).unwrap_or(Err(PageError::InternalServerError))
     }
     fn boundary_failure(

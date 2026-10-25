@@ -7,7 +7,7 @@ try {
   if (!root || !outlet || !status || document.querySelectorAll("#ruvane-application").length !== 1) throw new Error("Invalid Ruvane application shell");
   runtime = await createRuntime(root.getAttribute("data-ruvane-module"), { applicationRevision: root.getAttribute("data-ruvane-revision") });
   for (const element of root.querySelectorAll("[data-ruvane-version]")) if (!outlet.contains(element)) runtime.hydrate(element);
-  navigator = createNavigator(runtime, { outlet, scope: root, status, boundaries:readBoundaries(root) });
+  navigator = createNavigator(runtime, { outlet, scope: root, status, boundaries:readBoundaries(root), progressive:true });
   await navigator.start({ accept: () => {
     const fallback = root.querySelector("#ruvane-fallback");
     return !fallback || !fallback.contains(document.activeElement) && ![...fallback.querySelectorAll("input,textarea")].some(field => field.type === "checkbox" ? field.checked !== field.defaultChecked : field.value !== field.defaultValue);

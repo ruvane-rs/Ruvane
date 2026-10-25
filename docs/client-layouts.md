@@ -98,7 +98,7 @@ layouts, without adding a history entry; local drafts can be discarded.
 
 ## Wire contract
 
-ABI v10 provides 22 numeric exports, RVN6 commands and RVA1 seeds. RVP1 is still
+ABI v11 provides 22 numeric exports, RVN6 commands and RVA1 seeds. RVP1 is still
 used for pages with no layouts. RVP2 contains:
 
 1. Four magic bytes `RVP2`, then a selected-segment u8.
@@ -135,7 +135,7 @@ DOM/state preservation, parameter changes, history, failed partial preparation,
 100 branch switches, errors and cleanup.
 
 See [segment boundaries](segment-boundaries.md) for local loading, typed errors
-and GET retry. Parallel outlets and incremental client segments remain separate
-work. [Native HTML streaming](streaming.md) leaves this complete-branch contract
-unchanged. Existing server fragment layouts and static export keep their
-existing APIs.
+and GET retry. [Progressive navigation](progressive-navigation.md) can deliver
+validated layouts before the leaf on opted-in pages. Parallel outlets remain
+separate work. Existing complete packets, server fragment layouts and static
+export keep their APIs.

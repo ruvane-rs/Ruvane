@@ -181,6 +181,9 @@ impl BrowserRuntime {
         root: u32,
         page: &ruvane::NavigationPage,
     ) -> Result<u32, BrowserError> {
+        if page.pending_layouts().is_some() && page.selected_segment() == 0 {
+            return Err(BrowserError::InvalidPage);
+        }
         self.validate_page(page)?;
         let (props, data) = page.segment();
         self.mount_inner(
@@ -308,6 +311,7 @@ impl BrowserRuntime {
                     .map(|layout| (layout.props(), layout.data())),
             )
             .enumerate()
+            .filter(|(index, _)| page.pending_layouts().is_none() || *index != 0)
         {
             let mut component = (self.factory)(props).map_err(|_| BrowserError::InvalidPage)?;
             component

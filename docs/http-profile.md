@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.23 implements a small development profile based on the
+Ruvane 0.1.0-alpha.24 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -107,6 +107,9 @@ bounded typed native document progress; streams retain no-store and the fixed
 script-blocking CSP. They send a successful terminal chunk only after complete
 production and cleanup. A committed error closes an incomplete response.
 See [streaming](streaming.md) for the API, HEAD and failure behavior.
+Alpha.24 also uses this bounded writer for opted-in App navigation data with
+fixed RVS1 framing, MIME and identity checks. Those streams stay no-store and
+retain the script-blocking CSP. See [progressive navigation](progressive-navigation.md).
 
 `Response::html` accepts rendered `Html`; `Response::text` is plain text.
 The `link` renderer accepts only an `InternalUrl`, without adding arbitrary

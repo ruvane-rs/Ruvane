@@ -74,7 +74,14 @@ pub fn application() -> App {
         |context| {
             let query = context.request().unwrap().query_params();
             if query.get("delay") == Some("yes") {
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                let delay = std::time::Duration::from_millis(500);
+                if let Some(stream) = context.stream_context() {
+                    stream
+                        .wait(delay)
+                        .map_err(|_| PageError::InternalServerError)?;
+                } else {
+                    std::thread::sleep(delay);
+                }
             }
             if query.get("unavailable") == Some("yes") {
                 return Err(PageError::InternalServerError);
@@ -120,6 +127,7 @@ pub fn application() -> App {
         .unwrap();
     app.client_page_boundary("task", Some(boundary)).unwrap();
     app.client_page_boundary("project", Some(boundary)).unwrap();
+    app.client_page_streaming("project", true).unwrap();
     app
 }
 pub fn shell(children: Html) -> Html {

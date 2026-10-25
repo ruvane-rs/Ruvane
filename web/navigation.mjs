@@ -1,7 +1,8 @@
-import { decodePage, internalTarget, NAVIGATION_MEDIA_TYPE } from "./bridge.mjs";
+import { decodePage, internalTarget, NAVIGATION_MEDIA_TYPE, NAVIGATION_STREAM_MEDIA_TYPE } from "./bridge.mjs";
 
 export const CACHE_LIMITS = Object.freeze({ entries: 32, bytes: 2097152, prefetches: 2, jobs: 32, ttlMs: 300000 });
 const OWNERS = new WeakSet(), KEY = "__ruvane_navigation_v1";
+let nextStreamToken = 0;
 const failure = () => new Error("Ruvane navigation failed");
 const position = value => Number.isFinite(value) && value >= 0 && value <= 100000000 ? value : 0;
 const urlTarget = url => url.pathname + url.search + (!url.search && url.href.split("#")[0].endsWith("?") ? "?" : "");
@@ -40,6 +41,52 @@ async function pageBytes(response, signal) {
   const bytes = new Uint8Array(total); let offset = 0;
   for (const part of parts) { bytes.set(part, offset); offset += part.length; }
   return bytes;
+}
+
+const sameDescriptor = (a,b) => a.name===b.name && a.key===b.key && a.component===b.component && a.kind===b.kind && a.value===b.value && a.seed.length===b.seed.length && a.seed.every((value,n)=>value===b.seed[n]);
+/** Reads bounded ordered packets. A final packet is usable only after terminal and EOF. */
+export async function readNavigationStream(response, { signal, url, revision, token, prefix }) {
+  if(response.status!==200||response.redirected||!response.body||response.headers.get("content-type")!==NAVIGATION_STREAM_MEDIA_TYPE||response.headers.get("content-length")!==null||response.headers.get("cache-control")!=="no-store")throw failure();
+  const reader=response.body.getReader();let part=new Uint8Array(),offset=0,total=0,emptyReads=0;
+  const abort=()=>{void reader.cancel().catch(()=>{});};
+  signal.addEventListener("abort",abort,{once:true});
+  const check=()=>{if(signal.aborted)throw failure();};
+  async function take(size){
+    const result=new Uint8Array(size);let written=0;
+    while(written<size){
+      check();
+      if(offset===part.length){const read=await reader.read();check();if(read.done||!(read.value instanceof Uint8Array))throw failure();part=read.value;offset=0;emptyReads=part.length?0:emptyReads+1;total+=part.length;if(total>524288||emptyReads>64)throw failure();}
+      const count=Math.min(size-written,part.length-offset);result.set(part.subarray(offset,offset+count),written);offset+=count;written+=count;
+    }
+    return result;
+  }
+  const number=async()=>new DataView((await take(4)).buffer).getUint32(0,true);
+  let previous=null,final=null,bytes=null;
+  try{
+    const header=await take(20),view=new DataView(header.buffer);
+    if(String.fromCharCode(...header.slice(0,4))!=="RVS1"||view.getBigUint64(4,true).toString()!==revision||view.getBigUint64(12,true).toString()!==token)throw failure();
+    for(let count=0;count<9;count++){
+      const length=await number();
+      if(length===0){
+        if(!final||offset!==part.length)throw failure();
+        const end=await reader.read();check();if(!end.done)throw failure();
+        return {bytes,page:final};
+      }
+      if(final||length>65532)throw failure();
+      bytes=await take(length);const page=decodePage(bytes);
+      if(page.url!==url||page.selected!==0)throw failure();
+      if(!previous){if(page.pending===null||page.layouts.length!==0)throw failure();}
+      else {
+        if(page.pending!==null&&(page.pending!==previous.pending||page.component!==previous.component||page.kind!==previous.kind||page.value!==previous.value||page.layouts.length!==previous.layouts.length+1))throw failure();
+        if(page.pending===null&&(page.failed===null?(page.status!==200||previous.layouts.length!==previous.pending||page.layouts.length!==previous.pending||page.component!==previous.component||page.kind!==previous.kind||page.value!==previous.value):(page.failed!==previous.layouts.length||page.layouts.length>previous.layouts.length)))throw failure();
+        if(!page.layouts.every((item,index)=>index>=previous.layouts.length||sameDescriptor(item,previous.layouts[index])))throw failure();
+      }
+      if(page.pending===null)final=page;
+      else {await prefix(bytes,page);check();previous=page;}
+    }
+    throw failure();
+  } catch(error) {try{await reader.cancel();}catch{}throw error;}
+  finally{signal.removeEventListener("abort",abort);reader.releaseLock();}
 }
 
 const identifier=value=>typeof value==="string"&&/^[A-Za-z][A-Za-z0-9_-]{0,47}$/.test(value);
@@ -83,7 +130,8 @@ export function readBoundaries(root){
 }
 
 /** Keeps page data in a bounded cache; live views belong to the runtime. */
-export function createNavigator(runtime, { outlet, scope = document, status, timeoutMs = 10000, maxCacheEntries = 32, maxCacheBytes = 2097152, cacheTtlMs = 30000, prefetchConcurrency = 2, boundaries = [] } = {}) {
+export function createNavigator(runtime, { outlet, scope = document, status, timeoutMs = 10000, maxCacheEntries = 32, maxCacheBytes = 2097152, cacheTtlMs = 30000, prefetchConcurrency = 2, boundaries = [], progressive = false } = {}) {
+  if(typeof progressive!=="boolean"||progressive&&!runtime?.applicationRevision)throw failure();
   if (!runtime || !["mountPage", "mountPageSegment", "validatePage", "actionState", "subscribeActions"].every(name => typeof runtime[name] === "function") || !(outlet instanceof HTMLElement) || outlet.ownerDocument !== document || !(scope === document || scope instanceof HTMLElement && scope.ownerDocument === document) || !scope.contains(outlet) || OWNERS.has(window) || !(status instanceof HTMLElement) || status.ownerDocument !== document || outlet.contains(status) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000 || !["http:", "https:"].includes(location.protocol)) throw failure();
   for (const [value, min, max] of [[maxCacheEntries,0,32],[maxCacheBytes,0,2097152],[cacheTtlMs,1,300000],[prefetchConcurrency,1,2]]) if (!Number.isInteger(value) || value < min || value > max) throw failure();
   const presentation=boundaryConfig(boundaries), layoutPresentation=new Map(presentation.filter(item=>item.kind==="layout").map(item=>[item.name,item]));
@@ -115,7 +163,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     if (jobs.get(job.url) === job) jobs.delete(job.url); activeJobs.delete(job); job.resolve(outcome); schedule();
   }
   function cancelJobs(reason, url) { for (const job of [...jobs.values()]) if (url === undefined || job.url === url) { job.reason = reason; finishJob(job,reason); } }
-  function cancelNavigation(reason, url) { if (pending && !pending.committing && (url === undefined || pending.url === url)) { pending.reason = reason; pending.abort.abort(); } }
+  function cancelNavigation(reason, url) { if (pending && !pending.committing && (url === undefined || pending.url === url)) { pending.reason = reason; pending.abort.abort(); rollbackPreview(pending); } }
   function invalidate(url, reason = "invalidated") {
     if (disposed) return;
     if (url !== undefined) safeURL(url);
@@ -126,9 +174,9 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   }
   function updated() { clearFeedback();lastFailure=null;blocked = true; invalidate(undefined,"invalidated"); status.textContent = "Application updated. Reload to continue."; }
   function schedule() { if (!pumpQueued) { pumpQueued = true; queueMicrotask(() => { pumpQueued = false; pump(); }); } }
-  const headers = () => ({ Accept: NAVIGATION_MEDIA_TYPE, ...(runtime.applicationRevision ? { "Ruvane-Application-Revision": runtime.applicationRevision } : {}) });
-  const request = (url, signal) => fetch(safeURL(url).href,{ method:"GET", mode:"same-origin", credentials:"same-origin", redirect:"error", headers:headers(), signal, cache:"no-cache" });
-  function verify(bytes,response,url) { const page = decodePage(bytes); if (page.url !== url || page.status !== response.status || page.selected !== 0 || response.redirected) throw failure(); return page; }
+  const headers = token => ({ Accept: token ? NAVIGATION_STREAM_MEDIA_TYPE : NAVIGATION_MEDIA_TYPE, ...(token ? {"Ruvane-Stream-Token":token} : {}), ...(runtime.applicationRevision ? { "Ruvane-Application-Revision": runtime.applicationRevision } : {}) });
+  const request = (url, signal, token=null) => fetch(safeURL(url).href,{ method:"GET", mode:"same-origin", credentials:"same-origin", redirect:"error", headers:headers(token), signal, cache:"no-cache" });
+  function verify(bytes,response,url) { const page = decodePage(bytes); if (page.pending!==null||page.url !== url || page.status !== response.status || page.selected !== 0 || response.redirected) throw failure(); return page; }
   async function performPrefetch(job) {
     const version = generation, epoch = runtime.actionState().epoch, began = performance.now();
     const timer = setTimeout(() => job.controller.abort(),timeoutMs);
@@ -163,21 +211,21 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   function actionChanged(state) { clearFeedback();lastFailure=null;invalidate(); if (state.state !== "active") cancelJobs("disposed"); schedule(); }
   const unsubscribe = runtime.subscribeActions(actionChanged);
   OWNERS.add(window); status.setAttribute("role","status"); status.setAttribute("aria-live","polite");
-  function save() { if (!disposed && started && activeURL === target()) history.replaceState({ ...stateObject(history.state), [KEY]:entry(target()+location.hash,scrollX,scrollY) },"",location.href); }
+  function save() { if (!disposed && started && activeURL === target()) {const point=pending?.preview?.point??{x:scrollX,y:scrollY};history.replaceState({ ...stateObject(history.state), [KEY]:entry(target()+location.hash,point.x,point.y) },"",location.href);} }
   function scroll() {
-    if (!started || disposed || frame || pending?.mode === "pop") return;
+    if (!started || disposed || frame || pending?.mode === "pop" || pending?.preview) return;
     frame = requestAnimationFrame(() => { frame = 0; try { save(); } catch { /* History storage can be full. */ } });
   }
   const restore = point => window.scrollTo(position(point.x),position(point.y));
   const fallback = url => { if (!disposed) location.replace(url); };
-  const sameLayout = (a,b) => a.name===b.name && a.key===b.key && a.component===b.component && a.kind===b.kind && a.value===b.value && a.seed.length===b.seed.length && a.seed.every((value,n)=>value===b.seed[n]);
-  function checkBranch() {
+  const sameLayout = sameDescriptor;
+  function checkBranch(items=branch,leaf=current!==null) {
     let slot=outlet;
-    for(const layout of branch) {
+    for(const layout of items) {
       if(slot.childNodes.length!==1 || slot.firstChild!==layout.host || layout.host.childNodes.length!==2 || layout.host.firstChild!==layout.own || layout.host.lastChild!==layout.outlet || layout.host.getAttribute("data-ruvane-layout")!==layout.descriptor.name)throw failure();
       slot=layout.outlet;
     }
-    if(current && (slot.childNodes.length!==1 || slot.firstChild!==pageHost))throw failure();
+    if(leaf && (slot.childNodes.length!==1 || slot.firstChild!==pageHost))throw failure();
   }
   function releaseBranch(items) { for(const item of [...items].reverse())item.controller.dispose(); }
   function feedbackConfig(url){
@@ -198,15 +246,48 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     previous.host.remove();if(previous.busy) {if(previous.previousBusy===null)previous.slot.removeAttribute("aria-busy");else previous.slot.setAttribute("aria-busy",previous.previousBusy);}
     if(previous.controller)try{previous.controller.dispose();}catch{queueMicrotask(()=>{try{previous.controller.dispose();}catch{ /* Runtime shutdown owns remaining views. */ }});}
   }
-  function showFeedback(url,kind,component=true){
-    const config=feedbackConfig(url);if(!config)return;
-    const slot=component?config.slot:(branch.length?branch.at(-1).outlet:outlet),host=document.createElement("div"),own=document.createElement("div");
+  function showFeedback(url,kind,component=true,selectedSlot=null){
+    const config=feedbackConfig(url);if(!config&&!selectedSlot)return;
+    const slot=selectedSlot??(component?config.slot:(branch.length?branch.at(-1).outlet:outlet)),host=document.createElement("div"),own=document.createElement("div");
     host.setAttribute("data-ruvane-feedback",kind);host.setAttribute("role",kind==="loading"?"status":"alert");host.setAttribute("aria-live",kind==="loading"?"polite":"assertive");host.append(own);
     const previousBusy=slot.getAttribute("aria-busy");if(kind==="loading")slot.setAttribute("aria-busy","true");
     let controller=null;
-    if(component)try{controller=runtime.mountBoundary(own,{component:kind==="loading"?config.declaration.loading:config.declaration.error,state:{kind:"number",value:kind==="timeout"?408:0}});}catch{own.textContent=kind==="loading"?"Loading…":"This page could not be loaded.";}
+    if(component&&config)try{controller=runtime.mountBoundary(own,{component:kind==="loading"?config.declaration.loading:config.declaration.error,state:{kind:"number",value:kind==="timeout"?408:0}});}catch{own.textContent=kind==="loading"?"Loading…":"This page could not be loaded.";}
+    else own.textContent=kind==="loading"?"Loading…":"This page could not be loaded.";
     if(kind!=="loading") {retryButton=document.createElement("button");retryButton.type="button";retryButton.textContent="Try again";host.append(retryButton);}
     slot.append(host);feedback={host,slot,controller,busy:kind==="loading",previousBusy,kind};
+  }
+  function rollbackPreview(operation){
+    const preview=operation.preview;if(!preview)return;
+    operation.preview=null;clearFeedback();preview.mountPoint.replaceChildren(preview.saved);
+    if(preview.focus?.isConnected&&document.activeElement===document.body)preview.focus.focus({preventScroll:true});
+    restore(preview.point);
+    for(const item of [...preview.layouts].reverse())try{item.controller.dispose();}catch{queueMicrotask(()=>{try{item.controller.dispose();}catch{ /* A stopped runtime owns remaining views. */ }});}
+  }
+  function previewPrefix(operation,bytes,page,resetLayouts){
+    if(disposed||pending!==operation||operation.reason||operation.abort.signal.aborted)throw failure();
+    runtime.validatePage(bytes);
+    if(page.layouts.length===0)return;
+    clearFeedback();
+    let preview=operation.preview;
+    if(!preview){
+      checkBranch();let shared=0;
+      if(!resetLayouts)while(shared<branch.length&&shared<page.layouts.length&&sameLayout(branch[shared].descriptor,page.layouts[shared]))shared++;
+      if(shared===page.layouts.length){showFeedback(operation.url,"loading");return;}
+      const mountPoint=shared?branch[shared-1].outlet:outlet,saved=document.createDocumentFragment(),focus=mountPoint.contains(document.activeElement)?document.activeElement:null,point={x:scrollX,y:scrollY};
+      while(mountPoint.firstChild)saved.append(mountPoint.firstChild);
+      preview={shared,mountPoint,saved,layouts:[],focus,point};operation.preview=preview;
+    }
+    const candidate=branch.slice(0,preview.shared).concat(preview.layouts);
+    checkBranch(candidate,false);
+    let slot=preview.layouts.at(-1)?.outlet??preview.mountPoint;
+    for(let index=candidate.length;index<page.layouts.length;index++){
+      if(slot.childNodes.length)throw failure();
+      const descriptor=page.layouts[index],host=document.createElement("section"),own=document.createElement("div"),child=document.createElement("div");
+      host.setAttribute("data-ruvane-layout",descriptor.name);own.setAttribute("data-ruvane-layout-view","");child.setAttribute("data-ruvane-child-outlet","");host.append(own,child);
+      const controller=runtime.mountPageSegment(own,bytes,index+1);preview.layouts.push({descriptor,host,own,outlet:child,controller});slot.append(host);slot=child;
+    }
+    showFeedback(operation.url,"loading",true,slot);
   }
   function run(url,mode,point={x:0,y:0},accept,fresh=false,resetLayouts=false) {
     if (disposed) return Promise.reject(new Error("Ruvane navigator disposed")); safeURL(url);
@@ -224,16 +305,23 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         if (cached) { hits = Math.min(Number.MAX_SAFE_INTEGER,hits+1); bytes = cached.bytes; page = decodePage(bytes); }
         else {
           misses = Math.min(Number.MAX_SAFE_INTEGER,misses+1); const began = performance.now();
-          const response = await request(url,operation.abort.signal); operation.updated = response.status === 409;
+          let token=null;
+          if(progressive&&mode!=="start"){if(nextStreamToken===Number.MAX_SAFE_INTEGER)throw failure();token=String(++nextStreamToken);}
+          const response = await request(url,operation.abort.signal,token); operation.updated = response.status === 409;
           if (operation.updated) { blocked = true; invalidate(); }
-          bytes = await pageBytes(response,operation.abort.signal); page = verify(bytes,response,url); expires = cacheFreshness(response,cacheTtlMs,began);
+          if(response.headers.get("content-type")===NAVIGATION_STREAM_MEDIA_TYPE){
+            if(!token)throw failure();
+            ({bytes,page}=await readNavigationStream(response,{signal:operation.abort.signal,url,revision:runtime.applicationRevision,token,prefix:(bytes,page)=>previewPrefix(operation,bytes,page,resetLayouts)}));
+          } else {bytes = await pageBytes(response,operation.abort.signal); page = verify(bytes,response,url); expires = cacheFreshness(response,cacheTtlMs,began);}
         }
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
         if (operation.reason || operation.abort.signal.aborted) { status.textContent = "Data changed. Try the link again."; if (mode === "pop") fallback(url); return operation.reason ?? "invalidated"; }
-        clearFeedback();runtime.validatePage(bytes); checkBranch();
+        clearFeedback();runtime.validatePage(bytes);
+        const previousBranch=branch,preview=operation.preview,source=preview?branch.slice(0,preview.shared).concat(preview.layouts):branch;
+        checkBranch(source,!preview&&current!==null);
         let shared=0;
-        if(!resetLayouts)while(shared<branch.length && shared<page.layouts.length && sameLayout(branch[shared].descriptor,page.layouts[shared]))shared++;
-        const mountPoint = shared ? branch[shared-1].outlet : outlet;
+        if(!resetLayouts||preview)while(shared<source.length && shared<page.layouts.length && sameLayout(source[shared].descriptor,page.layouts[shared]))shared++;
+        const mountPoint = shared ? source[shared-1].outlet : outlet;
         const fragment=document.createDocumentFragment();let slot=fragment;
         for(let index=shared;index<page.layouts.length;index++){
           const descriptor=page.layouts[index],host=document.createElement("section"),own=document.createElement("div"),child=document.createElement("div");
@@ -245,14 +333,17 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         operation.committing = true;
         if (mode === "push") { save(); history.pushState({ [KEY]:entry(url,0,0) },"",url); }
         else if (mode === "start" || mode === "replace") history.replaceState({ ...stateObject(history.state), [KEY]:entry(mode === "start" ? url+location.hash : url,point.x,point.y) },"",mode === "start" ? location.href : url);
-        current?.dispose(); releaseBranch(branch.slice(shared)); mountPoint.replaceChildren(fragment); branch=branch.slice(0,shared).concat(preparedLayouts);preparedLayouts=[];current=prepared;prepared=null;pageHost=host; activeURL = url; started = true; history.scrollRestoration = "manual";
+        const retained=new Set(source.slice(0,shared).map(item=>item.controller)),retired=new Set();
+        current?.dispose();
+        for(const item of [...previousBranch,...source].reverse())if(!retained.has(item.controller)&&!retired.has(item.controller)){item.controller.dispose();retired.add(item.controller);}
+        mountPoint.replaceChildren(fragment); branch=source.slice(0,shared).concat(preparedLayouts);preparedLayouts=[];current=prepared;prepared=null;operation.preview=null;pageHost=host; activeURL = url; started = true; history.scrollRestoration = "manual";
         document.title = page.title; status.textContent = page.status === 200 ? "Ready." : `Page ${page.status}.`;
         if (mode !== "start") host.focus({ preventScroll:true }); restore(point);
         if (!cached) store(url,bytes,expires,version,epoch);
         if(page.failed!==null){lastFailure={url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(url,"error",false);}
         return "success";
       } catch {
-        if(pending===operation)clearFeedback();
+        if(pending===operation){clearFeedback();rollbackPreview(operation);}
         remove(url); try { prepared?.dispose(); releaseBranch(preparedLayouts); } catch { fallback(url); }
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
         if (operation.reason && !operation.updated && runtime.actionState().state === "active") { status.textContent = "Data changed. Try the link again."; if (mode === "pop") fallback(url); return operation.reason; }

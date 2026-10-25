@@ -7,6 +7,10 @@ use std::fmt;
 
 /// MIME type for a typed navigation page.
 pub const NAVIGATION_MEDIA_TYPE: &str = "application/vnd.ruvane.page";
+/// MIME for an ordered RVS1 sequence of typed navigation packets.
+pub const NAVIGATION_STREAM_MEDIA_TYPE: &str = "application/vnd.ruvane.page-stream";
+/// Aggregate decoded bytes in a progressive navigation response.
+pub const MAX_NAVIGATION_STREAM_BYTES: usize = 512 * 1024;
 /// Maximum bytes in a complete navigation packet, including layout seeds.
 pub const MAX_NAVIGATION_BYTES: usize = 64 * 1024;
 /// Maximum explicitly compatible routes.
@@ -242,7 +246,7 @@ impl NavigationLayout {
     }
 }
 
-/// A page's public component seed, title and actual HTTP status.
+/// A typed page/branch description with a logical status and optional pending leaf.
 #[derive(Clone, Debug)]
 pub struct NavigationPage {
     url: InternalUrl,
@@ -253,6 +257,7 @@ pub struct NavigationPage {
     layouts: Vec<NavigationLayout>,
     selected: usize,
     failed: Option<usize>,
+    pending: Option<usize>,
 }
 impl NavigationPage {
     /// Constructs a bounded page. Supported statuses are 200, 400, 404 and 500.
@@ -284,6 +289,7 @@ impl NavigationPage {
             layouts: Vec::new(),
             selected: 0,
             failed: None,
+            pending: None,
         };
         if page.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
             return Err(NavigationError::Limit);
@@ -304,6 +310,7 @@ impl NavigationPage {
             }
         }
         self.failed = None;
+        self.pending = None;
         self.layouts = layouts;
         self.selected = 0;
         if self.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
@@ -332,6 +339,7 @@ impl NavigationPage {
         }
         self.layouts = layouts;
         self.failed = Some(failed);
+        self.pending = None;
         self.selected = 0;
         if self.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
             return Err(NavigationError::Limit);
@@ -341,6 +349,30 @@ impl NavigationPage {
     /// Failed root-first segment, or None for an ordinary page.
     pub fn failed_segment(&self) -> Option<usize> {
         self.failed
+    }
+    /// Marks a validated root-first prefix while the leaf seed is still pending.
+    pub fn with_pending_layouts(
+        mut self,
+        expected: usize,
+        layouts: Vec<NavigationLayout>,
+    ) -> Result<Self, NavigationError> {
+        if self.status != StatusCode::Ok
+            || !self.data.is_empty()
+            || expected > MAX_CLIENT_LAYOUT_DEPTH
+            || layouts.len() > expected
+        {
+            return Err(NavigationError::InvalidData);
+        }
+        self = self.with_layouts(layouts)?;
+        self.pending = Some(expected);
+        if self.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
+            return Err(NavigationError::Limit);
+        }
+        Ok(self)
+    }
+    /// Expected complete layout count for a pending leaf, otherwise None.
+    pub fn pending_layouts(&self) -> Option<usize> {
+        self.pending
     }
     /// Root-first persistent layout descriptors.
     pub fn layouts(&self) -> &[NavigationLayout] {
@@ -388,7 +420,9 @@ impl NavigationPage {
         self.status
     }
     fn encode_unchecked(&self) -> Vec<u8> {
-        let mut bytes = if let Some(failed) = self.failed {
+        let mut bytes = if let Some(expected) = self.pending {
+            vec![82, 86, 80, 52, self.selected as u8, expected as u8]
+        } else if let Some(failed) = self.failed {
             vec![82, 86, 80, 51, self.selected as u8, failed as u8]
         } else if self.layouts.is_empty() {
             b"RVP1".to_vec()
@@ -409,7 +443,7 @@ impl NavigationPage {
         let seed = ActionReply::success(self.data.clone()).encode();
         bytes.extend_from_slice(&(seed.len() as u32).to_le_bytes());
         bytes.extend(seed);
-        if self.failed.is_some() || !self.layouts.is_empty() {
+        if self.pending.is_some() || self.failed.is_some() || !self.layouts.is_empty() {
             bytes.push(self.layouts.len() as u8);
             for layout in &self.layouts {
                 for text in [layout.name.as_str(), layout.key.as_str()] {
@@ -427,7 +461,7 @@ impl NavigationPage {
         }
         bytes
     }
-    /// Encodes a leaf page (RVP1), layout branch (RVP2) or scoped error (RVP3).
+    /// Encodes a leaf (RVP1), branch (RVP2), scoped error (RVP3) or pending prefix (RVP4).
     pub fn encode(&self) -> Vec<u8> {
         self.encode_unchecked()
     }
@@ -466,7 +500,7 @@ impl NavigationPage {
         }
         let mut reader = Reader { bytes, pos: 0 };
         let version = reader.take(4)?;
-        if version != b"RVP1" && version != b"RVP2" && version != b"RVP3" {
+        if !matches!(version, b"RVP1" | b"RVP2" | b"RVP3" | b"RVP4") {
             return Err(NavigationError::InvalidData);
         }
         let selected = if version != b"RVP1" {
@@ -475,6 +509,11 @@ impl NavigationPage {
             0
         };
         let failed = if version == b"RVP3" {
+            Some(reader.take(1)?[0] as usize)
+        } else {
+            None
+        };
+        let pending = if version == b"RVP4" {
             Some(reader.take(1)?[0] as usize)
         } else {
             None
@@ -533,7 +572,9 @@ impl NavigationPage {
             return Err(NavigationError::InvalidData);
         }
         let page = Self::new(url, title, props, seed.data().clone(), status)?;
-        let page = if let Some(failed) = failed {
+        let page = if let Some(expected) = pending {
+            page.with_pending_layouts(expected, layouts)?
+        } else if let Some(failed) = failed {
             page.with_failure(failed, layouts)?
         } else {
             page.with_layouts(layouts)?

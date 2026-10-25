@@ -148,7 +148,7 @@ code; even then, in-flight server side effects are not a transaction.
 
 ## ABI and verification
 
-Browser ABI v10 adds `ruvane_page_validate() -> u32` after normal bounded page
+Browser ABI v11 provides `ruvane_page_validate() -> u32` after normal bounded page
 staging. It checks framing, registered route/props, application seed schema,
 view/resource budgets and absence of initial actions, then drops temporary state.
 It emits no commands, consumes no view IDs and retains no instances or scopes.
@@ -165,3 +165,8 @@ LRU/TTL, explicit refresh, mutation races, uncertain outcomes and disposal.
 Node checks HTTP freshness parsing and real Wasm validation; Rust checks policy
 bounds and response/route behavior. Existing browser, action and navigation
 suites still apply. Run suites sharing the example task store sequentially.
+
+Progressive RVS1 responses are always no-store. Their prefixes and final packets
+are not inserted into this cache. Prefetch still requests a complete public
+packet, and a validated warm packet can satisfy an opted-in navigation without
+streaming. See [progressive navigation](progressive-navigation.md).

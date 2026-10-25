@@ -1,10 +1,11 @@
 // DOM and action bridge for RVN6 commands.
-export const ABI_VERSION = 10;
+export const ABI_VERSION = 11;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
 const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a" });
 const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision", "ruvane_page_validate", "ruvane_boundary_mount"];
 export const ACTION_MEDIA_TYPE = "application/vnd.ruvane.action";
 export const NAVIGATION_MEDIA_TYPE = "application/vnd.ruvane.page";
+export const NAVIGATION_STREAM_MEDIA_TYPE = "application/vnd.ruvane.page-stream";
 /** Validates a complete origin-relative target, without URL normalization. */
 export function internalTarget(target) {
   if (typeof target !== "string" || target.length > 4096 || !target.startsWith("/") || /[^A-Za-z0-9\-._~!$&'()*+,;=:@/%?]/.test(target)) throw invalid();
@@ -23,13 +24,14 @@ export function internalTarget(target) {
 /** Reads routing metadata. Rust validates the complete typed seed and application schema. */
 export function decodePage(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 34 || bytes.length > 65536) throw invalid();
-  const version = String.fromCharCode(...bytes.slice(0,4)); if (!["RVP1","RVP2","RVP3"].includes(version)) throw invalid();
+  const version = String.fromCharCode(...bytes.slice(0,4)); if (!["RVP1","RVP2","RVP3","RVP4"].includes(version)) throw invalid();
   const data = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength), decoder = new TextDecoder("utf-8",{fatal:true,ignoreBOM:true}); let pos=4;
   const take = size => { if (size > bytes.length-pos) throw invalid(); const value=bytes.subarray(pos,pos+size);pos+=size;return value; };
   const u32 = () => {take(4);return data.getUint32(pos-4,true);};
   const string = limit => {const size=u32();if(size>limit)throw invalid();return decoder.decode(take(size));};
   const selected = version !== "RVP1" ? take(1)[0] : 0;
   const failed=version==="RVP3"?take(1)[0]:null;
+  const pending=version==="RVP4"?take(1)[0]:null;
   take(2);const status=data.getUint16(pos-2,true);if(![200,400,404,500].includes(status))throw invalid();
   const url=internalTarget(string(4096)),title=string(1024);
   if(!title.trim()||/[\u0000-\u001f\u007f-\u009f]/.test(title))throw invalid();
@@ -42,7 +44,7 @@ export function decodePage(bytes) {
   const leaf=componentSeed(),layouts=[];
   if(version!=="RVP1"){
     const count=take(1)[0];if(count>6||selected>count)throw invalid();
-    if(version==="RVP2"?(count<1||status!==200):(status===200||failed>6||count>failed))throw invalid();
+    if(version==="RVP4"?(status!==200||pending>6||count>pending||leaf.seed.length!==7||leaf.seed[5]!==0||leaf.seed[6]!==0):version==="RVP2"?(count<1||status!==200):(status===200||failed>6||count>failed))throw invalid();
     for(let n=0;n<count;n++){
       const name=string(48),key=internalTarget(string(4096));
       if(!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)||layouts.some(layout=>layout.name===name))throw invalid();
@@ -50,7 +52,7 @@ export function decodePage(bytes) {
     }
   }
   if(pos!==bytes.length)throw invalid();
-  return Object.freeze({url,title,status,component:leaf.component,kind:leaf.kind,value:leaf.value,selected,failed,layouts:Object.freeze(layouts)});
+  return Object.freeze({url,title,status,component:leaf.component,kind:leaf.kind,value:leaf.value,selected,failed,pending,layouts:Object.freeze(layouts)});
 }
 function actionPath(path) {
   if (typeof path !== "string" || path.length > 1024 || !path.startsWith("/") || path.includes("//") || /[^A-Za-z0-9\-._~!$&'()*+,;=:@/%]/.test(path)) throw invalid();
@@ -765,7 +767,7 @@ export async function createRuntime(url, options = {}) {
       live(); if (typeof observer !== "function" || actionObservers.size >= 16) throw new Error("Invalid Ruvane action observer");
       actionObservers.add(observer); return () => actionObservers.delete(observer);
     },
-    mountPage(root, bytes) { const page=decodePage(bytes); if(page.selected!==0)throw invalid(); return start(root, null, false, bytes); },
+    mountPage(root, bytes) { const page=decodePage(bytes); if(page.selected!==0||page.pending!==null)throw invalid(); return start(root, null, false, bytes); },
     mountPageSegment(root, bytes, index) {
       const page=decodePage(bytes);if(page.selected!==0||!Number.isInteger(index)||index<1||index>page.layouts.length)throw invalid();
       const selected=bytes.slice();selected[4]=index;return start(root,null,false,selected);

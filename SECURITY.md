@@ -1,5 +1,22 @@
 # Security
 
+Alpha.24 adds ordered progressive client navigation. RVS1 binds the exact
+application revision and request token; each RVP4 prefix passes shared route,
+canonical key, props and component schema validation in Rust/Wasm. Pending leaves
+cannot mount. Network data never supplies HTML, selectors or executable scripts.
+The parser bounds packets, layout depth, aggregate bytes and absolute duration,
+and requires an explicit terminal plus successful response EOF.
+
+Temporary layouts use the existing view budget. The previous subtree remains
+owned until completion, and interruption retires previews and restores it.
+History/title commit only after final validation. Mutation notifications cancel
+speculative reads, including while the synchronous ABI is busy. Typed errors
+can retain only validated ancestors. Streams remain no-store; complete buffered
+prefetch/cache policies and the uncertain-action latch retain their behavior.
+Loaders are trusted synchronous code with cooperative deadline/shutdown checks.
+Native SSR remains buffered with real error statuses. See
+[progressive navigation](docs/progressive-navigation.md).
+
 Alpha.23 adds explicit native HTML streaming with bounded chunk, total-byte,
 yield and duration limits. The server tightens the body/deadline budgets and
 writes each fragment before pulling another. HEAD executes no factory or
@@ -70,7 +87,7 @@ seeds and views before serving them, and refuses initial queued actions. Explici
 native forms retain the existing Origin, Host, framing and field checks.
 
 The server embeds one prepared module and serves resources under its build
-revision. Before hydration the bridge checks ABI v10 and the exact u64 revision.
+revision. Before hydration the bridge checks ABI v11 and the exact u64 revision.
 The export macro isolates twenty-two numeric exports, accepts no input pointers and
 provides no host imports; only the reviewed no_mangle attributes allow unsafe
 code annotations. The core continues to forbid unsafe code.
@@ -124,7 +141,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v10/RVN6 isolate twenty-two reviewed numeric exports. The reply
+Browser ABI v11/RVN6 isolate twenty-two reviewed numeric exports. The reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts

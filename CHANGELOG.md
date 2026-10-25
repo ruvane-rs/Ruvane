@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.24 — Unreleased
+
+- Add explicit App page streaming with ordered root-first layouts and a final
+  leaf packet. Share bounded pull-based transport with native HTML streams.
+- Add RVS1 identity/framing and RVP4 pending prefixes. ABI v11 retains 22 numeric
+  exports, validates loaded schemas and refuses pending leaf mounts.
+- Show interactive layout previews while retaining the previous subtree for
+  rollback. Preserve matching parent state; commit history/title only at EOF.
+- Retire temporary owners on supersession, mutation, invalidation, timeout and
+  malformed/truncated replies. Connect typed errors and explicit GET retry.
+- Keep streams no-store; retain complete public prefetch/cache behavior and
+  native SSR statuses/activation guards. Expose cooperative loader context.
+- Enable the generated project demo and add native, compiled Wasm, Node parser
+  and real-browser checks. Keep zero third-party Cargo/npm/build/test packages.
+
 ## 0.1.0-alpha.23 — Unreleased
 
 - Add explicit HtmlStream plans and typed HtmlProducer fragments, with one pull

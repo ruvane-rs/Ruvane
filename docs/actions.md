@@ -3,7 +3,7 @@
 Alpha.17 connects browser components to explicit server actions. The browser
 performs same-origin POST requests; Rust owns the model, validation results and
 view updates. There are no third-party crates, npm packages, host imports or
-input pointers. This profile uses browser ABI v10, RVN6 commands and RVA1 replies.
+input pointers. This profile uses browser ABI v11, RVN6 commands and RVA1 replies.
 Rebuild the Wasm and serve its matching bridge together.
 
 ## Run the example

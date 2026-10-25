@@ -12,7 +12,7 @@ fn shared_components_render_their_initial_state_and_update_independently() {
     let view = counter.view().unwrap();
     let html = view.hydratable(props).unwrap();
     assert!(html.as_str().starts_with(
-        "<div data-ruvane-version=\"10\" data-ruvane-component=\"1\" data-ruvane-state=\"1:5\">"
+        "<div data-ruvane-version=\"11\" data-ruvane-component=\"1\" data-ruvane-state=\"1:5\">"
     ));
     assert!(html.as_str().contains(">5</output>"));
     assert!(html.as_str().contains(">10</output>"));

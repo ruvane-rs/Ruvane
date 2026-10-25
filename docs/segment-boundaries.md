@@ -103,7 +103,7 @@ asks for reload and disables retry/cache reuse for that navigator.
 
 ## Wire and limits
 
-ABI v10 adds `ruvane_boundary_mount(root, component, kind, value) -> u32`, retaining
+ABI v11 provides `ruvane_boundary_mount(root, component, kind, value) -> u32`, retaining
 numeric input, no host imports and 22 reviewed exports. `mountBoundary(host,
 props)` uses an empty seed and rejects event-bearing views or initial actions.
 Rebuild Wasm with the matching bridge. RVN6 commands and RVA1 seeds are unchanged.
@@ -129,6 +129,7 @@ real delayed GETs, typed errors and SSR, injected transport failures, explicit
 retry, late replies, mutation notifications, 100 error/success cycles and cleanup.
 Run it separately from the other generated-app task harnesses.
 
-Client navigation waits for the complete response. [Native HTML streaming](streaming.md)
-is available separately. Incremental client segments, parallel outlets and
-recovery from a corrupted Wasm instance remain separate work.
+[Progressive client navigation](progressive-navigation.md) uses these boundaries
+while ordered layouts arrive and for typed final errors. Native HTML streaming
+remains separate. Parallel outlets and recovery from a corrupted Wasm instance
+remain separate work.

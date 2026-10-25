@@ -5,6 +5,7 @@ use crate::{
 };
 mod boundaries;
 mod layouts;
+mod progressive;
 pub use boundaries::ClientBoundary;
 pub(super) use layouts::ClientLayout;
 pub use layouts::ClientLayoutData;
@@ -136,6 +137,7 @@ pub(super) struct ClientRoute {
     state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
     layout: Option<usize>,
     boundary: Option<ClientBoundary>,
+    progressive: bool,
 }
 
 impl App {
@@ -195,6 +197,7 @@ impl App {
             cache: crate::NavigationCachePolicy::no_store(),
             layout: None,
             boundary: None,
+            progressive: false,
         });
         candidate.validate()?;
         *self = candidate;
@@ -252,6 +255,24 @@ impl App {
     pub fn validate_navigation(&self, page: &NavigationPage) -> bool {
         if self.client_factory.is_none() {
             return false;
+        }
+        if let Some(expected) = page.pending_layouts() {
+            let path = page.url().as_str().split('?').next().unwrap();
+            return page.status() == StatusCode::Ok
+                && page.failed_segment().is_none()
+                && page.data().is_empty()
+                && self
+                    .pages
+                    .iter()
+                    .find(|p| Some(p.route.name()) == self.owner(path))
+                    .and_then(|p| p.client)
+                    .is_some_and(|client| {
+                        client.progressive && self.layout_chain(client.layout).len() == expected
+                    })
+                && self
+                    .client_props(page.url())
+                    .is_ok_and(|props| props == page.props())
+                && self.validate_layout_prefix(page, Some(page.layouts().len()));
         }
         if page.status() != StatusCode::Ok {
             if page.failed_segment().is_some() {
@@ -385,6 +406,11 @@ impl App {
         context: &PageContext<'_>,
         request: &Request,
     ) -> Response {
+        if request.header("accept") == Some(crate::NAVIGATION_STREAM_MEDIA_TYPE)
+            && self.pages[index].client.unwrap().progressive
+        {
+            return self.client_stream_response(index, context, request);
+        }
         self.client_branch_response(index, context, request)
     }
 
@@ -470,7 +496,10 @@ impl App {
                 return Err(PageError::InternalServerError);
             }
         }
-        if request.header("accept") == Some(crate::NAVIGATION_MEDIA_TYPE) {
+        if matches!(
+            request.header("accept"),
+            Some(crate::NAVIGATION_MEDIA_TYPE | crate::NAVIGATION_STREAM_MEDIA_TYPE)
+        ) {
             return Ok(Response::navigation_with_cache(packet, policy));
         }
         let runtime = self

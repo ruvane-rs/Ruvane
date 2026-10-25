@@ -25,13 +25,20 @@ and `client_layout_boundary`; the navigator owns the explicit GET retry button.
 `?native=yes` keeps real error statuses and renders the validated parents with
 scripts blocked. Error packets and transport feedback are never cached.
 
+The project page also enables `client_page_streaming`. Open its slow variant
+from Home: the workspace layout appears before the page and its counter remains
+usable. The page/title/history commit after complete delivery. Interrupted
+streams restore the previous page and expose a fresh GET retry. Streams are
+no-store; complete public prefetches still use the existing bounded cache.
+`PageContext::stream_context()` lets progressive loaders check their deadline
+and shutdown cooperatively.
+
 Open **Streaming SSR** for `/stream`, a native progressive report. Its header
 arrives before the deferred content. Edit `progressive_report` in `src/main.rs`;
 typed fragments use `HtmlStream` with the default byte, yield and time budgets.
 `?q=...` demonstrates escaping; `?fail=early` returns 500 before headers and
 `?fail=late` closes an incomplete response after the initial HTML. This page uses
-an ordinary document link and the script-blocking CSP. App client packets still
-wait for complete validated branches.
+an ordinary document link and the script-blocking CSP. Other App pages keep complete-packet navigation.
 
 `ruvane build --offline` creates a versioned server bundle under `dist/`.
 Run the printed executable with `--port 3000`. The executable embeds its matching

@@ -38,6 +38,9 @@ and explicit GET retry. See
 [interactive applications](docs/interactive-apps.md) and [navigation cache](docs/navigation-cache.md).
 Explicit [progressive HTML responses](docs/streaming.md) can send a native
 document header before deferred content, with bounded pull-based production.
+Opted-in App pages also support [progressive client navigation](docs/progressive-navigation.md):
+validated layouts become usable while the leaf page is loading, with rollback
+on interruption and history committed only after complete delivery.
 
 Create an interactive project from a local checkout:
 

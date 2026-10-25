@@ -52,7 +52,7 @@ test("compiled Rust module has no host imports and executes the real reactor", a
     assert.equal(e.ruvane_commands_clear(), 1);
     return commands;
   };
-  assert.equal(e.ruvane_abi_version(), 10);
+  assert.equal(e.ruvane_abi_version(), 11);
   assert.equal(e.ruvane_mount(0, 1, 1, 0), 0);
   assert.equal(e.ruvane_last_error(), 1);
   for (const args of [[1, 1, 2, 1], [1, 2, 2, 2], [1, 1, 1, 1001], [1, 99, 1, 0]]) {

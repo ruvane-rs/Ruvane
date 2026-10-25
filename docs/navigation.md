@@ -152,7 +152,7 @@ page cache and two bounded speculative requests; no-store remains the default.
 At most two page owners overlap during preparation, within the runtime's
 16-view budget; reserve space for the prepared page alongside layout islands.
 
-Browser ABI v10 provides `ruvane_page_begin`, `ruvane_page_chunk`,
+Browser ABI v11 provides `ruvane_page_begin`, `ruvane_page_chunk`,
 `ruvane_page_mount` and `ruvane_page_validate`. Input arrives in exact-length
 chunks of 1..=4 bytes, without input pointers or imports. Error 11 means an invalid
 page/route/seed. RVN6 carries link tag 15, opcode 12 (node u32, target length u32,
@@ -163,6 +163,6 @@ Alpha.19 integrates this layer through `App::client_page` and application-owned
 factories. See [interactive applications](interactive-apps.md). Ordinary
 `App::page` handlers, static exports and arbitrary HTML are not automatically
 converted into client pages. See [navigation cache](navigation-cache.md) for prefetch, expiry and invalidation.
-See [persistent client layouts](client-layouts.md) for nested branches. Incremental
-client segments and richer props remain separate work. [Native HTML streaming](streaming.md)
-does not change this complete-packet navigation contract.
+See [persistent client layouts](client-layouts.md) for nested branches and
+[progressive navigation](progressive-navigation.md) for opted-in ordered segment
+delivery. The complete-packet path, startup activation and prefetch remain available.

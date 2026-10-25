@@ -221,7 +221,7 @@ pub struct Response {
 enum Body {
     Bytes(Cow<'static, [u8]>),
     Shared(Arc<[u8]>),
-    Stream(Arc<crate::HtmlStream>),
+    Stream(Arc<crate::streaming::BodyStream>),
 }
 
 impl AsRef<[u8]> for Body {
@@ -229,7 +229,7 @@ impl AsRef<[u8]> for Body {
         match self {
             Self::Bytes(bytes) => bytes,
             Self::Shared(bytes) => bytes,
-            Self::Stream(plan) => plan.prefix().as_str().as_bytes(),
+            Self::Stream(plan) => plan.prefix(),
         }
     }
 }
@@ -239,10 +239,17 @@ impl Response {
     /// Only GET/HEAD transport supports this plan; HEAD executes no factory or producer.
     pub fn stream_html(plan: crate::HtmlStream) -> Self {
         let mut response = Self::html(Html::default());
-        response.body = Body::Stream(Arc::new(plan));
+        response.body = Body::Stream(Arc::new(plan.into_body()));
         response
     }
-    /// Whether this response contains a lazy HTML stream rather than a complete body.
+    pub(crate) fn stream_navigation(plan: crate::streaming::BodyStream) -> Self {
+        let mut response = Self::html(Html::default());
+        response.body = Body::Stream(Arc::new(plan));
+        response.content_type = crate::NAVIGATION_STREAM_MEDIA_TYPE;
+        response.navigation_variance = true;
+        response
+    }
+    /// Whether this response contains a lazy stream rather than a complete body.
     pub fn is_streaming(&self) -> bool {
         matches!(self.body, Body::Stream(_))
     }
@@ -254,21 +261,24 @@ impl Response {
             Some(self.body())
         }
     }
-    pub(crate) fn stream_plan(&self) -> Option<Arc<crate::HtmlStream>> {
+    pub(crate) fn stream_plan(&self) -> Option<Arc<crate::streaming::BodyStream>> {
         match &self.body {
             Body::Stream(plan) => Some(Arc::clone(plan)),
             _ => None,
         }
     }
-    /// Serves a typed page with its real HTTP status and fixed RVP1 MIME.
+    /// Serves a complete typed page with its HTTP status and fixed navigation MIME.
     pub fn navigation(page: &crate::NavigationPage) -> Self {
         Self::navigation_with_cache(page, crate::NavigationCachePolicy::no_store())
     }
-    /// Allows explicit caching of successful public RVP1 pages. Errors stay no-store.
+    /// Allows explicit caching of successful public pages. Errors stay no-store.
     pub fn navigation_with_cache(
         page: &crate::NavigationPage,
         policy: crate::NavigationCachePolicy,
     ) -> Self {
+        if page.pending_layouts().is_some() {
+            return Self::error(StatusCode::InternalServerError);
+        }
         let mut response =
             Self::bytes(page.encode(), MediaType::Navigation).with_status(page.status());
         response.navigation_cache = policy;
