@@ -4,6 +4,8 @@ use ruvane::{
 };
 #[path = "../examples/support/blog.rs"]
 mod blog;
+#[path = "../examples/support/server_tasks.rs"]
+mod server_tasks;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1870,4 +1872,529 @@ fn blog_common_application_pages_match_export_and_keep_legacy_server_routes() {
         200
     );
     assert_eq!(status(&preview.request("GET", "/articles")), 404);
+}
+
+fn post_wire(server: &Running, target: &str, headers: &str, body: &[u8]) -> Vec<u8> {
+    let mut bytes = format!(
+        "POST {target} HTTP/1.1\r\nHost: {}\r\n{headers}\r\n",
+        server.address
+    )
+    .into_bytes();
+    bytes.extend_from_slice(body);
+    server.raw(&bytes)
+}
+
+fn post_headers(server: &Running, length: usize) -> String {
+    format!(
+        "Origin: http://{}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {length}\r\n",
+        server.address
+    )
+}
+
+fn post(server: &Running, target: &str, body: &[u8]) -> Vec<u8> {
+    post_wire(server, target, &post_headers(server, body.len()), body)
+}
+
+fn counted_posts() -> (Router, Arc<AtomicUsize>) {
+    let mut router = Router::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let current = Arc::clone(&calls);
+    router
+        .post_form("/form/{id}", move |request| {
+            assert_eq!(request.method(), Method::Post);
+            current.fetch_add(1, Ordering::SeqCst);
+            let form = request.form_data().unwrap();
+            Response::text(format!(
+                "{}|{}|{}|{}",
+                request.param("id").unwrap(),
+                request.query_params().get("q").unwrap_or(""),
+                form.get("q").unwrap_or(""),
+                form.get("notes").unwrap_or("")
+            ))
+        })
+        .unwrap();
+    (router, calls)
+}
+
+#[test]
+fn post_routes_are_explicit_method_scoped_and_keep_query_and_body_separate() {
+    let (mut router, calls) = counted_posts();
+    router
+        .get("/form/{id}", |request| {
+            assert!(request.form_data().is_none());
+            Response::text("read only")
+        })
+        .unwrap();
+    assert_eq!(
+        router.post_form("/form/{other}", |_| Response::text("bad")),
+        Err(RouteError::AmbiguousRoute)
+    );
+    assert_eq!(
+        router.post_form("/form/{id}", |_| Response::text("bad")),
+        Err(RouteError::DuplicatePath)
+    );
+    router
+        .post_form("/form/new", |_| Response::text("fixed action"))
+        .unwrap();
+    router
+        .get("/only-get", |_| Response::text("read only"))
+        .unwrap();
+    router
+        .asset("/form/new", b"asset", ruvane::MediaType::PlainText)
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    let response = post(
+        &server,
+        "/form/42?q=URL+plus",
+        b"q=Rust+%2B+HTML&notes=one%0D%0Atwo",
+    );
+    assert_eq!(status(&response), 200);
+    assert_eq!(parts(&response).1, b"42|URL+plus|Rust + HTML|one\ntwo");
+    assert_eq!(parts(&server.request("GET", "/form/42")).1, b"read only");
+    assert_eq!(parts(&server.request("GET", "/form/new")).1, b"asset");
+    assert_eq!(parts(&post(&server, "/form/new", b"")).1, b"fixed action");
+    assert_eq!(status(&post(&server, "/only-get", b"")), 405);
+    assert_eq!(status(&post(&server, "/missing", b"")), 404);
+    assert_eq!(status(&post(&server, "/form/%2F", b"q=1")), 400);
+    assert_eq!(status(&post(&server, "/form/1?q=%FF", b"q=1")), 400);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let denied = server.request("PUT", "/form/42");
+    assert!(
+        parts(&denied)
+            .0
+            .lines()
+            .any(|line| line == "Allow: GET, HEAD, POST")
+    );
+}
+
+#[test]
+fn post_requires_same_origin_and_refuses_missing_null_and_forged_sources() {
+    let (router, calls) = counted_posts();
+    let server = Running::start(router, ServerConfig::default());
+    let prefix = "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: 0\r\n";
+    for source in [
+        "".into(),
+        "Origin: null\r\n".into(),
+        "Origin: http://evil.example\r\n".into(),
+        format!("Origin: http://{}/\r\n", server.address),
+        format!("Origin: http://localhost:{}\r\n", server.address.port()),
+        format!("Origin: http://{} http://evil.example\r\n", server.address),
+        format!("Origin: https://{}\r\n", server.address),
+        format!("Referer: http://{}/tasks\r\n", server.address),
+        format!(
+            "Origin: http://evil.example\r\nX-Forwarded-Host: {}\r\nForwarded: host={}\r\n",
+            server.address, server.address
+        ),
+    ] {
+        assert_eq!(
+            status(&post_wire(
+                &server,
+                "/form/1",
+                &(prefix.to_owned() + &source),
+                b""
+            )),
+            403,
+            "{source}"
+        );
+    }
+    for site in [
+        "cross-site",
+        "same-site",
+        "none",
+        "",
+        "Same-Origin",
+        "same-origin, cross-site",
+    ] {
+        let headers = format!("{}Sec-Fetch-Site: {site}\r\n", post_headers(&server, 0));
+        assert_eq!(
+            status(&post_wire(&server, "/form/1", &headers, b"")),
+            403,
+            "{site}"
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(status(&post(&server, "/form/1", b"")), 200);
+    assert_eq!(
+        status(&post_wire(
+            &server,
+            "/form/1",
+            &(post_headers(&server, 0) + "Sec-Fetch-Site: same-origin\r\n"),
+            b""
+        )),
+        200
+    );
+    let raw = format!(
+        "POST /form/1 HTTP/1.1\r\nHost: evil.example:{}\r\nOrigin: http://evil.example:{}\r\nContent-Length: 0\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n",
+        server.address.port(),
+        server.address.port()
+    );
+    assert_eq!(status(&server.raw(raw.as_bytes())), 400);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let head = server.request("HEAD", "/form/1");
+    assert_eq!(status(&head), 405);
+    assert!(parts(&head).0.lines().any(|line| line == "Allow: POST"));
+    assert!(parts(&head).1.is_empty());
+}
+
+#[test]
+fn post_media_and_length_checks_run_before_body_reads_or_handlers() {
+    let (router, calls) = counted_posts();
+    let server = Running::start(router, ServerConfig::default());
+    let origin = format!("Origin: http://{}\r\n", server.address);
+    for content_type in [
+        "",
+        "Content-Type: text/plain\r\n",
+        "Content-Type: application/json\r\n",
+        "Content-Type: multipart/form-data; boundary=x\r\n",
+        "Content-Type: application/x-www-form-urlencoded; charset=latin1\r\n",
+        "Content-Type: application/x-www-form-urlencoded; charset=UTF-8; charset=UTF-8\r\n",
+        "Content-Type: application/x-www-form-urlencoded;\r\n",
+    ] {
+        assert_eq!(
+            status(&post_wire(
+                &server,
+                "/form/1",
+                &format!("{origin}{content_type}Content-Length: 0\r\n"),
+                b""
+            )),
+            415
+        );
+    }
+    assert_eq!(
+        status(&post_wire(
+            &server,
+            "/form/1",
+            &(post_headers(&server, 0) + "Content-Encoding: gzip\r\n"),
+            b""
+        )),
+        415
+    );
+    let form = format!("{origin}Content-Type: application/x-www-form-urlencoded\r\n");
+    assert_eq!(status(&post_wire(&server, "/form/1", &form, b"")), 411);
+    for (headers, expected) in [
+        ("Content-Length: 65537\r\n", 413),
+        ("Content-Length: 18446744073709551615\r\n", 413),
+        ("Content-Length: 18446744073709551616\r\n", 400),
+        ("Content-Length: +0\r\n", 400),
+        ("Content-Length: 0, 0\r\n", 400),
+        ("Content-Length: 0\r\ncontent-length: 0\r\n", 400),
+        ("Transfer-Encoding: chunked\r\n", 501),
+        ("Transfer-Encoding: chunked\r\nContent-Length: 0\r\n", 400),
+        ("Content-Length: 0\r\nExpect: 100-continue\r\n", 417),
+    ] {
+        assert_eq!(
+            status(&post_wire(
+                &server,
+                "/form/1",
+                &(form.clone() + headers),
+                b""
+            )),
+            expected,
+            "{headers}"
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    for content_type in [
+        "application/x-www-form-urlencoded",
+        "Application/X-WWW-Form-Urlencoded; Charset=UTF-8",
+        "application/x-www-form-urlencoded;charset=\"utf-8\"",
+    ] {
+        assert_eq!(
+            status(&post_wire(
+                &server,
+                "/form/1",
+                &format!("{origin}Content-Type: {content_type}\r\nContent-Length: 0\r\n"),
+                b""
+            )),
+            200
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn malformed_post_data_and_truncated_bodies_never_reach_an_action() {
+    let (router, calls) = counted_posts();
+    let server = Running::start(router, ServerConfig::default());
+    for body in [
+        b"q=%FF".as_slice(),
+        b"q=1&%71=2",
+        b"q=%00",
+        b"q[]=1",
+        b"q=1&",
+        b"bare",
+        b"q=\xff",
+    ] {
+        assert_eq!(status(&post(&server, "/form/1", body)), 400, "{body:?}");
+    }
+    assert_eq!(
+        status(&post(
+            &server,
+            "/form/1",
+            format!("q={}", "x".repeat(1025)).as_bytes()
+        )),
+        413
+    );
+    assert_eq!(
+        status(&post_wire(
+            &server,
+            "/form/1",
+            &post_headers(&server, 8),
+            b"q=1"
+        )),
+        400
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let bytes = format!(
+        "POST /form/1 HTTP/1.1\r\nHost: {}\r\n{}\r\nq=%F0%9F%A6%80",
+        server.address,
+        post_headers(&server, 14)
+    )
+    .into_bytes();
+    let mut stream = server.connect();
+    for chunk in bytes.chunks(3) {
+        stream.write_all(chunk).unwrap();
+    }
+    stream.shutdown(Shutdown::Write).unwrap();
+    assert_eq!(status(&read_closed(&mut stream)), 200);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn post_body_budget_and_deadline_include_headers_and_slow_input() {
+    let (router, calls) = counted_posts();
+    let server = Running::start(
+        router,
+        ServerConfig {
+            max_request_body_bytes: 4,
+            ..ServerConfig::default()
+        },
+    );
+    assert_eq!(status(&post(&server, "/form/1", b"q=12")), 200);
+    assert_eq!(status(&post(&server, "/form/1", b"q=123")), 413);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let (router, calls) = counted_posts();
+    let server = Running::start(
+        router,
+        ServerConfig {
+            request_timeout: Duration::from_millis(220),
+            ..ServerConfig::default()
+        },
+    );
+    let mut stream = server.connect();
+    stream
+        .write_all(format!("POST /form/1 HTTP/1.1\r\nHost: {}\r\n", server.address).as_bytes())
+        .unwrap();
+    thread::sleep(Duration::from_millis(130));
+    stream
+        .write_all(format!("{}\r\nq", post_headers(&server, 8)).as_bytes())
+        .unwrap();
+    let before = Instant::now();
+    let output = read_closed(&mut stream);
+    assert_eq!(status(&output), 408);
+    assert!(before.elapsed() < Duration::from_millis(210));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        Server::bind_with_config(
+            "127.0.0.1:0".parse().unwrap(),
+            Router::new(),
+            ServerConfig {
+                max_request_body_bytes: 65537,
+                ..ServerConfig::default()
+            }
+        )
+        .unwrap_err()
+        .kind(),
+        io::ErrorKind::InvalidInput
+    );
+}
+
+#[test]
+fn post_shutdown_interrupts_an_incomplete_body_without_dispatch() {
+    let (router, calls) = counted_posts();
+    let mut server = Running::start(
+        router,
+        ServerConfig {
+            workers: 1,
+            request_timeout: Duration::from_secs(60),
+            ..ServerConfig::default()
+        },
+    );
+    let mut stream = server.connect();
+    stream
+        .write_all(
+            format!(
+                "POST /form/1 HTTP/1.1\r\nHost: {}\r\n{}\r\nq",
+                server.address,
+                post_headers(&server, 8)
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    thread::sleep(Duration::from_millis(30));
+    let before = Instant::now();
+    server.shutdown.shutdown();
+    server.thread.take().unwrap().join().unwrap().unwrap();
+    assert!(before.elapsed() < Duration::from_secs(2));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn internal_redirects_emit_a_single_safe_location_and_head_omits_the_body() {
+    let mut router = Router::new();
+    router
+        .get("/redirect", |_| {
+            Response::see_other(
+                ruvane::InternalUrl::new("/tasks")
+                    .unwrap()
+                    .query("q", "<script>\" & Rust")
+                    .unwrap(),
+            )
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    let response = server.request("GET", "/redirect");
+    let (headers, body) = parts(&response);
+    assert_eq!(status(&response), 303);
+    assert!(body.is_empty());
+    assert_eq!(content_length(headers), 0);
+    assert!(
+        headers
+            .lines()
+            .any(|line| line == "Location: /tasks?q=%3Cscript%3E%22%20%26%20Rust")
+    );
+    assert_eq!(headers.matches("Location:").count(), 1);
+    assert_eq!(parts(&server.request("HEAD", "/redirect")).0, headers);
+    let redirect = Response::see_other(ruvane::InternalUrl::new("/tasks").unwrap());
+    assert_eq!(redirect.location().unwrap().as_str(), "/tasks");
+    assert!(
+        redirect
+            .with_status(StatusCode::BadRequest)
+            .location()
+            .is_none()
+    );
+    for url in [
+        "//evil.example",
+        "https://evil.example",
+        "/%0D%0ALocation:evil",
+    ] {
+        assert!(ruvane::InternalUrl::new(url).is_err());
+    }
+}
+
+#[test]
+fn server_task_forms_validate_escape_and_keep_state_across_reads() {
+    let server = Running::start(server_tasks::router().unwrap(), ServerConfig::default());
+    let initial = server.request("GET", "/tasks");
+    assert_eq!(status(&initial), 200);
+    let html = std::str::from_utf8(parts(&initial).1).unwrap();
+    assert!(html.contains("method=\"post\"") && !html.contains("<script"));
+    let invalid = post(&server, "/tasks", b"title=&notes=Kept+notes");
+    assert_eq!(status(&invalid), 400);
+    assert!(
+        std::str::from_utf8(parts(&invalid).1)
+            .unwrap()
+            .contains("Kept notes</textarea>")
+    );
+    assert!(
+        std::str::from_utf8(parts(&invalid).1)
+            .unwrap()
+            .contains("Enter a task name.")
+    );
+    for body in [b"title=one%0Atwo".as_slice(), b"title=valid&extra=bad"] {
+        assert_eq!(status(&post(&server, "/tasks", body)), 400);
+    }
+    let response = post(
+        &server,
+        "/tasks",
+        b"title=%3Cscript%3Ex%3C%2Fscript%3E&notes=one%0D%0Atwo",
+    );
+    assert_eq!(status(&response), 303);
+    assert!(
+        parts(&response)
+            .0
+            .lines()
+            .any(|line| line == "Location: /tasks")
+    );
+    for _ in 0..3 {
+        let response = server.request("GET", "/tasks");
+        let html = std::str::from_utf8(parts(&response).1).unwrap();
+        assert!(html.contains("Tasks (1)"));
+        assert!(html.contains("&lt;script&gt;x&lt;/script&gt;"));
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("one\ntwo"));
+    }
+    assert_eq!(status(&post(&server, "/tasks/1/status", b"done=on")), 303);
+    let checked = server.request("GET", "/tasks");
+    assert!(
+        std::str::from_utf8(parts(&checked).1)
+            .unwrap()
+            .contains("value=\"on\" checked>")
+    );
+    assert_eq!(status(&post(&server, "/tasks/1/status", b"")), 303);
+    let unchecked = server.request("GET", "/tasks");
+    assert!(
+        !std::str::from_utf8(parts(&unchecked).1)
+            .unwrap()
+            .contains(" checked>")
+    );
+    assert_eq!(
+        status(&post(&server, "/tasks/1/status", b"done=false")),
+        400
+    );
+    assert_eq!(
+        status(&post(&server, "/tasks/1/remove", b"unexpected=1")),
+        400
+    );
+    assert_eq!(status(&post(&server, "/tasks/1/remove", b"")), 303);
+    assert_eq!(status(&post(&server, "/tasks/1/remove", b"")), 404);
+    let empty = server.request("GET", "/tasks");
+    assert!(
+        std::str::from_utf8(parts(&empty).1)
+            .unwrap()
+            .contains("No tasks yet.")
+    );
+}
+
+#[test]
+fn server_task_store_is_bounded_and_handles_concurrent_submissions() {
+    let server = Arc::new(Running::start(
+        server_tasks::router().unwrap(),
+        ServerConfig::default(),
+    ));
+    let mut threads = Vec::new();
+    for n in 0..32 {
+        let server = Arc::clone(&server);
+        threads.push(thread::spawn(move || {
+            post(&server, "/tasks", format!("title=Task+{n}").as_bytes())
+        }));
+    }
+    for thread in threads {
+        assert_eq!(status(&thread.join().unwrap()), 303);
+    }
+    let full = server.request("GET", "/tasks");
+    assert!(
+        std::str::from_utf8(parts(&full).1)
+            .unwrap()
+            .contains("Tasks (32)")
+    );
+    let overflow = post(&server, "/tasks", b"title=Overflow");
+    assert_eq!(status(&overflow), 400);
+    assert!(
+        std::str::from_utf8(parts(&overflow).1)
+            .unwrap()
+            .contains("Task limit reached.")
+    );
+    for id in 1..=32 {
+        assert_eq!(
+            status(&post(&server, &format!("/tasks/{id}/remove"), b"")),
+            303
+        );
+    }
+    let empty = server.request("GET", "/tasks");
+    assert!(
+        std::str::from_utf8(parts(&empty).1)
+            .unwrap()
+            .contains("Tasks (0)")
+    );
 }

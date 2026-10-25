@@ -1,6 +1,6 @@
 # Browser runtime and hydration
 
-Alpha.15 uses the same Rust components for server HTML and browser interaction.
+Since alpha.15, the same Rust components provide server HTML and browser interaction.
 The `ruvane-browser` workspace member depends only on the local core crate. Our
 JavaScript bridge uses browser APIs, with no wasm-bindgen, web-sys or npm package.
 
@@ -244,7 +244,8 @@ transactional rollback of arbitrary application state or host side effects.
 
 Factories and components are trusted Rust code. These limits do not bound all
 CPU, allocations or reference cycles, and a fetch timeout cannot preempt Wasm.
-There are no mutation HTTP endpoints, server actions, sessions or cryptography.
+The browser adapter does not call HTTP actions. Native [POST forms](post-forms.md)
+are a separate server API. Sessions and cryptography remain outside this profile.
 Nested islands and richer initial props remain future work.
 
 Python 3.9+, Node 18+ built-ins and a real browser are test tools; no npm or Python

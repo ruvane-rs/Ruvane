@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.9 implements a small development profile based on the
+Ruvane 0.1.0-alpha.16 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -10,8 +10,10 @@ use behind a reverse proxy.
 ## Requests
 
 - HTTP/1.1, with exactly one space between request-line components.
-- GET and HEAD. Known unsupported methods return 405 with `Allow: GET, HEAD`
-  when the rest of the message fits this profile; unknown methods return 501.
+- GET, HEAD and explicitly registered POST form actions. Known unsupported
+  methods return 405 when the rest of the message fits this profile; unknown
+  methods return 501. Allow reflects registered methods on a matching path,
+  with the existing GET/HEAD fallback on unknown paths.
 - Origin-form targets beginning with `/`. Absolute URIs, asterisk-form,
   authority-form, fragments, backslashes, repeated slashes, and literal `.` or
   `..` path segments are rejected. Unsupported forms may produce 400 even for
@@ -36,16 +38,18 @@ use behind a reverse proxy.
   omitted port means 80. IPv6 addresses use brackets. Arbitrary DNS names,
   user information, and other loopback addresses are not aliases for the
   bound address.
-- No request body is supported. An absent Content-Length or a single valid
-  decimal value equal to zero is accepted. Positive lengths return 413;
-  malformed, overflowing, comma-separated, or duplicate lengths return 400.
+- GET/HEAD remain bodyless: absent Content-Length or one decimal zero is
+  accepted; positive lengths return 413. Registered POST forms require one
+  Content-Length and a bounded URL-encoded body. Malformed, overflowing,
+  comma-separated or duplicate lengths return 400.
 - Transfer-Encoding returns 501, or 400 when Content-Length is also present.
   Expect returns 417 without an interim response. Upgrade returns 501.
 
 There is no keep-alive or request pipelining. The server parses the first
 complete header block, writes at most one response, and closes the socket.
-Bytes following that block are discarded; a second request is never
-dispatched. Closing with unread data can reset the connection. Clients must
+For POST it reads the declared body after route/origin/media/size checks. Bytes
+beyond the first request's headers and declared body are discarded; a second
+request is never dispatched. Closing with unread data can reset the connection. Clients must
 not rely on receiving a response to unsupported pipelined traffic.
 
 The framework never forwards requests to another HTTP implementation.
@@ -60,22 +64,26 @@ index-file aliases, and does not serve build metadata. Normal query validation
 still applies; valid query fields do not change the planned static content.
 See [static export](static-export.md) for its path and hosting contracts.
 
-`Router::get` and `Router::get_form` register an exact, case-sensitive path or a pattern with named
+`Router::get`, `Router::get_form` and `Router::post_form` register an exact, case-sensitive path or a pattern with named
 single-segment captures. Exact paths win regardless of registration order.
 Invalid, duplicate, or overlapping dynamic patterns fail at registration.
 Queries do not affect matching. Ordinary and asset routes preserve literal
 `+`; form routes decode raw `+` as spaces, while `%2B` stays a plus. Unknown
-paths use the ordinary URI mode. An invalid query returns 400 before any
-handler, including on an unknown path; an unmatched valid request returns 404.
-Framing and unsupported-method checks happen before semantic query decoding,
+paths use the ordinary URI mode. On GET/HEAD an invalid query returns 400 before
+any handler, including on an unknown path. POST queries are checked after header
+preflight and body validation. An unmatched valid request returns 404.
+Framing, POST preflight and unsupported-method checks happen before semantic query decoding,
 so a request with multiple faults may receive a framing or method error first.
-There are no
-wildcard routes, redirects, middleware, actions, or dynamic module lookup.
+POST has its own route namespace and requires the fixed origin policy and body
+profile described in [server forms](post-forms.md). URL queries stay in URI mode
+and separate from body fields. No wildcard routes, middleware or dynamic module
+lookup are introduced. Actions are explicit Rust handlers, not remote function names.
 
 HEAD uses the same handler as GET, preserving its response status, content
 type, and calculated body length, but sends no body. A handler can inspect
 `Request::method()`. Recognizable HEAD requests also suppress error bodies.
-Handlers must be read-only and safe for concurrent calls and retries.
+GET/HEAD handlers must be read-only. All handlers must be safe for concurrent
+calls; POST side effects are not deduplicated or automatically rolled back.
 
 Responses have fixed headers: explicitly selected Content-Type, Content-Length in bytes,
 Connection: close, X-Content-Type-Options: nosniff, and Cache-Control: no-store.
@@ -89,7 +97,9 @@ response with a second fixed policy for same-origin modules/Wasm. The default
 profile, errors and assets still block scripts; no arbitrary policy is accepted.
 See [browser](browser.md).
 405 also includes Allow. Application strings cannot become header names,
-header values, or reason phrases. No custom headers, response compression,
+header values, or reason phrases. `Response::see_other` adds a typed internal
+Location with status 303 and an empty body. Changing its status removes Location.
+No arbitrary custom headers, response compression,
 trailers, or streaming are supported. No CORS permissions are emitted.
 
 `Response::html` accepts rendered `Html`; `Response::text` is plain text.
@@ -118,8 +128,9 @@ any headers.
 | Complete request headers, including delimiters | 16 KiB | 32 bytes–1 MiB |
 | Request line, excluding CRLF | 4096 bytes | 14 bytes–64 KiB, within the header budget |
 | Header fields | 64 | 1–1024 |
+| Encoded POST body | 64 KiB | 0–64 KiB |
 | Application response body | 1 MiB | 64 bytes–64 MiB |
-| Receiving headers, including queue wait | 5 seconds | 1 ms–60 seconds |
+| Receiving headers and body, including queue wait | 5 seconds | 1 ms–60 seconds |
 | Writing the complete response | 5 seconds | 1 ms–60 seconds |
 
 Budgets are validated before binding. The header reader scans incrementally

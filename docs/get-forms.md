@@ -107,7 +107,7 @@ be changed by clients and do not establish authorization. GET data appears in
 URLs, browser history, bookmarks, and potentially logs; do not submit secrets.
 Escaping handles HTML syntax, not business validation or authorization.
 
-This release adds no POST, request bodies, multipart parsing, uploads,
+The GET form API adds no POST, request bodies, multipart parsing, uploads,
 authentication, sessions, CSRF mechanism, server actions, or browser reactivity.
 It retains the loopback-only development server and its bounded I/O profile.
 Tests cover encoding collisions, single-pass decoding, UTF-8 and count/byte

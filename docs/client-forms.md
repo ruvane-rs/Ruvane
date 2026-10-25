@@ -2,8 +2,8 @@
 
 Alpha.15 adds typed controls to shared Rust views. This is a client-side form
 profile: submit events run application code in Wasm. No HTTP mutation route,
-session or server action is involved. Native [GET forms](get-forms.md) remain
-available for server navigation.
+session or server action is involved. Native [GET forms](get-forms.md) handle
+server navigation; alpha.16's [POST forms](post-forms.md) handle server mutations.
 
 ## Build a form
 
@@ -68,8 +68,8 @@ the field's last accepted value. A malformed payload leaves the component live.
 
 Application rules belong in Rust. A normal validation failure updates errors and
 returns `Ok(())`; returning a component error drops that failed native instance.
-Client validation is not authorization. A future server mutation endpoint must
-validate its own input.
+Client validation is not authorization. Server POST handlers must independently
+validate their own input.
 
 The browser prevents the native submit navigation and flushes dirty live fields
 before invoking the form event. This includes programmatic edits or autofill

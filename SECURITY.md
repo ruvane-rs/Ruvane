@@ -1,5 +1,39 @@
 # Security
 
+Alpha.16 adds explicit POST form routes to the loopback HTTP server. Host must
+first match the bound IP or localhost and actual port. Origin is then mandatory,
+canonical and equal to the HTTP origin of that validated Host. Null, missing,
+multiple and different origins fail. Fetch Metadata, when present, must indicate
+same-origin. Forwarded headers and Referer cannot bypass the check. These aliases
+are separate browser origins; arbitrary DNS hosts remain refused.
+
+This policy constrains browser cross-origin submissions, not forged requests
+from local programs, authentication or resource authorization. There are no
+sessions, cookies or cryptographic tokens. Public listeners, HTTPS and reverse
+proxy deployment remain outside the server profile. Canonical metadata origins
+stay configured separately and never authorize a mutation.
+
+Only registered POST handlers receive bodies, after route, Host, source-origin,
+media/charset and size checks. One Content-Length is required; duplicate,
+comma-separated, signed or overflowing lengths fail. Transfer-Encoding remains
+unsupported, and combining it with Content-Length fails. There is no interim
+100 response, request decompression, multipart parser or upload path.
+
+Bodies are capped at 64 KiB, fields at 32, names at 64 ASCII bytes and normalized
+values at 1024 UTF-8 bytes. Duplicate decoded names fail. Decoding occurs once;
+CRLF becomes LF in values, while lone CR and other controls except LF/tab fail.
+URL queries remain separate. The same absolute deadline covers queueing, headers
+and body reads; shutdown interrupts waiting body I/O. Only one request is served
+per connection. Rejected, incomplete or malformed data does not call a handler.
+
+Native PostForm controls escape text and use validated internal actions. A 303
+redirect accepts only InternalUrl, emits one Location and an empty body. POST
+handlers remain trusted concurrent application code: domain validation, access
+checks and state synchronization belong there. Redirects do not deduplicate
+retries; handler failures do not roll back state changes. The example's bounded
+task state is shared in memory and disappears at server shutdown.
+See [server POST forms](docs/post-forms.md) for the exact profile.
+
 Alpha.15 uses browser ABI v4 and RVN3 batches. Text payloads enter through a
 bounded numeric chunk API, without input pointers or host imports. A pending
 payload belongs to one live view/node/event. Its exact length, UTF-8, field type,
@@ -219,8 +253,8 @@ plus signs; form routes decode raw plus signs as spaces. Queries are decoded
 once using that mode, and duplicate decoded keys are rejected before a handler
 runs. Request fields cannot switch the mode. Path captures keep URI semantics.
 Hidden fields are untrusted client input, and GET field values appear in URLs;
-they must not contain secrets or establish authorization. Forms add no mutation,
-authentication, session, or CSRF protection mechanism. All handlers remain
+they must not contain secrets or establish authorization. GET forms add no mutation,
+authentication, session, or CSRF protection mechanism. GET/HEAD handlers remain
 read-only. See [GET forms](docs/get-forms.md).
 
 Starting with 0.1.0-alpha.6, page metadata uses unique typed fields and escaped

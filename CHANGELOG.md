@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0-alpha.16 — Unreleased
+
+- Add explicit `Router::post_form` mutations, separate from GET/HEAD routes,
+  with mandatory same-origin verification against the validated local Host.
+  Reject absent/null origins and inconsistent Fetch Metadata; ignore forwarded
+  headers when determining the target origin.
+- Read bounded URL-encoded bodies with strict Content-Length, MIME/charset and
+  encoding checks. Share the absolute request deadline across queueing, headers
+  and body reads; retain close-after-one-request and shutdown behavior.
+- Add `PostForm`, typed `FormData` access and validation markers. Decode once,
+  reject duplicate names and malformed UTF-8, normalize CRLF to LF, and enforce
+  body, field-count, name and normalized-value limits independently of queries.
+- Add internal 303 redirects through `Response::see_other` and method-aware
+  Allow headers. Update Method, StatusCode and ServerConfig for this profile.
+- Add a script-free server task example with validation, completion/removal,
+  concurrent bounded state and Post/Redirect/Get. State lasts until server stop.
+- Keep browser ABI v4 and RVN3 unchanged. No third-party dependencies, Wasm
+  action bridge, sessions, uploads or persistent database are added.
+
 ## 0.1.0-alpha.15 — Unreleased
 
 - Add typed text inputs, textareas, checkboxes, wrapping labels, client forms

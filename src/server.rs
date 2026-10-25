@@ -1,5 +1,5 @@
 use crate::http;
-use crate::{Method, Response, Router, StatusCode};
+use crate::{FormData, FormError, MAX_POST_BODY_BYTES, Method, Response, Router, StatusCode};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -29,10 +29,12 @@ pub struct ServerConfig {
     pub max_request_line_bytes: usize,
     /// Header fields, from 1 to 1024; defaults to 64.
     pub max_headers: usize,
+    /// Encoded POST body bytes, from 0 to 64 KiB; defaults to 64 KiB.
+    pub max_request_body_bytes: usize,
     /// Application response body bytes, from 64 to 64 MiB; defaults to 1 MiB.
     /// An oversized result is replaced by a small 500 response after it is built.
     pub max_response_body_bytes: usize,
-    /// Total time from accepting a connection to receiving its complete headers,
+    /// Total time from accepting a connection to receiving its headers and body,
     /// including time in the queue. From 1 ms to 60 seconds; defaults to 5 seconds.
     pub request_timeout: Duration,
     /// Total time to write a response, from 1 ms to 60 seconds; defaults to 5 seconds.
@@ -47,6 +49,7 @@ impl Default for ServerConfig {
             max_header_bytes: 16 * 1024,
             max_request_line_bytes: 4096,
             max_headers: 64,
+            max_request_body_bytes: MAX_POST_BODY_BYTES,
             max_response_body_bytes: 1024 * 1024,
             request_timeout: Duration::from_secs(5),
             write_timeout: Duration::from_secs(5),
@@ -62,6 +65,7 @@ impl ServerConfig {
             && (14..=64 * 1024).contains(&self.max_request_line_bytes)
             && self.max_request_line_bytes <= self.max_header_bytes - 4
             && (1..=1024).contains(&self.max_headers)
+            && self.max_request_body_bytes <= MAX_POST_BODY_BYTES
             && (64..=64 * 1024 * 1024).contains(&self.max_response_body_bytes)
             && (Duration::from_millis(1)..=Duration::from_secs(60)).contains(&self.request_timeout)
             && (Duration::from_millis(1)..=Duration::from_secs(60)).contains(&self.write_timeout);
@@ -94,7 +98,7 @@ impl ShutdownHandle {
 
 /// A bounded HTTP development server that binds only to a loopback IP address.
 ///
-/// This is a limited, bodyless HTTP/1.1 profile, not a general HTTP/1.1 or TLS
+/// This is a limited HTTP/1.1 form profile, not a general HTTP/1.1 or TLS
 /// implementation. Each connection receives at most one response and is closed.
 /// Host must name `localhost` or the bound IP with the actual port (port 80
 /// may be omitted). Overload closes newly accepted connections without a response.
@@ -265,14 +269,40 @@ fn serve(
     );
     // HEAD omits error bodies too, if its request line was readable.
     let mut head = bytes.starts_with(b"HEAD ");
+    let path = std::str::from_utf8(bytes.split(|byte| *byte == b'\n').next().unwrap_or(&[]))
+        .ok()
+        .and_then(|line| line.split(' ').nth(1))
+        .unwrap_or("/")
+        .split('?')
+        .next()
+        .unwrap_or("/")
+        .to_owned();
     let response = match received.and_then(|end| {
-        http::parse(
+        let mut request = http::parse(
             &bytes[..end],
             config.max_request_line_bytes,
             config.max_headers,
-        )
+        )?;
+        if !valid_host(request.header("host").unwrap_or(""), address) {
+            return Err(StatusCode::BadRequest);
+        }
+        if request.method() == Method::Post {
+            let length = router.prepare_post(&request, config.max_request_body_bytes)?;
+            let body = read_body(
+                &mut job.stream,
+                &bytes[end..],
+                length,
+                job.accepted_at + config.request_timeout,
+                stopped,
+            )?;
+            request.form = Some(FormData::parse(&body).map_err(|error| match error {
+                FormError::TooLarge | FormError::TooManyFields => StatusCode::ContentTooLarge,
+                _ => StatusCode::BadRequest,
+            })?);
+        }
+        Ok(request)
     }) {
-        Ok(request) if valid_host(request.header("host").unwrap_or(""), address) => {
+        Ok(request) => {
             head = request.method() == Method::Head;
             match catch_unwind(AssertUnwindSafe(|| router.dispatch(request))) {
                 Ok(response) if response.body().len() <= config.max_response_body_bytes => response,
@@ -286,14 +316,54 @@ fn serve(
                 }
             }
         }
-        Ok(_) => Response::error(StatusCode::BadRequest),
         Err(status) => Response::error(status),
     };
     let deadline = Instant::now() + config.write_timeout;
-    let headers = response.wire_headers();
+    let headers = response.wire_headers(router.allowed(&path));
     if write_until(&mut job.stream, headers.as_bytes(), deadline, stopped).is_ok() && !head {
         let _ = write_until(&mut job.stream, response.body(), deadline, stopped);
     }
+}
+
+fn read_body(
+    stream: &mut TcpStream,
+    received: &[u8],
+    length: usize,
+    deadline: Instant,
+    stopped: &AtomicBool,
+) -> Result<Vec<u8>, StatusCode> {
+    let mut body = Vec::with_capacity(length);
+    body.extend_from_slice(&received[..received.len().min(length)]);
+    let mut chunk = [0; 1024];
+    while body.len() < length {
+        if stopped.load(Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(StatusCode::RequestTimeout);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(StatusCode::RequestTimeout);
+        }
+        stream
+            .set_read_timeout(Some(remaining.min(IO_SLICE)))
+            .map_err(|_| StatusCode::BadRequest)?;
+        let available = chunk.len().min(length - body.len());
+        match stream.read(&mut chunk[..available]) {
+            Ok(0) => return Err(StatusCode::BadRequest),
+            Ok(count) => body.extend_from_slice(&chunk[..count]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) => {}
+            Err(_) => return Err(StatusCode::BadRequest),
+        }
+    }
+    if stopped.load(Ordering::Acquire) || Instant::now() >= deadline {
+        return Err(StatusCode::RequestTimeout);
+    }
+    Ok(body)
 }
 
 fn valid_host(authority: &str, address: SocketAddr) -> bool {

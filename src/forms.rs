@@ -1,6 +1,8 @@
 use crate::html::escape_into;
 use crate::{Html, InternalUrl, MAX_COMPONENT_BYTES, MAX_QUERY_PAIRS};
 use std::fmt;
+mod post;
+pub use post::{FormData, MAX_POST_BODY_BYTES, PostForm};
 
 /// Maximum ASCII bytes in a declared form field name.
 pub const MAX_FORM_NAME_BYTES: usize = 64;
@@ -8,7 +10,7 @@ pub const MAX_FORM_NAME_BYTES: usize = 64;
 /// A typed GET form construction error, without reflected field data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FormError {
-    /// GET replaces the action query; use named or hidden fields instead.
+    /// Form actions use fields instead of an action query in this profile.
     ActionHasQuery,
     /// A field name is not a supported ASCII identifier.
     InvalidName,
@@ -22,23 +24,42 @@ pub enum FormError {
     EmptyLabel,
     /// Text exceeds the decoded component byte budget.
     TooLarge,
+    /// A form body contains malformed escapes or unencoded bytes.
+    InvalidEncoding,
+    /// Decoded form bytes are not UTF-8.
+    InvalidUtf8,
 }
 
 impl fmt::Display for FormError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::ActionHasQuery => "GET form action must not contain a query",
+            Self::ActionHasQuery => "form action must not contain a query",
             Self::InvalidName => "invalid form field name",
             Self::DuplicateName => "duplicate form field name",
             Self::TooManyFields => "form field count limit exceeded",
             Self::InvalidText => "control character in form text",
             Self::EmptyLabel => "form label must not be empty",
             Self::TooLarge => "form text byte limit exceeded",
+            Self::InvalidEncoding => "invalid form encoding",
+            Self::InvalidUtf8 => "invalid UTF-8 in form",
         })
     }
 }
 
 impl std::error::Error for FormError {}
+
+fn valid_name(name: &str) -> Result<(), FormError> {
+    let mut bytes = name.bytes();
+    if name.len() > MAX_FORM_NAME_BYTES
+        || !bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(FormError::InvalidName);
+    }
+    Ok(())
+}
 
 #[derive(Debug)]
 enum Field {
@@ -119,15 +140,7 @@ impl GetForm {
     }
 
     fn validate_name(&self, name: &str) -> Result<(), FormError> {
-        let mut bytes = name.bytes();
-        if name.len() > MAX_FORM_NAME_BYTES
-            || !bytes
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-            || !bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        {
-            return Err(FormError::InvalidName);
-        }
+        valid_name(name)?;
         if self.fields.iter().any(|field| field.name() == name) {
             return Err(FormError::DuplicateName);
         }

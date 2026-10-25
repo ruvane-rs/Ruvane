@@ -1,4 +1,4 @@
-use crate::{Html, MediaType, ParamError, Query, QueryMode};
+use crate::{FormData, Html, InternalUrl, MediaType, ParamError, Query, QueryMode};
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
@@ -19,16 +19,18 @@ pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'none'
 /// grants no authentication, authorization, or execution sandbox.
 pub const INTERACTIVE_CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
-/// A read-only request method supported by the local server.
+/// A request method supported by the local server.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Method {
     /// Retrieve a representation.
     Get,
     /// Retrieve the headers of a representation without sending its body.
     Head,
+    /// Submit a URL-encoded form to an explicit mutation route.
+    Post,
 }
 
-/// A validated, bodyless request in Ruvane's local HTTP profile.
+/// A validated request in Ruvane's local HTTP profile.
 ///
 /// Paths and queries retain their original ASCII percent encoding. Routing
 /// matches raw segments without normalizing the path. Query values and matched
@@ -40,6 +42,8 @@ pub struct Request {
     headers: Vec<(String, String)>,
     pub(crate) params: Vec<(String, String)>,
     pub(crate) query_params: Query,
+    pub(crate) content_length: Option<u64>,
+    pub(crate) form: Option<FormData>,
 }
 
 impl Request {
@@ -69,6 +73,11 @@ impl Request {
     /// Returns the query convention selected by route registration.
     pub fn query_mode(&self) -> QueryMode {
         self.query_params.mode()
+    }
+
+    /// Validated POST fields, separate from URL query parameters.
+    pub fn form_data(&self) -> Option<&FormData> {
+        self.form.as_ref()
     }
 
     /// Returns a decoded dynamic path capture by name, if present.
@@ -104,18 +113,26 @@ impl Request {
 pub enum StatusCode {
     /// 200: the request succeeded.
     Ok,
+    /// 303: retrieve the internal Location after a successful submission.
+    SeeOther,
     /// 400: the request is malformed or ambiguous.
     BadRequest,
+    /// 403: the mutation's source origin is not permitted.
+    Forbidden,
     /// 404: no route matches this exact path.
     NotFound,
-    /// 405: a known method is outside the read-only profile.
+    /// 405: the method is not registered for this route.
     MethodNotAllowed,
     /// 408: the request did not arrive within its total time budget.
     RequestTimeout,
-    /// 413: a nonempty request body is outside this profile.
+    /// 411: a POST form has no declared content length.
+    LengthRequired,
+    /// 413: the request body exceeds the supported budget.
     ContentTooLarge,
     /// 414: the request line exceeds the configured limit.
     UriTooLong,
+    /// 415: the request is not an uncompressed UTF-8 URL-encoded form.
+    UnsupportedMediaType,
     /// 417: request expectations are unsupported.
     ExpectationFailed,
     /// 431: request headers exceed a byte or count limit.
@@ -133,12 +150,16 @@ impl StatusCode {
     pub fn as_u16(self) -> u16 {
         match self {
             Self::Ok => 200,
+            Self::SeeOther => 303,
             Self::BadRequest => 400,
+            Self::Forbidden => 403,
             Self::NotFound => 404,
             Self::MethodNotAllowed => 405,
             Self::RequestTimeout => 408,
+            Self::LengthRequired => 411,
             Self::ContentTooLarge => 413,
             Self::UriTooLong => 414,
+            Self::UnsupportedMediaType => 415,
             Self::ExpectationFailed => 417,
             Self::RequestHeaderFieldsTooLarge => 431,
             Self::InternalServerError => 500,
@@ -151,12 +172,16 @@ impl StatusCode {
     pub fn reason(self) -> &'static str {
         match self {
             Self::Ok => "OK",
+            Self::SeeOther => "See Other",
             Self::BadRequest => "Bad Request",
+            Self::Forbidden => "Forbidden",
             Self::NotFound => "Not Found",
             Self::MethodNotAllowed => "Method Not Allowed",
             Self::RequestTimeout => "Request Timeout",
+            Self::LengthRequired => "Length Required",
             Self::ContentTooLarge => "Content Too Large",
             Self::UriTooLong => "URI Too Long",
+            Self::UnsupportedMediaType => "Unsupported Media Type",
             Self::ExpectationFailed => "Expectation Failed",
             Self::RequestHeaderFieldsTooLarge => "Request Header Fields Too Large",
             Self::InternalServerError => "Internal Server Error",
@@ -183,6 +208,7 @@ pub struct Response {
     content_type: &'static str,
     body: Body,
     csp: &'static str,
+    location: Option<InternalUrl>,
 }
 
 #[derive(Clone, Debug)]
@@ -208,6 +234,7 @@ impl Response {
             content_type: "text/plain; charset=utf-8",
             body: Body::Bytes(Cow::Owned(body.into().into_bytes())),
             csp: CONTENT_SECURITY_POLICY,
+            location: None,
         }
     }
 
@@ -218,6 +245,7 @@ impl Response {
             content_type: "text/html; charset=utf-8",
             body: Body::Bytes(Cow::Owned(body.into_string().into_bytes())),
             csp: CONTENT_SECURITY_POLICY,
+            location: None,
         }
     }
 
@@ -245,6 +273,7 @@ impl Response {
             content_type: media_type.as_str(),
             body: Body::Bytes(Cow::Owned(body.into())),
             csp: CONTENT_SECURITY_POLICY,
+            location: None,
         }
     }
 
@@ -254,13 +283,29 @@ impl Response {
             content_type: media_type.as_str(),
             body: Body::Bytes(Cow::Borrowed(body)),
             csp: CONTENT_SECURITY_POLICY,
+            location: None,
         }
     }
 
     /// Sets the response status without changing its body or content type.
     pub fn with_status(mut self, status: StatusCode) -> Self {
         self.status = status;
+        if status != StatusCode::SeeOther {
+            self.location = None;
+        }
         self
+    }
+
+    /// Redirects to an internal GET URL after a submission, with an empty body.
+    pub fn see_other(location: InternalUrl) -> Self {
+        let mut response = Self::text("").with_status(StatusCode::SeeOther);
+        response.location = Some(location);
+        response
+    }
+
+    /// The typed redirect destination, when present.
+    pub fn location(&self) -> Option<&InternalUrl> {
+        self.location.as_ref()
     }
 
     pub(crate) fn shared(body: Arc<[u8]>, content_type: &'static str) -> Self {
@@ -269,6 +314,7 @@ impl Response {
             content_type,
             body: Body::Shared(body),
             csp: CONTENT_SECURITY_POLICY,
+            location: None,
         }
     }
 
@@ -305,19 +351,24 @@ impl Response {
         Self::text(format!("{}\n", status.reason())).with_status(status)
     }
 
-    pub(crate) fn wire_headers(&self) -> String {
+    pub(crate) fn wire_headers(&self, allowed: &str) -> String {
         let allow = if self.status == StatusCode::MethodNotAllowed {
-            "Allow: GET, HEAD\r\n"
+            format!("Allow: {allowed}\r\n")
         } else {
-            ""
+            String::new()
         };
+        let location = self
+            .location
+            .as_ref()
+            .map_or_else(String::new, |url| format!("Location: {}\r\n", url.as_str()));
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store\r\nContent-Security-Policy: {}\r\n{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store\r\nContent-Security-Policy: {}\r\n{}{}\r\n",
             self.status,
             self.content_type,
             self.body().len(),
             self.csp,
-            allow
+            allow,
+            location
         )
     }
 }
@@ -446,15 +497,18 @@ pub(crate) fn parse(
             NotImplemented
         });
     }
-    if let Some(value) = header("content-length") {
+    let content_length = if let Some(value) = header("content-length") {
         if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(BadRequest);
         }
         let length = value.parse::<u64>().map_err(|_| BadRequest)?;
-        if length != 0 {
+        if length != 0 && method != "POST" {
             return Err(ContentTooLarge);
         }
-    }
+        Some(length)
+    } else {
+        None
+    };
     if header("expect").is_some() {
         return Err(ExpectationFailed);
     }
@@ -464,7 +518,8 @@ pub(crate) fn parse(
     let method = match method {
         "GET" => Method::Get,
         "HEAD" => Method::Head,
-        "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "CONNECT" | "TRACE" => {
+        "POST" => Method::Post,
+        "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "CONNECT" | "TRACE" => {
             return Err(MethodNotAllowed);
         }
         _ => return Err(NotImplemented),
@@ -476,6 +531,8 @@ pub(crate) fn parse(
         params: Vec::new(),
         // The route selects query decoding later; check raw URI syntax here.
         query_params: Query::default(),
+        content_length,
+        form: None,
     })
 }
 

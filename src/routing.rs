@@ -2,7 +2,7 @@ use crate::http::valid_path;
 use crate::url::{decode, valid_segment};
 use crate::{
     AssetError, InternalUrl, MAX_ASSET_BYTES, MAX_ASSETS, MAX_PATH_PARAMS, MAX_TOTAL_ASSET_BYTES,
-    MediaType, Query, QueryMode, Request, Response, StatusCode,
+    MediaType, Method, Query, QueryMode, Request, Response, SiteOrigin, StatusCode,
 };
 use std::fmt;
 
@@ -31,12 +31,12 @@ impl fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
-/// A GET router with exact paths, named single-segment captures, and HEAD support.
+/// A router for GET/HEAD pages and explicit POST form mutations.
 ///
 /// Exact paths take priority regardless of registration order. Overlapping
 /// dynamic patterns are rejected. Matching uses raw, case-sensitive segments;
 /// only captures are decoded once, after selection. Queries do not participate
-/// in matching. Handlers must be read-only, bounded,
+/// in matching. GET handlers must be read-only. All handlers must be bounded
 /// and safe to call concurrently; the framework cannot interrupt their code.
 #[derive(Default)]
 pub struct Router {
@@ -54,6 +54,7 @@ pub(crate) enum Segment {
 }
 
 struct Route {
+    method: Method,
     pattern: String,
     segments: Vec<Segment>,
     dynamic: bool,
@@ -155,7 +156,11 @@ impl Router {
     ) -> Result<(), AssetError> {
         let path = path.into();
         let _ = InternalUrl::new(&path).map_err(|_| AssetError::InvalidPath)?;
-        if self.routes.iter().any(|route| route.pattern == path) {
+        if self
+            .routes
+            .iter()
+            .any(|route| route.method == Method::Get && route.pattern == path)
+        {
             return Err(AssetError::DuplicatePath);
         }
         if bytes.len() > MAX_ASSET_BYTES {
@@ -195,7 +200,7 @@ impl Router {
         path: impl Into<String>,
         handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
     ) -> Result<(), RouteError> {
-        self.register(path.into(), QueryMode::Uri, handler)
+        self.register(path.into(), Method::Get, QueryMode::Uri, handler)
     }
 
     /// Registers a read-only GET/HEAD route with native form query decoding.
@@ -209,20 +214,41 @@ impl Router {
         path: impl Into<String>,
         handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
     ) -> Result<(), RouteError> {
-        self.register(path.into(), QueryMode::Form, handler)
+        self.register(path.into(), Method::Get, QueryMode::Form, handler)
+    }
+
+    /// Registers a URL-encoded POST action with mandatory same-origin checks.
+    ///
+    /// Origin must match the HTTP origin of the server-validated Host. Missing
+    /// or null origins are refused. Fetch Metadata, when present, must also
+    /// indicate same-origin. Forwarded headers never configure this policy.
+    /// The handler receives validated fields through `Request::form_data`.
+    /// GET/HEAD and POST registrations have separate route namespaces.
+    pub fn post_form(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.register(path.into(), Method::Post, QueryMode::Uri, handler)
     }
 
     fn register(
         &mut self,
         path: String,
+        method: Method,
         query_mode: QueryMode,
         handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
     ) -> Result<(), RouteError> {
         let (segments, dynamic) = pattern_segments(&path)?;
-        if self.routes.iter().any(|existing| existing.pattern == path) {
+        if self
+            .routes
+            .iter()
+            .any(|existing| existing.method == method && existing.pattern == path)
+        {
             return Err(RouteError::DuplicatePath);
         }
         let route = Route {
+            method,
             pattern: path,
             segments,
             dynamic,
@@ -230,10 +256,9 @@ impl Router {
             query_mode,
         };
         if dynamic
-            && self
-                .routes
-                .iter()
-                .any(|existing| existing.dynamic && existing.overlaps(&route))
+            && self.routes.iter().any(|existing| {
+                existing.method == method && existing.dynamic && existing.overlaps(&route)
+            })
         {
             return Err(RouteError::AmbiguousRoute);
         }
@@ -255,24 +280,119 @@ impl Router {
         custom.cloned().unwrap_or_else(|| Response::error(status))
     }
 
-    pub(crate) fn dispatch(&self, mut request: Request) -> Response {
-        let selected = self
-            .routes
+    fn select(&self, method: Method, path: &str) -> Option<&Route> {
+        let method = if method == Method::Head {
+            Method::Get
+        } else {
+            method
+        };
+        self.routes
             .iter()
-            .find(|route| !route.dynamic && route.pattern == request.path())
+            .find(|route| route.method == method && !route.dynamic && route.pattern == path)
             .or_else(|| {
                 self.routes
                     .iter()
-                    .find(|route| route.dynamic && route.matches(request.path()))
+                    .find(|route| route.method == method && route.dynamic && route.matches(path))
+            })
+    }
+
+    pub(crate) fn allowed(&self, path: &str) -> &'static str {
+        let get = self.select(Method::Get, path).is_some();
+        let post = self.select(Method::Post, path).is_some();
+        match (get, post) {
+            (true, true) => "GET, HEAD, POST",
+            (false, true) => "POST",
+            _ => "GET, HEAD",
+        }
+    }
+
+    pub(crate) fn prepare_post(
+        &self,
+        request: &Request,
+        maximum: usize,
+    ) -> Result<usize, StatusCode> {
+        use StatusCode::{
+            ContentTooLarge, Forbidden, LengthRequired, MethodNotAllowed, NotFound,
+            UnsupportedMediaType,
+        };
+        if self.select(Method::Post, request.path()).is_none() {
+            return Err(if self.select(Method::Get, request.path()).is_some() {
+                MethodNotAllowed
+            } else {
+                NotFound
             });
+        }
+        let origin = request.header("origin").ok_or(Forbidden)?;
+        let source = SiteOrigin::parse(origin).map_err(|_| Forbidden)?;
+        let target = SiteOrigin::parse(&format!(
+            "http://{}",
+            request.header("host").ok_or(Forbidden)?
+        ))
+        .map_err(|_| Forbidden)?;
+        if source.as_str() != origin
+            || source != target
+            || request
+                .header("sec-fetch-site")
+                .is_some_and(|site| site != "same-origin")
+        {
+            return Err(Forbidden);
+        }
+        if request.header("content-encoding").is_some() {
+            return Err(UnsupportedMediaType);
+        }
+        let mut content_type = request
+            .header("content-type")
+            .ok_or(UnsupportedMediaType)?
+            .split(';');
+        if !content_type
+            .next()
+            .unwrap_or("")
+            .trim()
+            .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+        {
+            return Err(UnsupportedMediaType);
+        }
+        if let Some(parameter) = content_type.next() {
+            let (key, value) = parameter
+                .trim()
+                .split_once('=')
+                .ok_or(UnsupportedMediaType)?;
+            if !key.trim().eq_ignore_ascii_case("charset")
+                || !["utf-8", "\"utf-8\""]
+                    .iter()
+                    .any(|expected| value.trim().eq_ignore_ascii_case(expected))
+                || content_type.next().is_some()
+            {
+                return Err(UnsupportedMediaType);
+            }
+        }
+        let length = request.content_length.ok_or(LengthRequired)?;
+        if length > maximum as u64 {
+            return Err(ContentTooLarge);
+        }
+        Ok(length as usize)
+    }
+
+    pub(crate) fn dispatch(&self, mut request: Request) -> Response {
+        let selected = self.select(request.method(), request.path());
         let mode = selected.map_or(QueryMode::Uri, |route| route.query_mode);
         request.query_params = match Query::parse_with_mode(request.query().unwrap_or(""), mode) {
             Ok(query) => query,
             Err(_) => return Response::error(StatusCode::BadRequest),
         };
         let Some(route) = selected else {
+            if self
+                .routes
+                .iter()
+                .any(|route| route.matches(request.path()))
+            {
+                return Response::error(StatusCode::MethodNotAllowed);
+            }
             return self.error_response(StatusCode::NotFound);
         };
+        if request.method() == Method::Post && request.form.is_none() {
+            return Response::error(StatusCode::Forbidden);
+        }
         if route.dynamic {
             let mut captures = Vec::new();
             for (segment, raw) in route.segments.iter().zip(request.path()[1..].split('/')) {

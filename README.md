@@ -5,7 +5,7 @@ is to bring server-side and browser-side development into a single stack,
 without third-party dependencies.
 
 The current alpha provides HTML rendering, a bounded loopback HTTP server,
-fixed and dynamic GET/HEAD routes, typed parameter conversion, validated
+fixed and dynamic GET/HEAD routes, explicit POST form actions, typed parameter conversion, validated
 internal links, embedded CSS/image assets, typed native GET forms, page
 metadata, canonical URLs, a fixed browser Content Security Policy, and bounded
 static export with a local preview. The `ruvane` CLI creates projects, watches
@@ -22,8 +22,10 @@ subtrees support conditional rendering, insertion, removal and reordering while
 retaining surviving DOM nodes and component state.
 Typed text inputs, textareas and checkboxes send bounded values to Rust.
 Client forms support Rust validation, reset tokens and selection/composition handling.
-Interactive HTTP pages explicitly opt into a fixed module/Wasm CSP. Server
-actions and client-side navigation remain future work.
+Native POST forms validate bounded fields on the server, check their source origin
+and support internal 303 redirects. Interactive HTTP pages explicitly opt into a
+fixed module/Wasm CSP. Calling server actions from Wasm and client-side navigation
+remain future work.
 
 ## Principles
 
@@ -85,6 +87,28 @@ assert!(snapshot.node_for_event(3).is_some());
 The browser registry retains a `ViewSnapshot` between updates. Removed handles
 are never reused, including when a hidden key returns. Unkeyed nodes keep
 positional identity. See [shared views](docs/views.md) for keys and lifecycle.
+
+## Server forms
+
+```sh
+cargo run --offline --locked --example server_forms
+```
+
+Open the printed `/tasks` address. Native POST forms create, complete and remove
+tasks without JavaScript. State is shared by the server and survives page reloads
+until that process stops. Successful submissions redirect with 303; validation
+errors retain escaped fields with status 400.
+
+`PostForm` builds labeled controls with an internal action. `Router::post_form`
+registers an explicit mutation handler, independent of GET/HEAD routes on the
+same path. `Request::form_data` provides bounded, unique UTF-8 fields separately
+from URL queries. Origin is mandatory and must match the server-validated local
+Host; Fetch Metadata, when present, must also indicate same-origin. Body size,
+framing, MIME type and deadlines are checked before an action runs.
+
+The server keeps its loopback-only profile and script-blocking CSP. These forms
+have no automatic Wasm integration, sessions or database. See
+[server POST forms](docs/post-forms.md) for the API, origin policy and limits.
 
 ## Reactive state
 
@@ -551,6 +575,7 @@ when composed. Serialized output is available through `as_str()`,
 | `PageRoute` | Validate a named pattern and construct URLs from decoded parameters. |
 | `Page`, `PageContext`, `PageMode` | Compose document content with explicit static/server input policies. |
 | `GetForm` | Render a native GET form with an internal action, labeled search inputs, and hidden fields. |
+| `PostForm`, `FormData` | Render native POST controls and parse bounded fields for explicit server mutations. |
 | `Document` | Render a complete document with a doctype, language, UTF-8 declaration, title, and body. |
 | `Metadata` | Add bounded descriptions, robots hints, a canonical URL, and a PNG favicon. |
 | `SiteOrigin` / `CanonicalUrl` | Combine a configured origin and validated internal URL for canonical metadata. |
@@ -559,8 +584,8 @@ when composed. Serialized output is available through `as_str()`,
 
 | Item | Purpose |
 | --- | --- |
-| `Router` | Register fixed and dynamic GET paths, with automatic HEAD handling and ambiguity detection. |
-| `Request` | Inspect raw paths/queries, decoded captures, parsed queries, and validated headers. |
+| `Router` | Register GET/HEAD pages and explicit POST form actions, with method-scoped ambiguity detection. |
+| `Request` | Inspect paths, captures, queries, POST form fields and validated headers. |
 | `Query` | Look up unique decoded query keys and convert values through `FromStr`. |
 | `QueryMode` | Explicitly select URI or form query decoding without changing path semantics. |
 | `InternalUrl` | Build validated internal paths and encode segment/query data. |
@@ -607,8 +632,9 @@ Exported HTML needs the hosting server to provide CSP and the other required
 headers; a metadata manifest cannot enforce them.
 
 Form query decoding is selected by route registration, never inferred from
-request fields. Forms do not add POST, uploads, authentication, sessions,
-CSRF tokens, or state-changing actions. Do not place secrets in GET fields.
+request fields. Native POST actions require same-origin verification and bounded
+form bodies. No uploads, authentication, sessions or CSRF tokens are provided.
+Do not place secrets in GET fields. See [server forms](docs/post-forms.md).
 
 Embedded assets are explicitly selected application data, not a filesystem
 mount or an upload service. CSS is trusted code. Type declarations and
