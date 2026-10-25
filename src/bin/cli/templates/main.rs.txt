@@ -1,0 +1,38 @@
+#![forbid(unsafe_code)]
+
+mod components;
+mod pages;
+
+use ruvane::{Server, SiteOrigin};
+use std::ffi::OsStr;
+use std::io::{Read, Write};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    match args.first().and_then(|value| value.to_str()) {
+        Some("--ruvane-serve") if args.len() == 3 => {
+            let port: u16 = args[1].to_str().ok_or("invalid port")?.parse()?;
+            let server = Server::bind(([127, 0, 0, 1], port).into(), pages::router()?)?;
+            let shutdown = server.shutdown_handle();
+            std::thread::spawn(move || {
+                let _ = std::io::stdin().read_exact(&mut [0u8; 1]);
+                shutdown.shutdown();
+            });
+            let mut ready = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&args[2])?;
+            writeln!(ready, "ruvane-ready\t1\t{}", server.local_addr()?)?;
+            server.run()?;
+        }
+        Some("--ruvane-export") if args.len() == 3 => {
+            let origin = SiteOrigin::parse(args[2].to_str().ok_or("invalid origin")?)?;
+            pages::site(&origin)?.export_to(&args[1])?;
+        }
+        Some("--help") if args[0] == OsStr::new("--help") => {
+            println!("Use ruvane dev or ruvane build from this project root.")
+        }
+        _ => return Err("use the Ruvane CLI to start this application".into()),
+    }
+    Ok(())
+}

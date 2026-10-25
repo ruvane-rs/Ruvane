@@ -1,5 +1,25 @@
 # Security
 
+Starting with alpha.8, the local CLI compiles and executes an explicitly selected
+trusted Rust project through Cargo. It is not a sandbox for downloaded code,
+Cargo configuration, build scripts, toolchain binaries, or subprocesses started
+by application code. CLI commands are not exposed as HTTP endpoints. Arguments
+are passed directly to processes without a shell command string.
+
+Generation requires a fresh portable project name and exclusively creates files.
+Managed work/build directories have explicit markers, symlink checks, bounded
+source/output profiles, and a project lock. These checks assume trusted parents
+without hostile concurrent mutation, as does static export. Markers are not
+authentication. Versioned builds preserve older files; unknown output roots
+are refused. The CLI never recursively cleans user directories.
+
+Generated servers receive an stdin control pipe and stop on data or EOF.
+Normal CLI cleanup closes that pipe, waits, then kills/reaps its direct child
+if needed. Cargo/application waits have limits. Arbitrary descendants and
+platform-specific signal handling are outside this portable std-only contract.
+The CSP remains unchanged; dev does not inject browser reload scripts.
+See [the CLI contract](docs/cli.md).
+
 Ruvane is experimental and has not undergone an independent audit.
 
 Version 0.1.0-alpha.1 provides HTML rendering only. Starting with

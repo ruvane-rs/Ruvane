@@ -8,7 +8,8 @@ The current alpha provides HTML rendering, a bounded loopback HTTP server,
 fixed and dynamic GET/HEAD routes, typed parameter conversion, validated
 internal links, embedded CSS/image assets, typed native GET forms, page
 metadata, canonical URLs, a fixed browser Content Security Policy, and bounded
-static export with a local preview.
+static export with a local preview. The `ruvane` CLI creates projects, watches
+sources, runs the development server, and manages versioned static builds.
 Server actions and browser-side reactivity are planned for future versions.
 
 ## Principles
@@ -18,6 +19,45 @@ Server actions and browser-side reactivity are planned for future versions.
 - **Escaped text by default**, with no raw HTML constructor.
 - **Bounded local transport**, with explicit limits and absolute I/O deadlines.
 - **No unsafe code** in the crate.
+
+## CLI and generated projects
+
+From a source checkout:
+
+```sh
+cargo install --path . --locked
+ruvane new mon-site --framework-path .
+cd mon-site
+ruvane dev
+```
+
+`--framework-path` selects a local first-party Ruvane checkout. Without it,
+the generated Cargo manifest pins this exact Ruvane version from crates.io;
+that version must have been published. The generated application has no
+third-party dependencies. Rust/Cargo are required for compilation.
+
+Open the HTTP address printed by `dev`. It watches `src/`, `assets/`, the Cargo
+manifest and lockfile, consolidates changes, and recompiles one application at
+a time. A successful compilation restarts the server at the same address.
+Compilation errors keep the previous server running; startup failures attempt
+to restore its executable. Refresh the browser manually. Type `q` then Enter
+to stop dev before running another build command in that project.
+
+```sh
+ruvane build --origin https://site.example
+ruvane preview dist
+```
+
+Builds go into new `dist/build-NNNNNN` directories. The `dist/current` record
+changes only after a completed export has been validated. Previous builds are
+retained, and unrecognized existing output directories are refused. Preview
+also accepts flat alpha.7 exports. It loads the actual selected files once
+with CSP, rather than rebuilding them or opening `index.html` as `file://`.
+
+The CLI uses bounded standard-library polling and direct process arguments.
+Local project code, Cargo configuration, and the toolchain are trusted; this
+is not an execution sandbox. See [the CLI contract](docs/cli.md) for limits,
+process lifecycle, project layout, versioned output, and offline operation.
 
 ## Local server
 

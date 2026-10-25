@@ -1,0 +1,58 @@
+use crate::components;
+use ruvane::{Html, MediaType, Response, Router, SiteOrigin, StaticPath, StaticSite, Tag, element};
+
+const CSS: &[u8] = include_bytes!("../assets/site.css");
+
+fn home(origin: Option<&SiteOrigin>) -> Html {
+    components::page(
+        "A small site. Your next idea.",
+        "/",
+        element(Tag::P).child("Welcome. Make something worth sharing."),
+        origin,
+    )
+}
+
+fn about(origin: Option<&SiteOrigin>) -> Html {
+    components::page(
+        "About",
+        "/about/",
+        element(Tag::P).child("Clear ideas, thoughtful pages, and room to explore."),
+        origin,
+    )
+}
+
+fn greeting(name: &str, path: &str, origin: Option<&SiteOrigin>) -> Html {
+    components::page(
+        "Hello",
+        path,
+        element(Tag::P).child(format!("Hello, {name}!")),
+        origin,
+    )
+}
+
+pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
+    let mut router = Router::new();
+    router.get("/", |_| Response::html(home(None)))?;
+    router.get("/about/", |_| Response::html(about(None)))?;
+    router.get("/hello/{name}/", |request| {
+        Response::html(greeting(
+            request.param("name").unwrap_or("world"),
+            "/",
+            None,
+        ))
+    })?;
+    router.asset("/assets/site.css", CSS, MediaType::Css)?;
+    Ok(router)
+}
+
+pub fn site(origin: &SiteOrigin) -> Result<StaticSite, Box<dyn std::error::Error>> {
+    let mut site = StaticSite::new();
+    site.page(StaticPath::new("/")?, home(Some(origin)))?;
+    site.page(StaticPath::new("/about/")?, about(Some(origin)))?;
+    for name in ["rust", "web"] {
+        let path = format!("/hello/{name}/");
+        site.page(StaticPath::new(&path)?, greeting(name, &path, Some(origin)))?;
+    }
+    site.asset(StaticPath::new("/assets/site.css")?, CSS, MediaType::Css)?;
+    Ok(site)
+}

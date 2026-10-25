@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0-alpha.8 — Unreleased
+
+- Add a dependency-free ruvane binary with new/dev/build/preview commands,
+  bounded argument parsing, and explicit generated-project recognition.
+- Generate a complete Rust project with shared components, dynamic server
+  routes, static page enumeration, CSS, metadata, and a documented app protocol.
+- Add bounded source polling, content fingerprints, change consolidation,
+  single compilation, same-port restarts, and previous-server preservation or
+  restoration after compilation/startup failure. Browser refresh stays manual.
+- Add project locking, private run executables, EOF-based server shutdown,
+  direct-child wait/kill fallback, bounded process waits, and limited cleanup.
+- Add versioned build directories and a validated current pointer, retaining
+  old exports and refusing unknown output directories. Preview supports both
+  managed versioned builds and existing flat exports.
+- Add generated-project integration tests covering actual compilation, dynamic
+  serving, automatic rebuilding, failure recovery, preview, process shutdown,
+  locks, path/argument injection, watcher budgets, and symlinks.
+- Continue to use no third-party dependencies and forbid unsafe code.
+
 ## 0.1.0-alpha.7 — Unreleased
 
 - Add a separate preview command for existing completed exports, with bounded

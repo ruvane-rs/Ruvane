@@ -1,0 +1,34 @@
+use ruvane::{
+    Document, Html, InternalUrl, Metadata, Robots, SiteOrigin, Tag, element, fragment, link,
+};
+
+pub fn url(path: &str) -> InternalUrl {
+    InternalUrl::new(path).expect("fixed application path")
+}
+
+pub fn page(title: &str, path: &str, body: impl Into<Html>, origin: Option<&SiteOrigin>) -> Html {
+    let metadata = Metadata::new()
+        .description("A small site built with Ruvane.")
+        .unwrap();
+    let metadata = match origin {
+        Some(origin) => metadata
+            .canonical(origin.canonical(&url(path)))
+            .robots(Robots::IndexFollow),
+        None => metadata.robots(Robots::NoIndexFollow),
+    };
+    let navigation = element(Tag::Nav).child(fragment([
+        link(&url("/"), "Home"),
+        link(&url("/about/"), "About"),
+        link(&url("/hello/rust/"), "Meet Rust"),
+    ]));
+    Document::new(
+        title,
+        element(Tag::Main)
+            .child(navigation)
+            .child(element(Tag::H1).child(title))
+            .child(body),
+    )
+    .metadata(metadata)
+    .stylesheet(url("/assets/site.css"))
+    .render()
+}
