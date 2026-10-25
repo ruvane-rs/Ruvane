@@ -9,6 +9,15 @@ provide TLS, sessions, authentication, server actions, or a production HTTP
 implementation. See [the HTTP profile](docs/http-profile.md) and the README
 for its exact syntax, defaults, and limitations.
 
+Starting with 0.1.0-alpha.3, dynamic captures and query pairs are decoded once
+as UTF-8 under fixed size/count limits. Ambiguous dynamic routes and duplicate
+decoded query keys are rejected. Internal links require a validated
+`InternalUrl`, URL component encoding, and quoted HTML attribute escaping.
+The raw path remains distinct from decoded parameter data: neither literal
+route precedence nor URL decoding is an authorization boundary. Applications
+must validate domain values and access to the resources they identify. See
+[routing and URLs](docs/routing-and-urls.md) for the exact contract.
+
 The framework rejects ambiguous request framing before dispatch and uses
 fixed response headers. HTML strings are escaped by the renderer. Handler
 code remains trusted: response limits apply after construction, socket

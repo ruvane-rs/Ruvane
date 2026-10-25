@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0-alpha.3 — Unreleased
+
+- Add named single-segment GET/HEAD routes, exact-path precedence, and
+  registration-time rejection of overlapping dynamic patterns.
+- Add bounded, single-pass UTF-8 decoding for dynamic path captures and query
+  pairs, with duplicate decoded query keys rejected before dispatch.
+- Add typed parameter conversion through FromStr with distinct missing and
+  invalid errors, plus validated internal URL and HTML link builders.
+- Add a paginated, searchable mini-blog with UTF-8 article slugs and shared
+  layouts, exercised by integration tests.
+- Extend security tests for ambiguous routes, encoding, Unicode, separators,
+  query pollution, byte/count boundaries, and HTML link injection.
+- Preserve raw fixed-path matching and raw request accessors. Query validation
+  is stricter: malformed UTF-8, controls, empty keys/fields, and duplicate keys
+  now return 400 even on fixed routes. A plus remains literal, not a form space.
+- Continue to use no third-party dependencies and forbid unsafe code.
+
 ## 0.1.0-alpha.2
 
 - Add a loopback-only HTTP development server using a bounded thread pool

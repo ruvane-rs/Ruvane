@@ -1,5 +1,6 @@
-use crate::Html;
+use crate::{Html, ParamError, Query};
 use std::fmt;
+use std::str::FromStr;
 
 /// A read-only request method supported by the local server.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -13,12 +14,15 @@ pub enum Method {
 /// A validated, bodyless request in Ruvane's local HTTP profile.
 ///
 /// Paths and queries retain their original ASCII percent encoding. Routing
-/// never decodes escapes, collapses slashes, or interprets a path as a filename.
+/// matches raw segments without normalizing the path. Query values and matched
+/// dynamic captures have separate, strictly decoded accessors.
 #[derive(Clone, Debug)]
 pub struct Request {
     method: Method,
     target: String,
     headers: Vec<(String, String)>,
+    pub(crate) params: Vec<(String, String)>,
+    query_params: Query,
 }
 
 impl Request {
@@ -35,6 +39,26 @@ impl Request {
     /// Returns the raw query string, excluding `?`, if present.
     pub fn query(&self) -> Option<&str> {
         self.target.split_once('?').map(|(_, query)| query)
+    }
+
+    /// Returns the validated query, decoded once with unique keys.
+    pub fn query_params(&self) -> &Query {
+        &self.query_params
+    }
+
+    /// Returns a decoded dynamic path capture by name, if present.
+    pub fn param(&self, name: &str) -> Option<&str> {
+        self.params
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// Converts a path capture using the selected type's `FromStr` implementation.
+    ///
+    /// The handler decides how to map missing or invalid data to a response.
+    pub fn param_as<T: FromStr>(&self, name: &str) -> Result<T, ParamError> {
+        crate::url::parse_value(self.param(name))
     }
 
     /// Returns a header value using an ASCII case-insensitive name lookup.
@@ -199,7 +223,7 @@ pub(crate) fn token(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
 }
 
-fn uri_component(value: &[u8], query: bool) -> bool {
+pub(crate) fn uri_component(value: &[u8], query: bool) -> bool {
     let mut index = 0;
     while index < value.len() {
         let byte = value[index];
@@ -281,6 +305,7 @@ pub(crate) fn parse(
     if !valid_path(path) || !uri_component(query.as_bytes(), true) {
         return Err(BadRequest);
     }
+    let query_params = Query::parse(query).map_err(|_| BadRequest)?;
     let mut headers: Vec<(String, String)> = Vec::new();
     for line in lines {
         if headers.len() == max_headers {
@@ -346,6 +371,8 @@ pub(crate) fn parse(
         method,
         target: target.to_owned(),
         headers,
+        params: Vec::new(),
+        query_params,
     })
 }
 

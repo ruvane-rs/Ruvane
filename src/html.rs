@@ -1,3 +1,4 @@
+use crate::InternalUrl;
 use std::fmt;
 
 /// An already rendered HTML fragment produced by Ruvane.
@@ -69,6 +70,26 @@ pub fn fragment(children: impl IntoIterator<Item = Html>) -> Html {
     for child in children {
         markup.push_str(child.as_str());
     }
+    Html { markup }
+}
+
+/// Renders a link to a validated internal URL with escaped text or HTML children.
+///
+/// URL component encoding is performed by [`InternalUrl`]; this function adds
+/// quoted HTML attribute escaping. There is no arbitrary `href` constructor.
+///
+/// ```
+/// let url = ruvane::InternalUrl::new("/articles").unwrap()
+///     .query("page", "2").unwrap().query("search", "Rust & HTML").unwrap();
+/// let html = ruvane::link(&url, "Next <page>");
+/// assert_eq!(html.as_str(), "<a href=\"/articles?page=2&amp;search=Rust%20%26%20HTML\">Next &lt;page&gt;</a>");
+/// ```
+pub fn link(destination: &InternalUrl, label: impl Into<Html>) -> Html {
+    let mut markup = String::from("<a href=\"");
+    escape_into(&mut markup, destination.as_str());
+    markup.push_str("\">");
+    markup.push_str(label.into().as_str());
+    markup.push_str("</a>");
     Html { markup }
 }
 

@@ -2,6 +2,8 @@ use ruvane::{
     Document, Method, Response, RouteError, Router, Server, ServerConfig, ShutdownHandle,
     StatusCode, Tag, element,
 };
+#[path = "../examples/support/blog.rs"]
+mod blog;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -117,6 +119,15 @@ fn counted_router() -> (Router, Arc<AtomicUsize>) {
         })
         .unwrap();
     (router, calls)
+}
+
+fn capture_pattern(count: usize) -> String {
+    use std::fmt::Write as _;
+    let mut pattern = String::new();
+    for index in 0..count {
+        write!(&mut pattern, "/{{p{index}}}").unwrap();
+    }
+    pattern
 }
 
 #[test]
@@ -670,4 +681,333 @@ fn connections_waiting_in_the_queue_do_not_receive_a_fresh_read_budget() {
     assert_eq!(status(&read_closed(&mut active)), 200);
     assert_eq!(status(&read_closed(&mut queued)), 408);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn fixed_routes_win_in_both_registration_orders_and_keep_raw_matching() {
+    for fixed_first in [true, false] {
+        let mut router = Router::new();
+        if fixed_first {
+            router
+                .get("/articles/new", |_| Response::text("fixed"))
+                .unwrap();
+        }
+        router
+            .get("/articles/{slug}", |request| {
+                Response::text(request.param("slug").unwrap())
+            })
+            .unwrap();
+        if !fixed_first {
+            router
+                .get("/articles/new", |_| Response::text("fixed"))
+                .unwrap();
+        }
+        router
+            .get("/articles/%FF", |_| Response::text("raw fixed"))
+            .unwrap();
+        let server = Running::start(router, ServerConfig::default());
+        assert_eq!(parts(&server.request("GET", "/articles/new")).1, b"fixed");
+        assert_eq!(parts(&server.request("GET", "/articles/%6Eew")).1, b"new");
+        assert_eq!(
+            parts(&server.request("GET", "/articles/%FF")).1,
+            b"raw fixed"
+        );
+        assert_eq!(
+            parts(&server.request("GET", "/articles/hello?x=1")).1,
+            b"hello"
+        );
+        assert_eq!(status(&server.request("GET", "/articles/")), 404);
+        assert_eq!(status(&server.request("GET", "/articles/a/b")), 404);
+    }
+}
+
+#[test]
+fn rejects_dynamic_ambiguity_and_invalid_parameter_patterns() {
+    for (a, b) in [
+        ("/a/{x}", "/a/{y}"),
+        ("/{x}/new", "/a/{y}"),
+        ("/a/{x}/{y}", "/a/b/{z}"),
+    ] {
+        for (first, second) in [(a, b), (b, a)] {
+            let mut router = Router::new();
+            router.get(first, |_| Response::text("first")).unwrap();
+            assert_eq!(
+                router.get(second, |_| Response::text("second")),
+                Err(RouteError::AmbiguousRoute)
+            );
+        }
+    }
+    let mut router = Router::new();
+    for pattern in [
+        "/{id}/{id}",
+        "/{}",
+        "/{1id}",
+        "/{a-b}",
+        "/{id",
+        "/id}",
+        "/a{id}",
+        "/{id?}",
+        "/{id*}",
+        "/{id}//x",
+    ] {
+        assert_eq!(
+            router.get(pattern, |_| Response::text("bad")),
+            Err(RouteError::InvalidPath),
+            "{pattern}"
+        );
+    }
+    let excessive = capture_pattern(ruvane::MAX_PATH_PARAMS + 1);
+    assert_eq!(
+        router.get(excessive, |_| Response::text("bad")),
+        Err(RouteError::InvalidPath)
+    );
+    router.get("/a/{id}", |_| Response::text("a")).unwrap();
+    router.get("/b/{id}", |_| Response::text("b")).unwrap();
+    assert_eq!(
+        router.get("/a/{id}", |_| Response::text("again")),
+        Err(RouteError::DuplicatePath)
+    );
+}
+
+#[test]
+fn captures_multiple_segments_and_distinguishes_typed_parameter_errors() {
+    let mut router = Router::new();
+    router
+        .get("/users/{user}/posts/{post}", |request| {
+            assert_eq!(
+                request.param_as::<u32>("absent"),
+                Err(ruvane::ParamError::Missing)
+            );
+            match request.param_as::<u32>("post") {
+                Ok(id) => Response::text(format!("{}:{id}", request.param("user").unwrap())),
+                Err(_) => Response::text("invalid id").with_status(StatusCode::BadRequest),
+            }
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    assert_eq!(
+        parts(&server.request("GET", "/users/%C3%A9t%C3%A9/posts/42")).1,
+        "été:42".as_bytes()
+    );
+    for path in ["/users/a/posts/no", "/users/a/posts/4294967296"] {
+        assert_eq!(status(&server.request("GET", path)), 400);
+    }
+    let head = server.request("HEAD", "/users/a/posts/42");
+    assert_eq!(status(&head), 200);
+    assert_eq!(content_length(parts(&head).0), 4);
+    assert!(parts(&head).1.is_empty());
+}
+
+#[test]
+fn invalid_dynamic_values_are_rejected_before_the_handler() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let mut router = Router::new();
+    router
+        .get("/value/{value}", move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Response::text("should not run")
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    for value in [
+        "a%2fb",
+        "%5Cevil",
+        "%2e",
+        ".%2E",
+        "%FF",
+        "%C0%AF",
+        "%ED%A0%80",
+        "%00",
+        "%0d%0a",
+        "%7F",
+        "%C2%85",
+    ] {
+        let output = server.request("GET", &format!("/value/{value}"));
+        assert_eq!(status(&output), 400, "{value}");
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn decoded_path_values_are_bounded_by_utf8_bytes_and_never_decoded_twice() {
+    let mut router = Router::new();
+    router
+        .get("/value/{value}", |request| {
+            Response::text(request.param("value").unwrap())
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    assert_eq!(parts(&server.request("GET", "/value/%252F")).1, b"%2F");
+    let maximum = "%C3%A9".repeat(ruvane::MAX_COMPONENT_BYTES / 2);
+    let output = server.request("GET", &format!("/value/{maximum}"));
+    assert_eq!(status(&output), 200);
+    assert_eq!(parts(&output).1.len(), ruvane::MAX_COMPONENT_BYTES);
+    assert_eq!(
+        status(&server.request("GET", &format!("/value/{maximum}%C3%A9"))),
+        400
+    );
+}
+
+#[test]
+fn queries_are_validated_before_dispatch_and_preserve_the_raw_accessor() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let mut router = Router::new();
+    router
+        .get("/", move |request| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Response::text(format!(
+                "{}|{}",
+                request.query().unwrap_or(""),
+                request.query_params().get("q").unwrap_or("")
+            ))
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    for query in [
+        "a=1&%61=2",
+        "a=1&a=2",
+        "=empty",
+        "a=1&",
+        "a=1&&b=2",
+        "q=%FF",
+        "q=%00",
+        "q=%0a",
+    ] {
+        assert_eq!(
+            status(&server.request("GET", &format!("/?{query}"))),
+            400,
+            "{query}"
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        parts(&server.request("GET", "/?q=a%26b%3Dc+%2526")).1,
+        b"q=a%26b%3Dc+%2526|a&b=c+%26"
+    );
+}
+
+#[test]
+fn query_resource_limits_reject_without_dispatch() {
+    let (router, calls) = counted_router();
+    let server = Running::start(
+        router,
+        ServerConfig {
+            max_request_line_bytes: 8192,
+            ..ServerConfig::default()
+        },
+    );
+    let fields = (0..=ruvane::MAX_QUERY_PAIRS)
+        .map(|i| format!("k{i}=v"))
+        .collect::<Vec<_>>()
+        .join("&");
+    for query in [
+        fields,
+        format!("q={}", "a".repeat(ruvane::MAX_COMPONENT_BYTES + 1)),
+        "a".repeat(ruvane::MAX_INTERNAL_URL_BYTES + 1),
+    ] {
+        assert_eq!(status(&server.request("GET", &format!("/?{query}"))), 400);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn blog_has_pagination_unicode_articles_static_precedence_and_escaped_text() {
+    let server = Running::start(blog::router().unwrap(), ServerConfig::default());
+    for path in [
+        "/",
+        "/articles",
+        "/articles?page=2",
+        "/articles?search=Rust&page=2",
+        "/articles/about",
+        "/articles/%C3%A9t%C3%A9-rust",
+    ] {
+        assert_eq!(status(&server.request("GET", path)), 200, "{path}");
+    }
+    let second = server.request("GET", "/articles?page=2");
+    let second_html = std::str::from_utf8(parts(&second).1).unwrap();
+    assert!(second_html.contains("href=\"/articles/%C3%A9t%C3%A9-rust\""));
+    assert!(second_html.contains("Rendering &lt;text&gt; safely"));
+    assert!(second_html.contains("Previous page"));
+    let article = server.request("GET", "/articles/escaping");
+    let html = std::str::from_utf8(parts(&article).1).unwrap();
+    assert!(html.contains("&lt;script&gt;alert(&#39;hello&#39;)&lt;/script&gt;"));
+    assert!(!html.contains("<script>"));
+    let reflected = server.request("GET", "/articles?search=%3Cscript%3E");
+    assert!(
+        std::str::from_utf8(parts(&reflected).1)
+            .unwrap()
+            .contains("Search: &lt;script&gt;")
+    );
+    for path in [
+        "/articles?page=0",
+        "/articles?page=oops",
+        "/articles?page=99999999999999999999999999999",
+    ] {
+        assert_eq!(status(&server.request("GET", path)), 400, "{path}");
+    }
+    for path in ["/articles?page=99", "/articles/not-found"] {
+        assert_eq!(status(&server.request("GET", path)), 404);
+    }
+}
+
+#[test]
+fn generated_blog_links_can_be_followed_as_internal_routes() {
+    let server = Running::start(blog::router().unwrap(), ServerConfig::default());
+    for path in [
+        "/",
+        "/articles",
+        "/articles?page=2",
+        "/articles?page=2&search=Rust",
+    ] {
+        let output = server.request("GET", path);
+        let html = std::str::from_utf8(parts(&output).1).unwrap();
+        let mut found = 0;
+        for following in html.split("href=\"").skip(1) {
+            let target = following.split('"').next().unwrap().replace("&amp;", "&");
+            assert!(target.starts_with('/') && !target.starts_with("//"));
+            assert_eq!(status(&server.request("GET", &target)), 200, "{target}");
+            found += 1;
+        }
+        assert!(found >= 3);
+    }
+}
+
+#[test]
+fn dynamic_capture_name_and_count_boundaries_are_exact() {
+    let mut router = Router::new();
+    let long_name = "x".repeat(64);
+    router
+        .get(format!("/long/{{{long_name}}}"), move |request| {
+            Response::text(request.param(&long_name).unwrap())
+        })
+        .unwrap();
+    let too_long = format!("/bad/{{{}}}", "x".repeat(65));
+    assert_eq!(
+        router.get(too_long, |_| Response::text("bad")),
+        Err(RouteError::InvalidPath)
+    );
+    let pattern = capture_pattern(ruvane::MAX_PATH_PARAMS);
+    router
+        .get(pattern, |request| {
+            assert_eq!(request.param("p0"), Some("x"));
+            assert_eq!(request.param("p15"), Some("x"));
+            Response::text("all captures")
+        })
+        .unwrap();
+    router
+        .get("/tail/{value}/", |request| {
+            Response::text(request.param("value").unwrap())
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    assert_eq!(parts(&server.request("GET", "/long/value")).1, b"value");
+    let target = "/x".repeat(ruvane::MAX_PATH_PARAMS);
+    assert_eq!(status(&server.request("GET", &target)), 200);
+    assert_eq!(parts(&server.request("GET", "/tail/one/")).1, b"one");
+    assert_eq!(status(&server.request("GET", "/tail/one")), 404);
+    let invalid_head = server.request("HEAD", "/tail/%FF/");
+    assert_eq!(status(&invalid_head), 400);
+    assert!(parts(&invalid_head).1.is_empty());
 }

@@ -275,7 +275,7 @@ fn serve(
     }) {
         Ok(request) if valid_host(request.header("host").unwrap_or(""), address) => {
             head = request.method() == Method::Head;
-            match catch_unwind(AssertUnwindSafe(|| router.dispatch(&request))) {
+            match catch_unwind(AssertUnwindSafe(|| router.dispatch(request))) {
                 Ok(response) if response.body().len() <= config.max_response_body_bytes => response,
                 _ => Response::error(StatusCode::InternalServerError),
             }
