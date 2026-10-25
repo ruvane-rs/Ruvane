@@ -3,6 +3,15 @@ use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
 
+/// The fixed browser policy sent on every local HTTP response, including errors.
+///
+/// Scripts and unspecified resource types are blocked. CSS and images may
+/// load from the same origin; forms may submit there. Base elements and frame
+/// embedding are blocked explicitly. The policy has no request-derived fields,
+/// unsafe-inline/eval allowances, or nonces. It supplements HTML escaping;
+/// it does not provide authorization, CSRF protection, or a handler sandbox.
+pub const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
 /// A read-only request method supported by the local server.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Method {
@@ -255,10 +264,11 @@ impl Response {
             ""
         };
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store\r\n{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store\r\nContent-Security-Policy: {}\r\n{}\r\n",
             self.status,
             self.content_type,
             self.body.len(),
+            CONTENT_SECURITY_POLICY,
             allow
         )
     }

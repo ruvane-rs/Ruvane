@@ -1,6 +1,6 @@
 use ruvane::{
-    Attribute, Document, GetForm, Html, InternalUrl, MediaType, ParamError, Request, Response,
-    Router, StatusCode, Tag, element, fragment, image, link,
+    Attribute, Document, GetForm, Html, InternalUrl, MediaType, Metadata, ParamError, Request,
+    Response, Robots, Router, SiteOrigin, StatusCode, Tag, element, fragment, image, link,
 };
 
 const PAGE_SIZE: usize = 2;
@@ -43,7 +43,28 @@ fn internal(path: &str) -> InternalUrl {
     InternalUrl::new(path).expect("valid fixed example path")
 }
 
-fn page(title: &str, body: impl Into<Html>) -> Response {
+fn metadata(description: &str) -> Metadata {
+    Metadata::new()
+        .description(description)
+        .expect("bounded source description")
+        .favicon_png(internal("/assets/mark.png"))
+}
+
+fn public_metadata(description: &str, origin: Option<&SiteOrigin>, path: &InternalUrl) -> Metadata {
+    let metadata = metadata(description);
+    match origin {
+        Some(origin) => metadata
+            .robots(Robots::IndexFollow)
+            .canonical(origin.canonical(path)),
+        None => metadata.robots(Robots::NoIndexFollow),
+    }
+}
+
+fn private_metadata(description: &str) -> Metadata {
+    metadata(description).robots(Robots::NoIndexFollow)
+}
+
+fn page(title: &str, body: impl Into<Html>, metadata: Metadata) -> Response {
     let navigation = element(Tag::Nav)
         .attr(Attribute::Class, "site-nav")
         .child(fragment([
@@ -81,6 +102,7 @@ fn page(title: &str, body: impl Into<Html>) -> Response {
             title,
             fragment([header.render(), layout.render(), footer.render()]),
         )
+        .metadata(metadata)
         .stylesheet(internal("/assets/site.css"))
         .render(),
     )
@@ -95,7 +117,12 @@ fn illustration(article: &Article) -> InternalUrl {
 }
 
 fn error(status: StatusCode) -> Response {
-    page(status.reason(), element(Tag::P).child(status.reason())).with_status(status)
+    page(
+        status.reason(),
+        element(Tag::P).child(status.reason()),
+        private_metadata(status.reason()),
+    )
+    .with_status(status)
 }
 
 fn article_url(article: &Article) -> InternalUrl {
@@ -116,7 +143,7 @@ fn listing_url(page: usize, search: &str) -> InternalUrl {
     }
 }
 
-fn listing(request: &Request) -> Response {
+fn listing(request: &Request, origin: Option<&SiteOrigin>) -> Response {
     let search = request.query_params().get("search").unwrap_or("");
     let page_number = match request.query_params().get_as::<usize>("page") {
         Ok(value) if value > 0 => value,
@@ -181,7 +208,21 @@ fn listing(request: &Request) -> Response {
         pagination = pagination.child(link(&listing_url(page_number + 1, search), "Next page"));
     }
     body = body.child(pagination);
-    page("Articles", body)
+    let metadata = if search.is_empty() {
+        let canonical_path = if page_number == 1 {
+            internal("/articles")
+        } else {
+            listing_url(page_number, "")
+        };
+        public_metadata(
+            "Notes on Rust, typed interfaces, and building for the web.",
+            origin,
+            &canonical_path,
+        )
+    } else {
+        private_metadata("Search the Ruvane journal's articles.")
+    };
+    page("Articles", body, metadata)
 }
 
 fn search_panel(value: &str) -> Html {
@@ -212,12 +253,22 @@ fn invalid_page(search: &str) -> Response {
                 .attr(Attribute::Class, "form-error")
                 .child("That page number is not valid. Try a new search."),
         ),
+        private_metadata("The article page number is invalid."),
     )
     .with_status(StatusCode::BadRequest)
 }
 
 /// Builds the read-only example blog, shared with the integration tests.
 pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
+    build_router(None)
+}
+
+/// Builds the blog with a trusted public origin for canonical metadata.
+pub fn router_with_origin(origin: SiteOrigin) -> Result<Router, Box<dyn std::error::Error>> {
+    build_router(Some(origin))
+}
+
+fn build_router(origin: Option<SiteOrigin>) -> Result<Router, Box<dyn std::error::Error>> {
     let mut router = Router::new();
     router.asset(
         "/assets/site.css",
@@ -240,7 +291,8 @@ pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
         MediaType::Png,
     )?;
     // Register the dynamic route first to exercise exact-path precedence.
-    router.get("/articles/{slug}", |request| {
+    let article_origin = origin.clone();
+    router.get("/articles/{slug}", move |request| {
         match ARTICLES
             .iter()
             .find(|article| Some(article.slug) == request.param("slug"))
@@ -263,11 +315,13 @@ pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
                             .attr(Attribute::Class, "pagination")
                             .child(link(&internal("/articles"), "All articles")),
                     ),
+                public_metadata(article.body, article_origin.as_ref(), &article_url(article)),
             ),
             None => error(StatusCode::NotFound),
         }
     })?;
-    router.get("/", |_| {
+    let home_origin = origin.clone();
+    router.get("/", move |_| {
         page(
             "A small journal. A simpler web.",
             element(Tag::Section)
@@ -276,11 +330,16 @@ pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
                 .child(element(Tag::Div).attr(Attribute::Class, "hero-visual").child(image(&internal("/assets/landscape.png"), "An abstract green landscape under a terracotta sun", 960, 480).expect("fixed dimensions")))
                 .child(element(Tag::H2).attr(Attribute::Class, "section-heading").child("Built with care, one page at a time."))
                 .child(element(Tag::P).attr(Attribute::Class, "lead").child("Small ideas, shared openly. Follow the links, take your time, and find something worth making.")),
+            public_metadata("Notes on Rust, thoughtful interfaces, and the craft of building for the web.", home_origin.as_ref(), &internal("/")),
         )
     })?;
-    router.get_form("/articles", listing)?;
-    router.get("/articles/about", |_| page("About this blog", element(Tag::P)
-        .attr(Attribute::Class, "lead").child("A small publication about clear ideas and readable software. Every article is an invitation to explore how the web works.")))?;
+    let listing_origin = origin.clone();
+    router.get_form("/articles", move |request| {
+        listing(request, listing_origin.as_ref())
+    })?;
+    router.get("/articles/about", move |_| page("About this blog", element(Tag::P)
+        .attr(Attribute::Class, "lead").child("A small publication about clear ideas and readable software. Every article is an invitation to explore how the web works."),
+        public_metadata("A small publication about clear ideas and readable software.", origin.as_ref(), &internal("/articles/about"))))?;
     router.get("/health", |_| Response::text("ok\n"))?;
     Ok(router)
 }

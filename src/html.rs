@@ -1,4 +1,4 @@
-use crate::InternalUrl;
+use crate::{InternalUrl, Metadata};
 use std::fmt;
 
 /// An already rendered HTML fragment produced by Ruvane.
@@ -336,7 +336,7 @@ impl From<Element> for Html {
     }
 }
 
-/// A complete UTF-8 HTML document with a title, language, and body.
+/// A complete UTF-8 HTML document with a title, language, body, and typed metadata.
 ///
 /// The title and language are escaped in their respective quoted/text
 /// contexts. The language value is not validated as a BCP 47 language tag.
@@ -347,6 +347,7 @@ pub struct Document {
     language: String,
     body: Html,
     stylesheets: Vec<InternalUrl>,
+    metadata: Metadata,
 }
 
 impl Document {
@@ -357,12 +358,21 @@ impl Document {
             language: String::from("en"),
             body: body.into(),
             stylesheets: Vec::new(),
+            metadata: Metadata::new(),
         }
     }
 
     /// Sets the document language, for example `fr` or `en-GB`.
     pub fn language(mut self, language: impl Into<String>) -> Self {
         self.language = language.into();
+        self
+    }
+
+    /// Replaces the complete metadata set. Each supported field has one slot;
+    /// repeated calls do not append duplicate descriptions, icons, or canonical links.
+    /// A responsive, zoom-permitting viewport is always rendered exactly once.
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
+        self.metadata = metadata;
         self
     }
 
@@ -385,6 +395,7 @@ impl Document {
         markup.push_str("\"><head><meta charset=\"utf-8\"><title>");
         escape_into(&mut markup, &self.title);
         markup.push_str("</title>");
+        self.metadata.render_into(&mut markup);
         for source in self.stylesheets {
             markup.push_str("<link rel=\"stylesheet\" href=\"");
             escape_into(&mut markup, source.as_str());

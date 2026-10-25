@@ -37,6 +37,20 @@ they must not contain secrets or establish authorization. Forms add no mutation,
 authentication, session, or CSRF protection mechanism. All handlers remain
 read-only. See [GET forms](docs/get-forms.md).
 
+Starting with 0.1.0-alpha.6, page metadata uses unique typed fields and escaped
+attributes. Descriptions are bounded and control-free. Canonical URLs combine
+a restricted, explicitly configured SiteOrigin with an InternalUrl; no origin
+is inferred from Host or forwarding headers. The parser performs no network
+I/O, IDNA conversion, or TLS. Robots hints do not restrict access.
+
+Every server response includes a fixed Content-Security-Policy, including
+assets, HEAD, parse errors, and handler failures. Scripts are blocked; CSS,
+images, and form submissions are limited to the same origin. Base elements
+and frame embedding are explicitly blocked. Standalone HTML rendering does
+not emit an HTTP policy. CSP supplements escaping and does not sandbox server
+code or add authorization or CSRF protection. See
+[metadata and CSP](docs/metadata-and-csp.md).
+
 The framework rejects ambiguous request framing before dispatch and uses
 fixed response headers. HTML strings are escaped by the renderer. Handler
 code remains trusted: response limits apply after construction, socket

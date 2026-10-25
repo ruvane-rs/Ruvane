@@ -6,6 +6,7 @@ mod assets;
 mod forms;
 mod html;
 mod http;
+mod metadata;
 mod routing;
 mod server;
 mod url;
@@ -16,7 +17,11 @@ pub use html::{
     Attribute, Document, Element, Html, ImageError, MAX_IMAGE_DIMENSION, Tag, element, fragment,
     image, link, text,
 };
-pub use http::{Method, Request, Response, StatusCode};
+pub use http::{CONTENT_SECURITY_POLICY, Method, Request, Response, StatusCode};
+pub use metadata::{
+    CanonicalUrl, MAX_METADATA_TEXT_BYTES, MAX_SITE_ORIGIN_BYTES, Metadata, MetadataError,
+    OriginError, Robots, SiteOrigin,
+};
 pub use routing::{RouteError, Router};
 pub use server::{Server, ServerConfig, ShutdownHandle};
 pub use url::{

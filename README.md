@@ -6,9 +6,9 @@ without third-party dependencies.
 
 The current alpha provides HTML rendering, a bounded loopback HTTP server,
 fixed and dynamic GET/HEAD routes, typed parameter conversion, validated
-internal links, embedded CSS/image assets, and typed native GET forms with
-explicit query decoding. Server actions and browser-side reactivity are
-planned for future versions.
+internal links, embedded CSS/image assets, typed native GET forms, page
+metadata, canonical URLs, and a fixed browser Content Security Policy.
+Server actions and browser-side reactivity are planned for future versions.
 
 ## Principles
 
@@ -138,10 +138,52 @@ HTML attribute and its text label. Schemes, external authorities, fragments,
 and browser path aliases are outside this link API. URL validity does not
 guarantee that a matching route exists.
 
+## Page metadata and canonical URLs
+
+```rust
+use ruvane::{Document, InternalUrl, Metadata, Robots, SiteOrigin};
+
+let origin = SiteOrigin::parse("https://journal.example").unwrap();
+let path = InternalUrl::new("/articles").unwrap().query("page", "2").unwrap();
+let metadata = Metadata::new()
+    .description("Notes on Rust and the web.").unwrap()
+    .robots(Robots::IndexFollow)
+    .canonical(origin.canonical(&path))
+    .favicon_png(InternalUrl::new("/assets/mark.png").unwrap());
+let page = Document::new("Journal", "Read the latest articles.")
+    .metadata(metadata).render();
+assert!(page.as_str().contains("https://journal.example/articles?page=2"));
+```
+
+Every document includes one responsive viewport that permits zoom. Metadata
+uses unique slots: repeated setters replace the prior value, with fixed output
+order and HTML escaping. Descriptions have a 1024-byte UTF-8 budget and reject
+controls or empty text. A favicon declares an internal PNG URL; the helper
+does not decode its bytes. Robots settings are crawler hints, not access control.
+
+`SiteOrigin` parses a restricted HTTP(S) authority profile with ASCII DNS,
+IPv4, or bracketed IPv6 and an optional port. It performs no network access.
+Canonical URLs combine that configured origin with an `InternalUrl`, retaining
+its encoded path/query. Request headers never supply an origin automatically.
+See [metadata and CSP](docs/metadata-and-csp.md) for the exact accepted syntax.
+
+The HTTP server sends a fixed `Content-Security-Policy` on every response:
+scripts and unspecified resource types are blocked, CSS/images and form
+submissions are restricted to the same origin, and base elements and frame
+embedding are blocked. This policy supplements escaping and does not replace
+application authorization. Standalone rendered HTML does not carry an HTTP
+policy by itself.
+
 ## Mini-blog example
 
 Run `cargo run --example blog` and open `http://127.0.0.1:3000`.
 Use `cargo run --example blog -- 3001` to select another port.
+To demonstrate canonical metadata, supply an explicit origin:
+`cargo run --example blog -- 3000 https://journal.example`.
+This sets metadata only; the listener remains local HTTP. Without a configured
+origin, the example emits no canonical URL and requests no indexing. With an
+origin, each article and pagination page has its own canonical URL. Searches
+and application-rendered errors remain `noindex` without a canonical URL.
 
 The example contains article lists, `/articles/{slug}` pages, UTF-8 slugs,
 pagination with `?page=2`, a labeled GET search form, reusable Rust layouts,
@@ -226,6 +268,8 @@ when composed. Serialized output is available through `as_str()`,
 | `image` | Render an image with an internal URL, escaped alternative text, and typed dimensions. |
 | `GetForm` | Render a native GET form with an internal action, labeled search inputs, and hidden fields. |
 | `Document` | Render a complete document with a doctype, language, UTF-8 declaration, title, and body. |
+| `Metadata` | Add bounded descriptions, robots hints, a canonical URL, and a PNG favicon. |
+| `SiteOrigin` / `CanonicalUrl` | Combine a configured origin and validated internal URL for canonical metadata. |
 
 ## HTTP API
 
@@ -263,6 +307,12 @@ bodies. Queries and dynamic captures have fixed byte/count limits and are
 decoded exactly once. These controls are not application authorization or
 domain validation. No CORS access is granted. Loopback binding and Host validation do not
 authenticate a local user or application.
+
+Starting with alpha.6, all documents include a responsive viewport, and all
+server responses carry the fixed CSP exposed as `CONTENT_SECURITY_POLICY`.
+Metadata has no arbitrary tag names, `http-equiv`, or raw markup interface.
+Public origins come from explicit configuration. See
+[metadata and CSP](docs/metadata-and-csp.md) for compatibility and security limits.
 
 Form query decoding is selected by route registration, never inferred from
 request fields. Forms do not add POST, uploads, authentication, sessions,

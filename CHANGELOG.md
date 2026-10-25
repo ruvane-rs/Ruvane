@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0-alpha.6 — Unreleased
+
+- Add typed page metadata: bounded escaped descriptions, consistent robots
+  hints, an internal PNG favicon, and one responsive viewport permitting zoom.
+  Metadata setters replace singleton fields, with deterministic output order.
+- Add a restricted SiteOrigin parser and CanonicalUrl construction from an
+  explicit origin plus InternalUrl, without deriving origins from request headers.
+- Send a fixed Content-Security-Policy on every HTTP response, including assets,
+  HEAD, parser errors, timeouts, and handler failures. Allow same-origin CSS,
+  images, and form actions; block scripts, base elements, and frame embedding.
+- Add article/list metadata to the mini-blog, an optional configured public
+  origin, distinct pagination canonicals, and noindex hints for searches/errors.
+- Add security tests for origin aliases and injection, metadata escaping and
+  budgets, singleton replacement, request-header independence, and CSP headers
+  throughout the network regression suite.
+- Continue to use no third-party dependencies and forbid unsafe code.
+
 ## 0.1.0-alpha.5 — Unreleased
 
 - Add typed native GET forms with internal actions, labeled search controls,

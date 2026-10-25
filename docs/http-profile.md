@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.5 implements a small development profile based on the
+Ruvane 0.1.0-alpha.6 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -73,6 +73,11 @@ Handlers must be read-only and safe for concurrent calls and retries.
 
 Responses have fixed headers: explicitly selected Content-Type, Content-Length in bytes,
 Connection: close, X-Content-Type-Options: nosniff, and Cache-Control: no-store.
+Alpha.6 also sends a fixed Content-Security-Policy on every response, including
+HEAD, assets, framing/Host errors, timeouts, and handler failures. It blocks
+scripts, base elements, and frame embedding while allowing same-origin CSS,
+images, and form actions. No request field can override this policy. See
+[metadata and CSP](metadata-and-csp.md) for the full value and scope.
 405 also includes Allow. Application strings cannot become header names,
 header values, or reason phrases. No custom headers, response compression,
 trailers, or streaming are supported. No CORS permissions are emitted.
@@ -85,6 +90,9 @@ URL attributes to the element builder.
 slice, and `body_text()` validates UTF-8. Text types include a UTF-8 charset;
 binary MIME types do not. Stylesheets and images have dedicated typed helpers.
 See [assets and media](assets-and-media.md).
+`Document::metadata` adds typed description/robots/canonical/favicon fields.
+Canonical origins are configured explicitly, independently of request headers
+and of the loopback listener; they do not enable public serving or HTTPS.
 Error bodies are fixed, without reflected input or panic details. Handler
 panics are converted to 500 when Rust unwinds; the installed panic hook still
 runs. `panic = "abort"` terminates the process instead. A response exceeding

@@ -89,10 +89,20 @@ fn parts(output: &[u8]) -> (&str, &[u8]) {
         .windows(4)
         .position(|bytes| bytes == b"\r\n\r\n")
         .expect("complete headers");
-    (
-        std::str::from_utf8(&output[..end]).unwrap(),
-        &output[end + 4..],
-    )
+    let headers = std::str::from_utf8(&output[..end]).unwrap();
+    // Every network regression, including framing/timeout/panic failures,
+    // checks that the policy survives the shared response serializer.
+    let policies: Vec<_> = headers
+        .lines()
+        .filter_map(|line| line.strip_prefix("Content-Security-Policy: "))
+        .collect();
+    assert_eq!(
+        policies,
+        [
+            "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        ]
+    );
+    (headers, &output[end + 4..])
 }
 
 fn status(output: &[u8]) -> u16 {
@@ -1485,4 +1495,159 @@ fn blog_validation_preserves_escaped_search_without_reflecting_invalid_page() {
         assert!(!html.contains("<script>"));
         assert!(!html.contains(&format!("value=\"{page}\"")));
     }
+}
+
+#[test]
+fn csp_is_fixed_for_html_assets_errors_and_head_despite_request_fields() {
+    assert_eq!(
+        ruvane::CONTENT_SECURITY_POLICY,
+        "default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+    );
+    let server = Running::start(blog::router().unwrap(), ServerConfig::default());
+    for (path, expected) in [
+        ("/", 200),
+        ("/assets/site.css", 200),
+        ("/assets/mark.png", 200),
+        ("/missing", 404),
+        ("/articles?search=a&%73earch=b", 400),
+    ] {
+        for method in ["GET", "HEAD"] {
+            let output = server.request(method, path);
+            assert_eq!(status(&output), expected);
+            if method == "HEAD" {
+                assert!(parts(&output).1.is_empty());
+            }
+        }
+    }
+    let input = format!(
+        "GET /?csp=unsafe-inline HTTP/1.1\r\nHost: {}\r\nContent-Security-Policy: default-src *\r\n\r\n",
+        server.address
+    );
+    assert_eq!(status(&server.raw(input.as_bytes())), 200);
+}
+
+#[test]
+fn configured_blog_metadata_is_specific_and_pagination_does_not_collapse() {
+    let origin = ruvane::SiteOrigin::parse("https://JOURNAL.EXAMPLE:443/").unwrap();
+    let server = Running::start(
+        blog::router_with_origin(origin).unwrap(),
+        ServerConfig::default(),
+    );
+    for (path, canonical, description) in [
+        ("/", "/", "Notes on Rust, thoughtful interfaces"),
+        ("/articles", "/articles", "Notes on Rust, typed interfaces"),
+        (
+            "/articles?page=1",
+            "/articles",
+            "Notes on Rust, typed interfaces",
+        ),
+        (
+            "/articles?page=2",
+            "/articles?page=2",
+            "Notes on Rust, typed interfaces",
+        ),
+        (
+            "/articles?page=3",
+            "/articles?page=3",
+            "Notes on Rust, typed interfaces",
+        ),
+        ("/articles/about", "/articles/about", "A small publication"),
+        (
+            "/articles/%C3%A9t%C3%A9-rust",
+            "/articles/%C3%A9t%C3%A9-rust",
+            "UTF-8 slugs travel",
+        ),
+        (
+            "/articles/%74yped-urls?tracking=ignored",
+            "/articles/typed-urls",
+            "Path segments and query values",
+        ),
+    ] {
+        let output = server.request("GET", path);
+        assert_eq!(status(&output), 200);
+        let html = std::str::from_utf8(parts(&output).1).unwrap();
+        assert!(
+            html.contains(&format!(
+                "<link rel=\"canonical\" href=\"https://journal.example{canonical}\">"
+            )),
+            "{path}"
+        );
+        assert!(
+            html.contains(&format!(
+                "<meta name=\"description\" content=\"{description}"
+            )),
+            "{path}"
+        );
+        assert!(html.contains("<meta name=\"robots\" content=\"index, follow\">"));
+        assert!(html.contains("<link rel=\"icon\" type=\"image/png\" href=\"/assets/mark.png\">"));
+        assert_eq!(html.matches("name=\"viewport\"").count(), 1);
+        assert_eq!(html.matches("rel=\"canonical\"").count(), 1);
+    }
+}
+
+#[test]
+fn blog_search_and_errors_have_no_canonical_or_reflected_metadata() {
+    let origin = ruvane::SiteOrigin::parse("https://journal.example").unwrap();
+    let server = Running::start(
+        blog::router_with_origin(origin).unwrap(),
+        ServerConfig::default(),
+    );
+    for (target, expected) in [
+        ("/articles?search=%22%3E%3Cscript%3E&page=1", 200),
+        ("/articles?page=0&search=private-search", 400),
+        ("/articles/not-found", 404),
+        ("/articles?page=99", 404),
+    ] {
+        let output = server.request("GET", target);
+        assert_eq!(status(&output), expected);
+        let html = std::str::from_utf8(parts(&output).1).unwrap();
+        let head = html.split_once("</head>").unwrap().0;
+        assert!(head.contains("name=\"robots\" content=\"noindex, follow\""));
+        assert!(!head.contains("rel=\"canonical\""));
+        assert!(!head.contains("private-search"));
+        assert!(!head.contains("<script>"));
+        assert!(!head.contains("&lt;script&gt;"));
+    }
+}
+
+#[test]
+fn unconfigured_local_blog_does_not_invent_a_public_origin() {
+    let server = Running::start(blog::router().unwrap(), ServerConfig::default());
+    for target in ["/", "/articles?page=2", "/articles/typed-urls"] {
+        let output = server.request("GET", target);
+        let html = std::str::from_utf8(parts(&output).1).unwrap();
+        assert!(html.contains("name=\"robots\" content=\"noindex, follow\""));
+        assert!(!html.contains("rel=\"canonical\""));
+    }
+}
+
+#[test]
+fn configured_canonicals_ignore_forwarding_and_host_aliases() {
+    let origin = ruvane::SiteOrigin::parse("https://journal.example").unwrap();
+    let server = Running::start(
+        blog::router_with_origin(origin).unwrap(),
+        ServerConfig::default(),
+    );
+    for authority in [
+        server.address.to_string(),
+        format!("localhost:{}", server.address.port()),
+    ] {
+        let input = format!(
+            "GET /articles/typed-urls HTTP/1.1\r\nHost: {authority}\r\nForwarded: host=evil.test;proto=http\r\nX-Forwarded-Host: evil.test\r\nX-Forwarded-Proto: javascript\r\n\r\n"
+        );
+        let output = server.raw(input.as_bytes());
+        assert_eq!(status(&output), 200);
+        let html = std::str::from_utf8(parts(&output).1).unwrap();
+        assert!(html.contains("href=\"https://journal.example/articles/typed-urls\""));
+        assert!(!html.contains("evil.test"));
+        assert!(!html.contains("javascript"));
+    }
+    let invalid = server.raw(b"GET / HTTP/1.1\r\nHost: evil.test\r\n\r\n");
+    assert_eq!(status(&invalid), 400);
+    assert!(
+        !parts(&invalid)
+            .1
+            .windows(b"evil.test".len())
+            .any(|part| part == b"evil.test")
+    );
 }

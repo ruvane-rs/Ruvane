@@ -99,7 +99,7 @@ fn document_contains_a_doctype_and_utf8_declaration() {
         .render();
     assert_eq!(
         page.as_str(),
-        "<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\"><title>Ruvane</title></head><body><h1>Bonjour</h1></body></html>"
+        "<!doctype html><html lang=\"fr\"><head><meta charset=\"utf-8\"><title>Ruvane</title><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body><h1>Bonjour</h1></body></html>"
     );
 }
 

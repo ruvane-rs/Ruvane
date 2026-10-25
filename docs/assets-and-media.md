@@ -20,6 +20,9 @@ Content-Length is calculated from body bytes. HEAD produces the same status,
 type, and length as GET without sending the body. The serializer retains
 Connection: close, Cache-Control: no-store, and X-Content-Type-Options: nosniff.
 No filename or application string becomes an HTTP header value.
+Starting with alpha.6, the fixed CSP also accompanies assets and errors.
+Stylesheets and images from the same origin remain allowed; external resource
+loads are restricted by that policy. See [metadata and CSP](metadata-and-csp.md).
 
 The same server output budget applies to text, owned bytes, and embedded
 assets. A body over that limit becomes a generic 500 before any response
