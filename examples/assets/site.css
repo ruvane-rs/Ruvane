@@ -71,3 +71,7 @@ p { margin: 0 0 20px; }
   .search-panel form { grid-template-columns: 1fr; }
   .search-panel button { justify-self: start; }
 }
+.article-body pre { overflow-x: auto; padding: 22px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 14px; line-height: 1.6; }
+.article-body code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.article-body pre code { overflow-wrap: normal; }
+.article-body h2, .article-body h3 { margin-top: 34px; }

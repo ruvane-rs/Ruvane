@@ -7,6 +7,16 @@ use ruvane::{
 const CSS: &[u8] = include_bytes!("../assets/site.css");
 
 pub fn application() -> Result<App, AppError> {
+    let articles = crate::content::collection().map_err(|_| AppError::InvalidPage)?;
+    let home_articles: Vec<_> = articles
+        .iter()
+        .map(|article| {
+            (
+                article.slug().as_str().to_owned(),
+                article.title().to_owned(),
+            )
+        })
+        .collect();
     let mut app = App::new();
     app.layout("site", None, components::site_layout)?;
     app.layout("greeting", Some("site"), components::greeting_layout)?;
@@ -14,11 +24,26 @@ pub fn application() -> Result<App, AppError> {
         PageRoute::new("home", "/")?,
         Some("site"),
         PageMode::fixed(),
-        |context| {
+        move |context| {
             Ok(components::page(
                 context,
                 "A small site. Your next idea.",
-                element(Tag::P).child("Welcome. Make something worth sharing."),
+                element(Tag::Section)
+                    .child(element(Tag::P).child("Welcome. Make something worth sharing."))
+                    .child(
+                        element(Tag::Ul).child(ruvane::fragment(home_articles.iter().map(
+                            |(slug, title)| {
+                                element(Tag::Li)
+                                    .child(ruvane::link(
+                                        &context
+                                            .url("article", &[("slug", slug.as_str())])
+                                            .expect("registered article"),
+                                        title.as_str(),
+                                    ))
+                                    .render()
+                            },
+                        ))),
+                    ),
             ))
         },
     )?;
@@ -48,6 +73,20 @@ pub fn application() -> Result<App, AppError> {
                 "Hello",
                 element(Tag::P).child(format!("Hello, {name}!")),
             ))
+        },
+    )?;
+    app.content_pages(
+        PageRoute::new("article", "/articles/{slug}/")?,
+        Some("site"),
+        articles,
+        |context, article| {
+            Ok(Page::new(article.title(), article.body().clone())
+                .metadata(
+                    context
+                        .metadata(article.description())
+                        .map_err(|_| ruvane::PageError::InternalServerError)?,
+                )
+                .stylesheet(components::stylesheet()))
         },
     )?;
     app.asset("/assets/site.css", CSS, MediaType::Css)?;

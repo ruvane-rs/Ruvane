@@ -7,3 +7,6 @@ h1 { font: 500 clamp(2.5rem, 7vw, 4.5rem)/1.1 Georgia, serif; letter-spacing: -.
 p { max-width: 60ch; font-size: 1.15rem; line-height: 1.7; }
 :focus-visible { outline: 3px solid #b75b36; outline-offset: 5px; }
 @media (max-width: 500px) { nav { flex-wrap: wrap; gap: 18px; } main { padding-top: 28px; } }
+pre { overflow-x: auto; padding: 20px; border: 1px solid #d5ddce; border-radius: 8px; background: #f0f0e5; font-size: 14px; line-height: 1.6; }
+code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+pre code { overflow-wrap: normal; }

@@ -64,6 +64,10 @@ pub(super) fn compile(
     offline: bool,
     quit: &AtomicBool,
 ) -> Result<Binary> {
+    let content = project.root.join("content");
+    if fs::symlink_metadata(&content).is_ok() {
+        let _ = ruvane::ContentBundle::read_dir(&content)?;
+    }
     let target = project.work.join("target");
     match fs::create_dir(&target) {
         Ok(()) => {}
@@ -84,6 +88,19 @@ pub(super) fn compile(
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    // A revision forces the generated build script to rerun for equal-mtime
+    // edits detected by content polling. It is not an integrity token.
+    command.env(
+        "RUVANE_CONTENT_REVISION",
+        format!(
+            "{}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ),
+    );
     if offline {
         command.arg("--offline");
     }

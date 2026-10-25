@@ -385,6 +385,28 @@ impl App {
         Ok(())
     }
 
+    /// Registers a content collection on a page pattern with exactly one
+    /// `{slug}` capture. Its portable slugs enumerate the static pages; the
+    /// same immutable entries render on the server. Unknown slugs return 404.
+    pub fn content_pages(
+        &mut self,
+        route: PageRoute,
+        layout: Option<&str>,
+        collection: crate::ContentCollection,
+        render: impl Fn(&PageContext<'_>, &crate::ContentEntry) -> Result<Page, PageError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Result<(), AppError> {
+        let mode = collection.page_mode();
+        self.page(route, layout, mode, move |context| {
+            let entry = collection
+                .get(context.param("slug").ok_or(PageError::NotFound)?)
+                .ok_or(PageError::NotFound)?;
+            render(context, entry)
+        })
+    }
+
     /// Registers one trusted embedded asset in the common route namespace.
     /// The portable static path, MIME suffix and existing asset byte/count
     /// budgets are enforced for both server and export usage.

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.0-alpha.10 — Unreleased
+
+- Add immutable typed content collections with strict Ruvane headers,
+  portable source names/slugs, deterministic order and bounded diagnostics.
+- Add a limited Markdown renderer using typed HTML: headings, paragraphs,
+  flat lists, emphasis, code and internal links. Escape raw HTML and bound
+  input, output, lines, nesting, tokens and delimiter-search work.
+- Add bounded flat-directory snapshots and escaped Rust string embedding for
+  trusted build scripts, refusing observed symlinks and special/extra files.
+- Add App::content_pages to share collection entries and static slug enumeration
+  across the server and export, with normal layouts, metadata and CSP.
+- Generate content/, a sample article, a content module and a first-party
+  Ruvane build dependency. Watch content/build.rs, validate before compilation
+  and force Cargo content invalidation for timestamp-preserving edits.
+- Migrate mini-blog articles to embedded Markdown while preserving original
+  search, Unicode compatibility URLs, common routes and export behavior.
+- Test parser injection/complexity, paths, filesystem limits, generated literal
+  embedding, content edits/additions/removals, old-content startup restoration,
+  failed-build preservation and source-independent export preview.
+- Continue to use no third-party dependencies and forbid unsafe code.
+
 ## 0.1.0-alpha.9 — Unreleased
 
 - Add App, Page, PageContext and explicit static/server-only page policies,

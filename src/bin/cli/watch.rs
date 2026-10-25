@@ -74,6 +74,20 @@ pub(super) fn snapshot(root: &Path) -> Result<Snapshot> {
             &mut bytes,
         )?;
     }
+    // Content/build scripts are optional for projects generated before alpha.10.
+    if fs::symlink_metadata(root.join("content")).is_ok() {
+        visit(
+            root,
+            &root.join("content"),
+            0,
+            &mut directories,
+            &mut result,
+            &mut bytes,
+        )?;
+    }
+    if fs::symlink_metadata(root.join("build.rs")).is_ok() {
+        fingerprint(root, &root.join("build.rs"), &mut result, &mut bytes)?;
+    }
     for name in ["Cargo.toml", "Ruvane.project"] {
         fingerprint(root, &root.join(name), &mut result, &mut bytes)?;
     }

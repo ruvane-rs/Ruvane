@@ -423,3 +423,120 @@ fn generated_project_build_dev_recompile_failure_recovery_and_preview() {
     );
     assert_eq!(fs::read(project.join("legacy/sentinel")).unwrap(), b"keep");
 }
+
+#[test]
+fn generated_content_is_embedded_recompiled_and_retained_on_invalid_edits_or_startup_failure() {
+    let temp = Temp::new();
+    let project = scaffold(&temp.0);
+    let post = project.join("content/welcome.md");
+    let initial = fs::read_to_string(&post).unwrap()
+        + "\nFirst content AAA.\n\n\"); panic!(\"injected\"); //\n<script>not code</script>\n";
+    fs::write(&post, &initial).unwrap();
+    let build = ["build", "--origin", "https://site.example", "--offline"];
+    let output = cli(&project, &build);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let first_html =
+        fs::read(project.join("dist/build-000001/articles/welcome/index.html")).unwrap();
+    let exported = String::from_utf8(first_html.clone()).unwrap();
+    assert!(exported.contains("First content AAA."));
+    assert!(exported.contains("panic!(&quot;injected&quot;)"));
+    assert!(exported.contains("&lt;script&gt;not code&lt;/script&gt;"));
+    let generated = fs::read_dir(project.join(".ruvane/target/debug/build"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path().join("out/ruvane-content.rs"))
+        .find(|path| path.is_file())
+        .expect("generated content module");
+    let original_module = fs::read(&generated).unwrap();
+    fs::write(&generated, b"foreign output sentinel").unwrap();
+    assert!(!cli(&project, &build).status.success());
+    assert_eq!(fs::read(&generated).unwrap(), b"foreign output sentinel");
+    assert_eq!(
+        fs::read_to_string(project.join("dist/current")).unwrap(),
+        "build-000001\n"
+    );
+    fs::write(&generated, original_module).unwrap();
+    let mut dev = Running::start(&project, &["dev", "--offline", "--port", "0"]);
+    let address = dev.address("Ruvane dev at");
+    assert!(get(address, "/articles/welcome/").contains("First content AAA."));
+    let modified = fs::metadata(&post).unwrap().modified().unwrap();
+    let next = initial.replace("First content AAA.", "Next! content BBB.");
+    assert_eq!(initial.len(), next.len());
+    fs::write(&post, &next).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&post)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    assert_eq!(dev.address("Ruvane dev at"), address);
+    assert!(get(address, "/articles/welcome/").contains("Next! content BBB."));
+    fs::write(&post, next.replace("slug: welcome", "slug: ../escape")).unwrap();
+    dev.until("keeping the previous server");
+    assert!(get(address, "/articles/welcome/").contains("Next! content BBB."));
+    let second = project.join("content/second.md");
+    fs::write(&post, &next).unwrap();
+    fs::write(&second, "---ruvane\ntitle: Second article\nslug: second\ndescription: Another page.\n---\nSecond article body.\n").unwrap();
+    assert_eq!(dev.address("Ruvane dev at"), address);
+    assert!(get(address, "/articles/second/").contains("Second article body."));
+    assert!(get(address, "/").contains("Second article"));
+    fs::remove_file(&second).unwrap();
+    assert_eq!(dev.address("Ruvane dev at"), address);
+    assert!(request(address, "/articles/second/").starts_with("HTTP/1.1 404 "));
+    let main = project.join("src/main.rs");
+    let original_main = fs::read_to_string(&main).unwrap();
+    let final_content = next.replace("Next! content BBB.", "Final content CCC.");
+    fs::write(&post, &final_content).unwrap();
+    fs::write(
+        &main,
+        original_main.replace("let port: u16 =", "std::process::exit(23); let port: u16 ="),
+    )
+    .unwrap();
+    dev.until("Restored the previous server");
+    let restored = get(address, "/articles/welcome/");
+    assert!(restored.contains("Next! content BBB."));
+    assert!(!restored.contains("Final content CCC."));
+    fs::write(&main, original_main).unwrap();
+    assert_eq!(dev.address("Ruvane dev at"), address);
+    assert!(get(address, "/articles/welcome/").contains("Final content CCC."));
+    dev.quit();
+    fs::write(
+        &post,
+        final_content.replace("slug: welcome", "slug: ../escape"),
+    )
+    .unwrap();
+    let failed = cli(&project, &build);
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("welcome.md:3:"));
+    assert_eq!(
+        fs::read_to_string(project.join("dist/current")).unwrap(),
+        "build-000001\n"
+    );
+    assert_eq!(
+        fs::read(project.join("dist/build-000001/articles/welcome/index.html")).unwrap(),
+        first_html
+    );
+    fs::write(&post, &final_content).unwrap();
+    let output = cli(&project, &build);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("dist/current")).unwrap(),
+        "build-000002\n"
+    );
+    fs::remove_file(&post).unwrap();
+    let mut preview = Running::start(&project, &["preview", "dist", "--port", "0"]);
+    let address = preview.address("Ruvane preview at");
+    assert!(get(address, "/articles/welcome/").contains("Final content CCC."));
+    drop(preview);
+    assert_eq!(
+        fs::read_dir(project.join(".ruvane/runs")).unwrap().count(),
+        0
+    );
+}

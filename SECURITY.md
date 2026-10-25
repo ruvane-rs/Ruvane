@@ -1,5 +1,25 @@
 # Security
 
+Starting with alpha.10, local content has strict typed metadata and portable
+unique slugs. The limited Markdown renderer constructs typed HTML, escapes raw
+HTML/entities, permits only validated internal link paths, and bounds bytes,
+lines, tokens, inline depth and delimiter-scan work. It interprets no Rust,
+JavaScript, MDX, imports or raw HTML. Code blocks display escaped text.
+
+ContentBundle reads a bounded flat directory, rejecting observed symlinks,
+special files, non-.md entries and invalid UTF-8. Source/output ancestors must
+be protected from hostile concurrent mutation. This is not a filesystem sandbox.
+Diagnostics include validated basenames and line numbers rather than content.
+
+Generated applications use trusted build.rs code with Ruvane as a first-party
+build dependency. Source strings are escaped into a bounded Cargo OUT_DIR
+module; content never provides tokens outside literals. The executable owns
+its fixed content snapshot. Invalid content is checked before CLI compilation,
+retaining the old server/build. Cargo revision invalidation is not an integrity
+signature. Build scripts, Cargo configuration, toolchain and output parents
+remain trusted. No runtime content directory is exposed over HTTP.
+See [content and Markdown](docs/content-and-markdown.md).
+
 Starting with alpha.9, App declares named pages, fragment layouts and assets
 for both server rendering and explicit static planning. Registration validates
 names, ambiguity, concrete export paths and count limits without executing

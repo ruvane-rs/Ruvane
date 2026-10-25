@@ -32,3 +32,15 @@ parameters without an HTTP request; use `PageMode::ServerOnly` explicitly for
 request-dependent pages. Named links are constructed with `PageContext::url`.
 The configured 404/500 pages are server responses; exporting a site does not
 configure error-page routing on a hosting provider.
+
+Articles live in `content/*.md`. Each starts with `---ruvane`, exactly one
+`title: ...`, `slug: ...`, and `description: ...`, then `---` and Markdown.
+The directory must contain only portable regular .md files and remain nonempty.
+Adding/removing a file changes the next compiled site's article pages.
+
+`build.rs` uses Ruvane as a first-party build dependency to validate and embed
+the files as escaped string data in Cargo's output directory. The running
+application owns its text snapshot; it does not read content from disk on
+requests. Dev watches the directory and retains the old server if validation
+fails. Rust-looking text and HTML are displayed as escaped text; code is never
+executed. The supported Markdown subset has explicit input/work/output limits.

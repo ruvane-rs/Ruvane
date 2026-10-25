@@ -97,17 +97,21 @@ pub(super) fn create(name: &str, framework: Option<&Path>) -> Result<()> {
         quoted(&format!("={}", env!("CARGO_PKG_VERSION")))?
     };
     let manifest = format!(
-        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\npublish = false\n\n[workspace]\n\n[[bin]]\nname = \"ruvane-app\"\npath = \"src/main.rs\"\n\n[dependencies]\nruvane = {dependency}\n"
+        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\npublish = false\n\n[workspace]\n\n[[bin]]\nname = \"ruvane-app\"\npath = \"src/main.rs\"\n\n[dependencies]\nruvane = {dependency}\n\n[build-dependencies]\nruvane = {dependency}\n"
     );
     let destination = root.join(name);
     fs::create_dir(&destination).map_err(|_| "project destination must be new")?;
     fs::create_dir(destination.join("src"))?;
     fs::create_dir(destination.join("assets"))?;
+    fs::create_dir(destination.join("content"))?;
     for (path, body) in [
         ("Cargo.toml", manifest.as_str()),
         ("Ruvane.project", PROJECT_MARKER),
         (".gitignore", "/target/\n/.ruvane/\n/dist/\n.DS_Store\n"),
         ("README.md", include_str!("templates/README.md")),
+        ("build.rs", include_str!("templates/build.rs.txt")),
+        ("src/content.rs", include_str!("templates/content.rs.txt")),
+        ("content/welcome.md", include_str!("templates/welcome.md")),
         ("src/main.rs", include_str!("templates/main.rs.txt")),
         ("src/pages.rs", include_str!("templates/pages.rs.txt")),
         (

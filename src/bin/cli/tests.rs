@@ -131,3 +131,28 @@ fn symbolic_links_are_rejected_in_sources_and_managed_roots() {
     symlink(temp.0.join("src"), temp.0.join("alias")).unwrap();
     assert!(project::managed(&temp.0.join("alias"), "owner", WORK_MARKER).is_err());
 }
+
+#[test]
+fn watcher_tracks_content_and_build_script_with_equal_size_equal_time_edits() {
+    let temp = Temp::new();
+    watched(&temp.0);
+    fs::create_dir(temp.0.join("content")).unwrap();
+    fs::write(temp.0.join("content/post.md"), b"aaaa").unwrap();
+    fs::write(temp.0.join("build.rs"), b"build").unwrap();
+    let before = watch::snapshot(&temp.0).unwrap();
+    let post = temp.0.join("content/post.md");
+    let modified = fs::metadata(&post).unwrap().modified().unwrap();
+    fs::write(&post, b"bbbb").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&post)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    let changed = watch::snapshot(&temp.0).unwrap();
+    assert_ne!(before, changed);
+    fs::write(temp.0.join("build.rs"), b"other").unwrap();
+    assert_ne!(watch::snapshot(&temp.0).unwrap(), changed);
+    fs::remove_file(post).unwrap();
+    assert_ne!(watch::snapshot(&temp.0).unwrap(), changed);
+}

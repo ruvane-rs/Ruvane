@@ -128,7 +128,9 @@ fn dev(args: &[OsString]) -> Result<()> {
         }
         input_quit.store(true, Ordering::SeqCst);
     });
-    println!("Watching src/, assets/, Cargo.toml and Cargo.lock. Type q then Enter to stop.");
+    println!(
+        "Watching src/, assets/, content/, build.rs, Cargo.toml and Cargo.lock. Type q then Enter to stop."
+    );
     let mut observed = watch::snapshot(&project.root)?;
     let mut pending = true;
     let mut changed_at = Instant::now() - Duration::from_secs(1);

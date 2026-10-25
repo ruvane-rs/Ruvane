@@ -63,7 +63,7 @@ snapshot; later builder changes do not mutate a running router.
 
 Register parents before children. Immutable references to earlier parents
 prevent cycles. A page selects its leaf layout; the leaf wraps the body first,
-then its parents. Each callback receives the same context, escaped title data,
+then its parents. Each callback receives the same context, plain title text,
 and typed `Html` children. The title argument is plain text; HTML builders
 escape it when used as a child or attribute.
 
@@ -167,3 +167,11 @@ links, one dynamic static page and private error pages. The mini-blog declares
 common portable routes once, including path-based pagination. Search at
 `/articles` and the original no-trailing-slash/Unicode article URLs are explicit
 server-only compatibility pages; `/health` remains a low-level text handler.
+
+## Content collections
+
+Alpha.10 adds `App::content_pages` for a named route with one `{slug}` capture.
+A validated `ContentCollection` owns metadata and typed Markdown HTML, enumerates
+its static parameters, and supplies the same entries at request time. Unknown
+slugs return 404. Existing layout/error/origin/output contracts still apply.
+See [content and Markdown](content-and-markdown.md).

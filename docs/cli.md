@@ -33,9 +33,15 @@ See [pages and layouts](pages-and-layouts.md).
 The generated layout contains Cargo.toml, an independent Cargo workspace,
 `Ruvane.project`, README, .gitignore, `src/main.rs`, `src/pages.rs`,
 `src/components.rs`, and `assets/site.css`. Edit pages and shared layout in
-those source files. Static parameters are enumerated explicitly in `pages::site`.
+those source files. Static parameters are enumerated in `pages::application`.
 The fixed binary target is `ruvane-app`. The small `Ruvane.project` marker
 declares protocol version 1; it is not an authentication mechanism.
+
+Alpha.10 also generates `content/welcome.md`, `src/content.rs` and `build.rs`.
+Ruvane is a first-party runtime and build dependency. The build script validates
+and embeds all files in the flat content directory; adding a document adds a
+page. CLI validation precedes compilation, and content revisions invalidate
+Cargo even when mtimes are restored. See [content](content-and-markdown.md).
 
 ## Development
 
@@ -51,7 +57,7 @@ Each running application uses a private executable copy, so compiling a
 replacement does not replace its active executable in place.
 
 Dev polls content fingerprints, not just timestamps, in `src/`, `assets/`,
-Cargo.toml, Cargo.lock, and Ruvane.project. Paths outside that list, including
+optional `content/` and `build.rs`, Cargo.toml, Cargo.lock, and Ruvane.project. Paths outside that list, including
 target, dist, .git and .ruvane, are not watched. A 200 ms quiet period consolidates
 changes; polling waits 150 ms between scans. At most one compilation runs.
 Edits during compilation are detected on the next scan. Cargo's own lockfile

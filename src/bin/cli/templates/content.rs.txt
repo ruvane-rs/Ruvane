@@ -1,0 +1,5 @@
+include!(concat!(env!("OUT_DIR"), "/ruvane-content.rs"));
+
+pub fn collection() -> Result<ruvane::ContentCollection, ruvane::ContentError> {
+    ruvane::ContentCollection::new(SOURCES)
+}

@@ -807,3 +807,45 @@ fn decoded_aliases_cannot_generate_links_or_canonicals_owned_by_another_page() {
     );
     assert_eq!(server.request("GET", "/item/%2572eserved/").0, 200);
 }
+
+#[test]
+fn content_pages_share_typed_html_metadata_and_known_slug_enumeration() {
+    let text = "---ruvane\ntitle: Article <one>\nslug: one\ndescription: Content from a file.\n---\n## Welcome\n\nHello **Rust** and <script>text</script>.\n";
+    let collection =
+        ruvane::ContentCollection::new(&[ruvane::ContentSource::new("one.md", text)]).unwrap();
+    let mut app = App::new();
+    app.content_pages(
+        route("article", "/articles/{slug}/"),
+        None,
+        collection.clone(),
+        |context, article| {
+            Ok(Page::new(article.title(), article.body().clone())
+                .metadata(context.metadata(article.description()).unwrap()))
+        },
+    )
+    .unwrap();
+    assert!(
+        app.content_pages(route("bad", "/bad/{other}/"), None, collection, |_, _| Ok(
+            Page::new("bad", "bad")
+        ))
+        .is_err()
+    );
+    let live = Running::start(&app);
+    let preview = Running::router(
+        app.static_site(&origin())
+            .unwrap()
+            .preview_router()
+            .unwrap(),
+        ServerConfig::default(),
+    );
+    let body = live.request("GET", "/articles/one/");
+    assert_eq!(body.0, 200);
+    assert_eq!(body.2, preview.request("GET", "/articles/one/").2);
+    let html = String::from_utf8(body.2).unwrap();
+    assert!(html.contains("<h2>Welcome</h2>"));
+    assert!(html.contains("<strong>Rust</strong>"));
+    assert!(html.contains("&lt;script&gt;text&lt;/script&gt;"));
+    assert!(!html.contains("<script>"));
+    assert_eq!(live.request("GET", "/articles/missing/").0, 404);
+    assert_eq!(live.request("GET", "/articles/%2e%2e/").0, 400);
+}

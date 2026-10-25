@@ -4,6 +4,7 @@
 
 mod app;
 mod assets;
+mod content;
 mod forms;
 mod html;
 mod http;
@@ -19,6 +20,13 @@ pub use app::{
     PageContext, PageError, PageMode,
 };
 pub use assets::{AssetError, MAX_ASSET_BYTES, MAX_ASSETS, MAX_TOTAL_ASSET_BYTES, MediaType};
+pub use content::{
+    ContentBundle, ContentCollection, ContentEntry, ContentError, ContentErrorKind, ContentSlug,
+    ContentSource, MAX_CONTENT_FILE_BYTES, MAX_CONTENT_FILES, MAX_CONTENT_HTML_BYTES,
+    MAX_CONTENT_LINE_BYTES, MAX_CONTENT_LINES, MAX_CONTENT_MODULE_BYTES, MAX_CONTENT_TOTAL_BYTES,
+    MAX_CONTENT_TOTAL_HTML_BYTES, MAX_MARKDOWN_DEPTH, MAX_MARKDOWN_TOKENS, MAX_MARKDOWN_WORK,
+    markdown,
+};
 pub use forms::{FormError, GetForm, MAX_FORM_NAME_BYTES};
 pub use html::{
     Attribute, Document, Element, Html, ImageError, MAX_IMAGE_DIMENSION, Tag, element, fragment,

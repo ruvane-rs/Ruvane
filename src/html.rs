@@ -166,6 +166,12 @@ pub enum Tag {
     H2,
     /// A third-level heading.
     H3,
+    /// A fourth-level heading.
+    H4,
+    /// A fifth-level heading.
+    H5,
+    /// A sixth-level heading.
+    H6,
     /// The main content of a document.
     Main,
     /// A section of a document.
@@ -205,6 +211,9 @@ impl Tag {
             Self::H1 => "h1",
             Self::H2 => "h2",
             Self::H3 => "h3",
+            Self::H4 => "h4",
+            Self::H5 => "h5",
+            Self::H6 => "h6",
             Self::Main => "main",
             Self::Section => "section",
             Self::Article => "article",

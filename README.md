@@ -12,7 +12,9 @@ static export with a local preview. The `ruvane` CLI creates projects, watches
 sources, runs the development server, and manages versioned static builds.
 The application layer declares named pages and assets once for server rendering
 and static builds, with bounded nested layouts and private error pages.
-Server actions and browser-side reactivity are planned for future versions.
+Typed local content collections add a bounded Markdown profile and embedded
+articles shared by the server and static export. Server actions and browser-side
+reactivity are planned for future versions.
 
 ## Principles
 
@@ -103,6 +105,36 @@ errors keep their fixed responses. Static page errors abort planning before
 export. Limits apply to route/layout counts, nesting, parameters and each
 rendering stage. Existing low-level APIs remain available. See
 [pages and layouts](docs/pages-and-layouts.md) for the full contract and examples.
+
+## Local content and Markdown
+
+Generated projects include `content/welcome.md`. Add a valid `.md` file to
+create another article, without editing the Rust page declaration:
+
+````text
+---ruvane
+title: A first article
+slug: first-article
+description: Notes from a small beginning.
+---
+## Welcome
+
+Write **clear words** and *new ideas*. See [the home page](/).
+````
+
+The strict Ruvane header requires title, slug and description. The limited
+Markdown renderer supports headings, paragraphs, flat lists, emphasis, code and
+internal links. Raw HTML remains escaped text. All documents are validated and
+embedded as string data in each compiled executable. `dev` watches content and
+recompiles it; invalid content keeps the previous server and static build valid.
+
+`ContentCollection` provides immutable typed entries. `App::content_pages`
+registers one `{slug}` page from a collection for both serving and export.
+`ContentBundle` supports bounded flat-directory snapshots for trusted build
+tools. Generated applications use Ruvane itself as their first-party runtime
+and build dependency; no third-party package is added. See
+[content and Markdown](docs/content-and-markdown.md) for the exact syntax,
+budgets, diagnostics, embedding and filesystem trust contract.
 
 ## Local server
 
@@ -277,7 +309,7 @@ responsive CSS, and original PNG illustrations. A new search resets pagination;
 page links preserve its filter, and validation errors retain escaped search
 text. Styles and images are embedded
 at compile time and served locally. No external fonts or scripts are required.
-Article data is stored in the example's source. Its handlers and assets are
+Article text is stored in embedded Markdown files under `examples/content/`. Its handlers and assets are
 also exercised by the integration tests.
 
 ## Static export
@@ -415,6 +447,8 @@ when composed. Serialized output is available through `as_str()`,
 | `fragment` | Join rendered fragments in order. |
 | `link` | Render an anchor to an `InternalUrl`, escaping its attribute and label. |
 | `image` | Render an image with an internal URL, escaped alternative text, and typed dimensions. |
+| `ContentCollection`, `ContentEntry`, `ContentSlug` | Validate immutable local content and enumerate article pages. |
+| `ContentBundle`, `ContentSource`, `markdown` | Snapshot, embed and render a bounded Markdown profile. |
 | `App` | Declare common pages, layouts and assets, then create a server router or static plan. |
 | `PageRoute` | Validate a named pattern and construct URLs from decoded parameters. |
 | `Page`, `PageContext`, `PageMode` | Compose document content with explicit static/server input policies. |

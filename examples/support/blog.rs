@@ -1,50 +1,48 @@
 use ruvane::{
-    App, AppError, Attribute, GetForm, Html, InternalUrl, MediaType, Metadata, Page, PageContext,
-    PageError, PageMode, PageParams, PageRoute, ParamError, QueryMode, Response, Robots, Router,
-    SiteOrigin, StaticSite, Tag, element, fragment, image, link,
+    App, Attribute, ContentCollection, ContentEntry, ContentSource, GetForm, Html, InternalUrl,
+    MediaType, Metadata, Page, PageContext, PageError, PageMode, PageParams, PageRoute, ParamError,
+    QueryMode, Response, Robots, Router, SiteOrigin, StaticSite, Tag, element, fragment, image,
+    link,
 };
 
 const PAGE_SIZE: usize = 2;
 
-struct Article {
-    slug: &'static str,
-    static_slug: &'static str,
-    title: &'static str,
-    body: &'static str,
+static CONTENT: std::sync::OnceLock<Result<ContentCollection, ruvane::ContentError>> =
+    std::sync::OnceLock::new();
+const SOURCES: &[ContentSource<'static>] = &[
+    ContentSource::new(
+        "01-bonjour-rust.md",
+        include_str!("../content/01-bonjour-rust.md"),
+    ),
+    ContentSource::new(
+        "02-typed-urls.md",
+        include_str!("../content/02-typed-urls.md"),
+    ),
+    ContentSource::new("03-ete-rust.md", include_str!("../content/03-ete-rust.md")),
+    ContentSource::new("04-escaping.md", include_str!("../content/04-escaping.md")),
+    ContentSource::new(
+        "05-bounded-server.md",
+        include_str!("../content/05-bounded-server.md"),
+    ),
+];
+
+fn content() -> Result<&'static ContentCollection, ruvane::ContentError> {
+    CONTENT
+        .get_or_init(|| ContentCollection::new(SOURCES))
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
-const ARTICLES: &[Article] = &[
-    Article {
-        slug: "bonjour-rust",
-        static_slug: "bonjour-rust",
-        title: "Hello, Rust & Ruvane",
-        body: "A page rendered on the server, built from typed HTML elements.",
-    },
-    Article {
-        slug: "typed-urls",
-        static_slug: "typed-urls",
-        title: "Typed URLs in Rust",
-        body: "Path segments and query values are encoded as data before a link is rendered.",
-    },
-    Article {
-        slug: "été-rust",
-        static_slug: "ete-rust",
-        title: "Été en Rust",
-        body: "UTF-8 slugs travel through percent-encoded URLs and are decoded exactly once.",
-    },
-    Article {
-        slug: "escaping",
-        static_slug: "escaping",
-        title: "Rendering <text> safely",
-        body: "Input such as <script>alert('hello')</script> is displayed as text.",
-    },
-    Article {
-        slug: "bounded-server",
-        static_slug: "bounded-server",
-        title: "A bounded local server",
-        body: "Explicit request limits and deadlines keep the development transport small and inspectable.",
-    },
-];
+fn articles() -> &'static ContentCollection {
+    content().expect("collection validated before building the application")
+}
+
+fn legacy_slug(article: &ContentEntry) -> &str {
+    match article.slug().as_str() {
+        "ete-rust" => "été-rust",
+        slug => slug,
+    }
+}
 
 fn internal(path: &str) -> InternalUrl {
     InternalUrl::new(path).expect("valid fixed example path")
@@ -171,18 +169,20 @@ fn home_body(edition: Edition) -> Html {
                 .child(element(Tag::P).attr(Attribute::Class, "lead").child("Small ideas, shared openly. Follow the links, take your time, and find something worth making.")).render()
 }
 
-fn illustration(article: &Article) -> InternalUrl {
-    internal(if matches!(article.slug, "typed-urls" | "escaping") {
-        "/assets/geometry.png"
-    } else {
-        "/assets/landscape.png"
-    })
+fn illustration(article: &ContentEntry) -> InternalUrl {
+    internal(
+        if matches!(legacy_slug(article), "typed-urls" | "escaping") {
+            "/assets/geometry.png"
+        } else {
+            "/assets/landscape.png"
+        },
+    )
 }
 
-fn article_url(article: &Article, edition: Edition) -> InternalUrl {
+fn article_url(article: &ContentEntry, edition: Edition) -> InternalUrl {
     match edition {
-        Edition::Server => named("legacy-article").url(&[("slug", article.slug)]),
-        Edition::Static => named("article").url(&[("slug", article.static_slug)]),
+        Edition::Server => named("legacy-article").url(&[("slug", legacy_slug(article))]),
+        Edition::Static => named("article").url(&[("slug", article.slug().as_str())]),
     }
     .expect("declared article route and source slug")
 }
@@ -199,7 +199,7 @@ fn listing_url(page: usize, search: &str) -> InternalUrl {
     }
 }
 
-fn article_cards<'a>(articles: impl Iterator<Item = &'a Article>, edition: Edition) -> Html {
+fn article_cards<'a>(articles: impl Iterator<Item = &'a ContentEntry>, edition: Edition) -> Html {
     fragment(articles.map(|article| {
         element(Tag::Li)
             .attr(Attribute::Class, "post-card")
@@ -213,9 +213,10 @@ fn article_cards<'a>(articles: impl Iterator<Item = &'a Article>, edition: Editi
                             .child("Field notes"),
                     )
                     .child(
-                        element(Tag::H2).child(link(&article_url(article, edition), article.title)),
+                        element(Tag::H2)
+                            .child(link(&article_url(article, edition), article.title())),
                     )
-                    .child(element(Tag::P).child(article.body)),
+                    .child(element(Tag::P).child(article.description())),
             )
             .render()
     }))
@@ -231,9 +232,9 @@ fn listing(context: &PageContext<'_>) -> Result<Page, PageError> {
         _ => return Ok(invalid_page(search)),
     };
     let needle = search.to_lowercase();
-    let articles: Vec<_> = ARTICLES
+    let articles: Vec<_> = articles()
         .iter()
-        .filter(|article| article.title.to_lowercase().contains(&needle))
+        .filter(|article| article.title().to_lowercase().contains(&needle))
         .collect();
     let Some(start) = (page_number - 1).checked_mul(PAGE_SIZE) else {
         return Ok(invalid_page(search));
@@ -292,7 +293,7 @@ fn listing(context: &PageContext<'_>) -> Result<Page, PageError> {
     Ok(page("Articles", body, metadata))
 }
 
-fn article_body(article: &Article, edition: Edition) -> Html {
+fn article_body(article: &ContentEntry, edition: Edition) -> Html {
     element(Tag::Article)
         .attr(Attribute::Class, "article-body")
         .child(
@@ -300,7 +301,7 @@ fn article_body(article: &Article, edition: Edition) -> Html {
                 .attr(Attribute::Class, "hero-visual")
                 .child(image(&illustration(article), "", 960, 480).expect("fixed dimensions")),
         )
-        .child(element(Tag::P).child(article.body))
+        .child(article.body().clone())
         .child(
             element(Tag::Nav)
                 .attr(Attribute::Class, "pagination")
@@ -380,7 +381,7 @@ fn static_listing_url(page: usize) -> InternalUrl {
 }
 
 fn static_listing(context: &PageContext<'_>, number: usize) -> Result<Page, PageError> {
-    let count = ARTICLES.len().div_ceil(PAGE_SIZE);
+    let count = articles().len().div_ceil(PAGE_SIZE);
     if !(1..=count).contains(&number) {
         return Err(PageError::NotFound);
     }
@@ -401,7 +402,7 @@ fn static_listing(context: &PageContext<'_>, number: usize) -> Result<Page, Page
             element(Tag::Ul)
                 .attr(Attribute::Class, "post-grid")
                 .child(article_cards(
-                    ARTICLES
+                    articles()
                         .iter()
                         .skip((number - 1) * PAGE_SIZE)
                         .take(PAGE_SIZE),
@@ -422,7 +423,8 @@ fn static_listing(context: &PageContext<'_>, number: usize) -> Result<Page, Page
 
 /// Declares common pages/assets once. Legacy Unicode URLs and the GET search
 /// are explicit server-only pages, retained alongside the portable common URLs.
-pub fn application() -> Result<App, AppError> {
+pub fn application() -> Result<App, Box<dyn std::error::Error>> {
+    let collection = content()?.clone();
     let mut app = App::new();
     app.layout("site", None, site_layout)?;
     app.layout("journal", Some("site"), journal_layout)?;
@@ -443,7 +445,7 @@ pub fn application() -> Result<App, AppError> {
         PageMode::fixed(),
         |context| static_listing(context, 1),
     )?;
-    let pages = (2..=ARTICLES.len().div_ceil(PAGE_SIZE))
+    let pages = (2..=articles().len().div_ceil(PAGE_SIZE))
         .map(|number| PageParams::new(&[("page", &number.to_string())]))
         .collect::<Result<Vec<_>, _>>()?;
     app.page(
@@ -457,23 +459,15 @@ pub fn application() -> Result<App, AppError> {
             static_listing(context, number)
         },
     )?;
-    let articles = ARTICLES
-        .iter()
-        .map(|article| PageParams::new(&[("slug", article.static_slug)]))
-        .collect::<Result<Vec<_>, _>>()?;
-    app.page(
+    app.content_pages(
         named("article"),
         Some("journal"),
-        PageMode::Static(articles),
-        |context| {
-            let article = ARTICLES
-                .iter()
-                .find(|a| Some(a.static_slug) == context.param("slug"))
-                .ok_or(PageError::NotFound)?;
+        collection,
+        |context, article| {
             Ok(page(
-                article.title,
+                article.title(),
                 article_body(article, Edition::Static),
-                public_metadata(article.body, context.origin(), context.path()),
+                public_metadata(article.description(), context.origin(), context.path()),
             ))
         },
     )?;
@@ -504,15 +498,15 @@ pub fn application() -> Result<App, AppError> {
         Some("journal"),
         PageMode::ServerOnly(QueryMode::Uri),
         |context| {
-            let article = ARTICLES
+            let article = articles()
                 .iter()
-                .find(|a| Some(a.slug) == context.param("slug"))
+                .find(|a| Some(legacy_slug(a)) == context.param("slug"))
                 .ok_or(PageError::NotFound)?;
             Ok(page(
-                article.title,
+                article.title(),
                 article_body(article, Edition::Server),
                 public_metadata(
-                    article.body,
+                    article.description(),
                     context.origin(),
                     &article_url(article, Edition::Server),
                 ),
@@ -572,10 +566,10 @@ fn build_router(origin: Option<SiteOrigin>) -> Result<Router, Box<dyn std::error
 }
 
 /// Renders the common pages from the same declaration as the server.
-pub fn static_site(origin: SiteOrigin) -> Result<StaticSite, AppError> {
+pub fn static_site(origin: SiteOrigin) -> Result<StaticSite, Box<dyn std::error::Error>> {
     let app = application()?;
     for name in app.server_only_routes() {
         println!("Server-only page omitted from static export: {name}");
     }
-    app.static_site(&origin)
+    Ok(app.static_site(&origin)?)
 }
