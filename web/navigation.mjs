@@ -44,13 +44,13 @@ async function pageBytes(response, signal) {
 
 /** Keeps page data in a bounded cache; live views belong to the runtime. */
 export function createNavigator(runtime, { outlet, scope = document, status, timeoutMs = 10000, maxCacheEntries = 32, maxCacheBytes = 2097152, cacheTtlMs = 30000, prefetchConcurrency = 2 } = {}) {
-  if (!runtime || !["mountPage", "validatePage", "actionState", "subscribeActions"].every(name => typeof runtime[name] === "function") || !(outlet instanceof HTMLElement) || outlet.ownerDocument !== document || !(scope === document || scope instanceof HTMLElement && scope.ownerDocument === document) || !scope.contains(outlet) || OWNERS.has(window) || !(status instanceof HTMLElement) || status.ownerDocument !== document || outlet.contains(status) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000 || !["http:", "https:"].includes(location.protocol)) throw failure();
+  if (!runtime || !["mountPage", "mountPageSegment", "validatePage", "actionState", "subscribeActions"].every(name => typeof runtime[name] === "function") || !(outlet instanceof HTMLElement) || outlet.ownerDocument !== document || !(scope === document || scope instanceof HTMLElement && scope.ownerDocument === document) || !scope.contains(outlet) || OWNERS.has(window) || !(status instanceof HTMLElement) || status.ownerDocument !== document || outlet.contains(status) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000 || !["http:", "https:"].includes(location.protocol)) throw failure();
   for (const [value, min, max] of [[maxCacheEntries,0,32],[maxCacheBytes,0,2097152],[cacheTtlMs,1,300000],[prefetchConcurrency,1,2]]) if (!Number.isInteger(value) || value < min || value > max) throw failure();
   if (runtime.actionState().state !== "active") throw failure(); stateObject(history.state);
   const previousRestoration = history.scrollRestoration, previousRole = status.getAttribute("role"), previousLive = status.getAttribute("aria-live");
   const cache = new Map(), jobs = new Map(), activeJobs = new Set();
   const identity = `${location.origin}\n${runtime.applicationRevision ?? "unversioned"}\n`;
-  let current = null, activeURL = target(), pending = null, disposed = false, started = false, frame = 0, idle = Promise.resolve("idle");
+  let current = null, branch = [], pageHost = null, activeURL = target(), pending = null, disposed = false, started = false, frame = 0, idle = Promise.resolve("idle");
   let generation = 0, bytesHeld = 0, blocked = false, pumpQueued = false, hits = 0, misses = 0;
   const key = url => identity + url;
   const eligible = () => !disposed && !blocked && generation !== null && maxCacheEntries > 0 && maxCacheBytes > 0 && runtime.actionState().state === "active" && runtime.actionState().epoch !== null && !runtime.actionState().uncertain && runtime.actionState().pending === 0;
@@ -84,7 +84,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   function schedule() { if (!pumpQueued) { pumpQueued = true; queueMicrotask(() => { pumpQueued = false; pump(); }); } }
   const headers = () => ({ Accept: NAVIGATION_MEDIA_TYPE, ...(runtime.applicationRevision ? { "Ruvane-Application-Revision": runtime.applicationRevision } : {}) });
   const request = (url, signal) => fetch(safeURL(url).href,{ method:"GET", mode:"same-origin", credentials:"same-origin", redirect:"error", headers:headers(), signal, cache:"no-cache" });
-  function verify(bytes,response,url) { const page = decodePage(bytes); if (page.url !== url || page.status !== response.status || response.redirected) throw failure(); return page; }
+  function verify(bytes,response,url) { const page = decodePage(bytes); if (page.url !== url || page.status !== response.status || page.selected !== 0 || response.redirected) throw failure(); return page; }
   async function performPrefetch(job) {
     const version = generation, epoch = runtime.actionState().epoch, began = performance.now();
     const timer = setTimeout(() => job.controller.abort(),timeoutMs);
@@ -126,6 +126,16 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   }
   const restore = point => window.scrollTo(position(point.x),position(point.y));
   const fallback = url => { if (!disposed) location.replace(url); };
+  const sameLayout = (a,b) => a.name===b.name && a.key===b.key && a.component===b.component && a.kind===b.kind && a.value===b.value && a.seed.length===b.seed.length && a.seed.every((value,n)=>value===b.seed[n]);
+  function checkBranch() {
+    let slot=outlet;
+    for(const layout of branch) {
+      if(slot.childNodes.length!==1 || slot.firstChild!==layout.host || layout.host.childNodes.length!==2 || layout.host.firstChild!==layout.own || layout.host.lastChild!==layout.outlet || layout.host.getAttribute("data-ruvane-layout")!==layout.descriptor.name)throw failure();
+      slot=layout.outlet;
+    }
+    if(current && (slot.childNodes.length!==1 || slot.firstChild!==pageHost))throw failure();
+  }
+  function releaseBranch(items) { for(const item of [...items].reverse())item.controller.dispose(); }
   function run(url,mode,point={x:0,y:0},accept,fresh=false) {
     if (disposed) return Promise.reject(new Error("Ruvane navigator disposed")); safeURL(url);
     if (mode !== "start" && !started) return Promise.reject(failure());
@@ -135,7 +145,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     status.textContent = "Loading…"; outlet.setAttribute("aria-busy","true");
     const timer = setTimeout(() => { operation.expired = true; operation.abort.abort(); },timeoutMs);
     idle = (async () => {
-      let prepared = null;
+      let prepared = null, preparedLayouts = [];
       try {
         const cached = fresh ? null : lookup(url); let bytes, page, expires = null;
         if (cached) { hits = Math.min(Number.MAX_SAFE_INTEGER,hits+1); bytes = cached.bytes; page = decodePage(bytes); }
@@ -147,17 +157,27 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         }
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
         if (operation.reason || operation.abort.signal.aborted) { status.textContent = "Data changed. Try the link again."; if (mode === "pop") fallback(url); return operation.reason ?? "invalidated"; }
-        const host = document.createElement("div"); host.tabIndex = -1; prepared = runtime.mountPage(host,bytes);
-        if (mode === "start" && accept && !accept()) { prepared.dispose(); prepared = null; status.textContent = "Native forms are ready."; return "native"; }
+        runtime.validatePage(bytes); checkBranch();
+        let shared=0;
+        if(!fresh)while(shared<branch.length && shared<page.layouts.length && sameLayout(branch[shared].descriptor,page.layouts[shared]))shared++;
+        const mountPoint = shared ? branch[shared-1].outlet : outlet;
+        const fragment=document.createDocumentFragment();let slot=fragment;
+        for(let index=shared;index<page.layouts.length;index++){
+          const descriptor=page.layouts[index],host=document.createElement("section"),own=document.createElement("div"),child=document.createElement("div");
+          host.setAttribute("data-ruvane-layout",descriptor.name);own.setAttribute("data-ruvane-layout-view","");child.setAttribute("data-ruvane-child-outlet","");host.append(own,child);slot.append(host);
+          const controller=runtime.mountPageSegment(own,bytes,index+1);preparedLayouts.push({descriptor,host,own,outlet:child,controller});slot=child;
+        }
+        const host = document.createElement("div"); host.tabIndex = -1; prepared = runtime.mountPage(host,bytes);slot.append(host);
+        if (mode === "start" && accept && !accept()) { prepared.dispose(); prepared = null; releaseBranch(preparedLayouts);preparedLayouts=[]; status.textContent = "Native forms are ready."; return "native"; }
         operation.committing = true;
         if (mode === "push") { save(); history.pushState({ [KEY]:entry(url,0,0) },"",url); }
         else if (mode === "start" || mode === "replace") history.replaceState({ ...stateObject(history.state), [KEY]:entry(mode === "start" ? url+location.hash : url,point.x,point.y) },"",mode === "start" ? location.href : url);
-        current?.dispose(); current = prepared; prepared = null; outlet.replaceChildren(host); activeURL = url; started = true; history.scrollRestoration = "manual";
+        current?.dispose(); releaseBranch(branch.slice(shared)); mountPoint.replaceChildren(fragment); branch=branch.slice(0,shared).concat(preparedLayouts);preparedLayouts=[];current=prepared;prepared=null;pageHost=host; activeURL = url; started = true; history.scrollRestoration = "manual";
         document.title = page.title; status.textContent = page.status === 200 ? "Ready." : `Page ${page.status}.`;
         if (mode !== "start") host.focus({ preventScroll:true }); restore(point);
         if (!cached) store(url,bytes,expires,version,epoch); return "success";
       } catch {
-        remove(url); try { prepared?.dispose(); } catch { fallback(url); }
+        remove(url); try { prepared?.dispose(); releaseBranch(preparedLayouts); } catch { fallback(url); }
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
         if (operation.reason && !operation.updated && runtime.actionState().state === "active") { status.textContent = "Data changed. Try the link again."; if (mode === "pop") fallback(url); return operation.reason; }
         status.textContent = operation.updated ? "Application updated. Reload to continue." : operation.expired ? "Navigation timed out. Try the link again." : "Navigation failed. Try the link again or reload.";
@@ -190,12 +210,12 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     refresh() { if (!started || disposed) return Promise.reject(failure()); invalidate(activeURL); return run(activeURL,"refresh",{x:scrollX,y:scrollY},undefined,true); },
     current() { return current; },
     whenIdle() { return idle; },
-    stats() { sweep(); return Object.freeze({ state:disposed ? "disposed" : started ? "active" : "idle", pending:pending !== null, url:activeURL, listeners:disposed ? 0 : 5, cachePaused:blocked || generation === null || runtime.actionState().uncertain || runtime.actionState().pending > 0, cacheEntries:cache.size, cacheBytes:bytesHeld, pendingPrefetches:activeJobs.size, queuedPrefetches:jobs.size-activeJobs.size, hits, misses }); },
+    stats() { sweep(); return Object.freeze({ state:disposed ? "disposed" : started ? "active" : "idle", pending:pending !== null, url:activeURL, listeners:disposed ? 0 : 5, layouts:branch.length, cachePaused:blocked || generation === null || runtime.actionState().uncertain || runtime.actionState().pending > 0, cacheEntries:cache.size, cacheBytes:bytesHeld, pendingPrefetches:activeJobs.size, queuedPrefetches:jobs.size-activeJobs.size, hits, misses }); },
     dispose() {
       if (disposed) return; try { save(); } catch { /* Continue cleanup. */ } disposed = true; unsubscribe(); cancelNavigation("disposed"); pending = null; cancelJobs("disposed"); cache.clear(); bytesHeld = 0; if (frame) cancelAnimationFrame(frame);
       scope.removeEventListener("click",click); scope.removeEventListener("pointerover",intend); scope.removeEventListener("focusin",intend); window.removeEventListener("popstate",pop); window.removeEventListener("scroll",scroll);
       for (const [name,value] of [["role",previousRole],["aria-live",previousLive]]) { if (value === null) status.removeAttribute(name); else status.setAttribute(name,value); }
-      history.scrollRestoration = previousRestoration; OWNERS.delete(window); outlet.removeAttribute("aria-busy"); current?.dispose(); current = null;
+      history.scrollRestoration = previousRestoration; OWNERS.delete(window); outlet.removeAttribute("aria-busy"); current?.dispose(); releaseBranch(branch); branch=[]; current = null;pageHost=null;
     },
   });
 }

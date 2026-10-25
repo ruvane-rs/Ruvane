@@ -385,3 +385,172 @@ fn loaders_can_tighten_public_routes_to_no_store() {
             .contains("Cache-Control: no-store")
     );
 }
+
+fn nested() -> App {
+    let mut app = app(Arc::new(AtomicUsize::new(0)));
+    app.client_layout(PageRoute::new("root", "/").unwrap(), None, 1, zero, |_| {
+        Ok(ruvane::ClientLayoutData::new(data("Root layout")))
+    })
+    .unwrap();
+    app.client_layout(
+        PageRoute::new("item_context", "/items/{id}").unwrap(),
+        Some("root"),
+        2,
+        id,
+        |_| Ok(ruvane::ClientLayoutData::new(data("Item layout"))),
+    )
+    .unwrap();
+    app.client_page_layout("home", Some("root")).unwrap();
+    app.client_page_layout("item", Some("item_context"))
+        .unwrap();
+    app
+}
+#[test]
+fn nested_layouts_share_canonical_contexts_and_reject_forged_or_missing_branches() {
+    let application = nested();
+    let server = Running::new(application.clone());
+    let (_, body) = server.get("GET", "/items/7?q=hello", true);
+    let page = NavigationPage::decode(&body).unwrap();
+    assert!(application.validate_navigation(&page));
+    assert_eq!(
+        page.layouts().iter().map(|l| l.name()).collect::<Vec<_>>(),
+        vec!["root", "item_context"]
+    );
+    assert_eq!(page.layouts()[1].key().as_str(), "/items/7");
+    assert_eq!(page.layouts()[1].props().state(), InitialState::Number(7));
+    assert!(!application.validate_navigation(&page.clone().with_layouts(vec![]).unwrap()));
+    let mut chain = page.layouts().to_vec();
+    chain[1] = ruvane::NavigationLayout::new(
+        "item_context",
+        InternalUrl::new("/items/8").unwrap(),
+        chain[1].props(),
+        chain[1].data().clone(),
+    )
+    .unwrap();
+    assert!(!application.validate_navigation(&page.clone().with_layouts(chain).unwrap()));
+    let (headers, html) = server.get("GET", "/items/7?native=yes", false);
+    assert!(headers.contains("script-src 'none'"));
+    let html = String::from_utf8(html).unwrap();
+    assert!(html.find("Root layout").unwrap() < html.find("Item layout").unwrap());
+    assert_eq!(html.matches("data-ruvane-child-outlet").count(), 2);
+    let (_, body) = server.get("GET", "/items/99", true);
+    assert!(NavigationPage::decode(&body).unwrap().layouts().is_empty());
+}
+#[test]
+fn every_layout_must_opt_in_and_the_strictest_cache_policy_wins() {
+    let mut app = nested();
+    app.client_page_cache("item", ruvane::NavigationCachePolicy::public(30).unwrap())
+        .unwrap();
+    app.client_layout_cache("root", ruvane::NavigationCachePolicy::public(20).unwrap())
+        .unwrap();
+    assert!(app.prefetch_link("item", &[("id", "7")], "Item").is_err());
+    assert!(
+        Running::new(app.clone())
+            .get("GET", "/items/7", true)
+            .0
+            .contains("Cache-Control: no-store")
+    );
+    app.client_layout_cache(
+        "item_context",
+        ruvane::NavigationCachePolicy::public(10).unwrap(),
+    )
+    .unwrap();
+    assert!(app.prefetch_link("item", &[("id", "7")], "Item").is_ok());
+    let server = Running::new(app);
+    assert!(server.get("GET", "/items/7", true).0.contains("max-age=10"));
+    assert!(
+        extra_get(&server, "/items/7", "Cookie: fixture=1\r\n")
+            .0
+            .contains("Cache-Control: no-store")
+    );
+}
+#[test]
+fn client_layout_registration_is_bounded_and_rejects_unrelated_patterns_atomically() {
+    let mut app = app(Arc::new(AtomicUsize::new(0)));
+    for n in 0..6 {
+        let parent = if n == 0 {
+            None
+        } else {
+            Some(format!("l{}", n - 1))
+        };
+        app.client_layout(
+            PageRoute::new(&format!("l{n}"), "/").unwrap(),
+            parent.as_deref(),
+            1,
+            zero,
+            |_| Ok(ruvane::ClientLayoutData::new(data("Layout"))),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        app.client_layout(
+            PageRoute::new("deep", "/").unwrap(),
+            Some("l5"),
+            1,
+            zero,
+            |_| Ok(ruvane::ClientLayoutData::new(data("L")))
+        ),
+        Err(AppError::LayoutDepth)
+    );
+    app.client_layout(
+        PageRoute::new("other", "/other").unwrap(),
+        None,
+        1,
+        zero,
+        |_| Ok(ruvane::ClientLayoutData::new(data("L"))),
+    )
+    .unwrap();
+    assert!(app.client_page_layout("item", Some("other")).is_err());
+    assert!(
+        app.client_layout(
+            PageRoute::new("bad", "/items").unwrap(),
+            Some("other"),
+            1,
+            zero,
+            |_| Ok(ruvane::ClientLayoutData::new(data("L")))
+        )
+        .is_err()
+    );
+    assert!(app.client_page_layout("item", Some("deep")).is_err());
+    app.client_page_layout("item", Some("l5")).unwrap();
+    let (_, body) = Running::new(app).get("GET", "/items/1", true);
+    assert_eq!(NavigationPage::decode(&body).unwrap().layouts().len(), 6);
+}
+#[test]
+fn invalid_layout_seeds_and_conditional_no_store_apply_to_the_entire_response() {
+    let mut app = nested();
+    app.client_layout(PageRoute::new("bad", "/").unwrap(), None, 1, zero, |_| {
+        Ok(ruvane::ClientLayoutData::new(ActionData::default()))
+    })
+    .unwrap();
+    app.client_page_layout("home", Some("bad")).unwrap();
+    assert!(
+        Running::new(app)
+            .get("GET", "/", true)
+            .0
+            .starts_with("HTTP/1.1 500")
+    );
+    let mut app = nested();
+    app.client_layout(
+        PageRoute::new("conditional", "/").unwrap(),
+        None,
+        1,
+        zero,
+        |_| Ok(ruvane::ClientLayoutData::new(data("Private")).no_store()),
+    )
+    .unwrap();
+    app.client_page_layout("home", Some("conditional")).unwrap();
+    app.client_page_cache("home", ruvane::NavigationCachePolicy::public(30).unwrap())
+        .unwrap();
+    app.client_layout_cache(
+        "conditional",
+        ruvane::NavigationCachePolicy::public(30).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        Running::new(app)
+            .get("GET", "/", true)
+            .0
+            .contains("Cache-Control: no-store")
+    );
+}

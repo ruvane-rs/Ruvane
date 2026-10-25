@@ -26,7 +26,59 @@ impl Component for Counter {
         Ok(())
     }
 }
+pub const WORKSPACE: u32 = 12;
+pub const CONTEXT: u32 = 13;
+pub const SETTINGS: u32 = 14;
+struct Workspace {
+    value: u32,
+    context: bool,
+}
+impl Component for Workspace {
+    fn page_data(&mut self, data: ActionData) -> Result<(), ComponentError> {
+        if data.is_empty() {
+            Ok(())
+        } else {
+            Err(ComponentError::InvalidProps)
+        }
+    }
+    fn view(&self) -> Result<View, ComponentError> {
+        let mut view = View::new();
+        let root = view.element(0, Section)?;
+        view.leaf(
+            root,
+            Heading,
+            if self.context {
+                "Task context"
+            } else {
+                "Tasks workspace"
+            },
+        )?;
+        view.leaf(root, Output, &self.value.to_string())?;
+        view.button(root, "Increment layout", 1, self.value == u32::MAX)?;
+        view.prefetch_link(root, 1, &InternalUrl::new("/tasks").unwrap(), "Task list")?;
+        view.prefetch_link(
+            root,
+            2,
+            &InternalUrl::new("/tasks/settings").unwrap(),
+            "Settings",
+        )?;
+        Ok(view)
+    }
+    fn dispatch(&mut self, event: u32) -> Result<(), ComponentError> {
+        if event != 1 {
+            return Err(ComponentError::InvalidEvent);
+        }
+        self.value = self.value.saturating_add(1);
+        Ok(())
+    }
+}
 pub fn create_component(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
+    if let (WORKSPACE | CONTEXT, InitialState::Number(value)) = (props.component(), props.state()) {
+        return Ok(Box::new(Workspace {
+            value,
+            context: props.component() == CONTEXT,
+        }));
+    }
     if let (1, InitialState::Number(value @ 0..=1000)) = (props.component(), props.state()) {
         return Ok(Box::new(Counter(value)));
     }
@@ -59,6 +111,21 @@ impl Component for Page {
         let mut view = View::new();
         let section = view.keyed_element(0, 1, Section)?;
         match self.kind {
+            SETTINGS => {
+                view.keyed_leaf(section, 1, Heading, "Task settings")?;
+                view.keyed_leaf(
+                    section,
+                    2,
+                    Span,
+                    "The workspace stays mounted while this page changes.",
+                )?;
+                view.prefetch_link(
+                    section,
+                    3,
+                    &InternalUrl::new("/tasks").unwrap(),
+                    "Back to tasks",
+                )?;
+            }
             HOME => {
                 view.keyed_leaf(section, 1, Heading, "Home")?;
                 let row = view.keyed_element(section, 3, Paragraph)?;
@@ -193,7 +260,7 @@ pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentErro
     }
     if !matches!(
         (props.component(), id),
-        (HOME, 0) | (DETAIL, 1..) | (ERROR, 400 | 404)
+        (HOME, 0) | (SETTINGS, 0) | (DETAIL, 1..) | (ERROR, 400 | 404)
     ) {
         return Err(ComponentError::InvalidProps);
     }

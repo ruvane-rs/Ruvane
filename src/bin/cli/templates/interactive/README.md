@@ -12,6 +12,12 @@ Edit `src/pages.rs` to declare pages and their GET loaders once. Edit
 typed actions use `src/store.rs`; the bounded in-memory state resets on restart.
 The layout counter persists during client navigation. `?native=yes` blocks scripts.
 
+The tasks section has a persistent workspace layout and a sibling settings page.
+Task details add a nested context layout. Moving between task IDs retains the
+workspace and recreates the context. Leaving tasks releases both layouts.
+Declare these branches with `client_layout` and `client_page_layout` in pages.rs.
+Every layout and page must opt in before the complete branch can be cached.
+
 `ruvane build --offline` creates a versioned server bundle under `dist/`.
 Run the printed executable with `--port 3000`. The executable embeds its matching
 Wasm, browser modules and stylesheet. The copied resources and manifest are useful

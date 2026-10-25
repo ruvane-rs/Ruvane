@@ -181,11 +181,9 @@ impl BrowserRuntime {
         root: u32,
         page: &ruvane::NavigationPage,
     ) -> Result<u32, BrowserError> {
-        self.ready()?;
-        if !self.page_validator.is_some_and(|validate| validate(page)) {
-            return Err(BrowserError::InvalidPage);
-        }
-        self.mount_inner(root, page.props(), Some(page.data()))
+        self.validate_page(page)?;
+        let (props, data) = page.segment();
+        self.mount_inner(root, props, Some(data))
     }
 
     fn mount_inner(
@@ -286,19 +284,25 @@ impl BrowserRuntime {
         if !self.page_validator.is_some_and(|validate| validate(page)) {
             return Err(BrowserError::InvalidPage);
         }
-        let mut component = (self.factory)(page.props()).map_err(|_| BrowserError::InvalidPage)?;
-        component
-            .page_data(page.data().clone())
-            .map_err(|_| BrowserError::InvalidPage)?;
-        Self::resources(component.as_ref())?;
-        component
-            .view()?
-            .snapshot()
-            .map_err(|_| BrowserError::InvalidView)?
-            .commands(1)
-            .map_err(|_| BrowserError::InvalidView)?;
-        if component.take_action().is_some() {
-            return Err(BrowserError::InvalidPage);
+        for (props, data) in std::iter::once((page.props(), page.data())).chain(
+            page.layouts()
+                .iter()
+                .map(|layout| (layout.props(), layout.data())),
+        ) {
+            let mut component = (self.factory)(props).map_err(|_| BrowserError::InvalidPage)?;
+            component
+                .page_data(data.clone())
+                .map_err(|_| BrowserError::InvalidPage)?;
+            Self::resources(component.as_ref())?;
+            component
+                .view()?
+                .snapshot()
+                .map_err(|_| BrowserError::InvalidView)?
+                .commands(1)
+                .map_err(|_| BrowserError::InvalidView)?;
+            if component.take_action().is_some() {
+                return Err(BrowserError::InvalidPage);
+            }
         }
         Ok(())
     }

@@ -17,7 +17,7 @@ assert len(metadata["workspace_members"]) == len(expected), "unexpected workspac
 for package in metadata["packages"]:
     assert package["source"] is None, "registry/git dependency is forbidden"
     assert package["name"] in expected and Path(package["manifest_path"]).resolve() == expected[package["name"]], "unexpected package path"
-    assert package["version"] == "0.1.0-alpha.20", "workspace versions must match"
+    assert package["version"] == "0.1.0-alpha.21", "workspace versions must match"
 abi = root / "browser/src/abi.rs"
 for source in (root / "browser/src").rglob("*.rs"):
     text = source.read_text()

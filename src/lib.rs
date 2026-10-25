@@ -26,9 +26,9 @@ pub use actions::{
     MAX_ACTION_REQUEST_BYTES,
 };
 pub use app::{
-    App, AppError, ClientPageData, ClientRuntime, ComponentFactory, MAX_APP_LAYOUTS,
-    MAX_APP_ROUTES, MAX_LAYOUT_DEPTH, MAX_PAGE_STYLESHEETS, Page, PageContext, PageError, PageMode,
-    application_revision,
+    App, AppError, ClientLayoutData, ClientPageData, ClientRuntime, ComponentFactory,
+    MAX_APP_LAYOUTS, MAX_APP_ROUTES, MAX_LAYOUT_DEPTH, MAX_PAGE_STYLESHEETS, Page, PageContext,
+    PageError, PageMode, application_revision,
 };
 pub use assets::{AssetError, MAX_ASSET_BYTES, MAX_ASSETS, MAX_TOTAL_ASSET_BYTES, MediaType};
 pub use browser::{
@@ -56,9 +56,10 @@ pub use metadata::{
     OriginError, Robots, SiteOrigin,
 };
 pub use navigation::{
-    BROWSER_NAVIGATION_MODULE, MAX_NAVIGATION_BYTES, MAX_NAVIGATION_CACHE_AGE_SECONDS,
-    MAX_NAVIGATION_ROUTES, NAVIGATION_MEDIA_TYPE, NavigationCachePolicy, NavigationError,
-    NavigationMatch, NavigationPage, NavigationRoutes, navigation_link, prefetch_link,
+    BROWSER_NAVIGATION_MODULE, MAX_CLIENT_LAYOUT_DEPTH, MAX_NAVIGATION_BYTES,
+    MAX_NAVIGATION_CACHE_AGE_SECONDS, MAX_NAVIGATION_ROUTES, NAVIGATION_MEDIA_TYPE,
+    NavigationCachePolicy, NavigationError, NavigationLayout, NavigationMatch, NavigationPage,
+    NavigationRoutes, navigation_link, prefetch_link,
 };
 pub use page_route::{MAX_PAGE_NAME_BYTES, MAX_PAGE_SEGMENTS, PageParams, PageRoute};
 pub use reactive::{

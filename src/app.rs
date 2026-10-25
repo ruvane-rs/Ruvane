@@ -6,7 +6,9 @@ use crate::{
     MetadataError, PageParams, PageRoute, ParamError, QueryMode, Request, Response, Robots,
     RouteError, Router, SiteOrigin, StaticPath, StaticSite, StatusCode, UrlError,
 };
-pub use client::{ClientPageData, ClientRuntime, ComponentFactory, application_revision};
+pub use client::{
+    ClientLayoutData, ClientPageData, ClientRuntime, ComponentFactory, application_revision,
+};
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
@@ -312,6 +314,7 @@ pub struct App {
     client_factory: Option<ComponentFactory>,
     client_error: u32,
     client_runtime: Option<ClientRuntime>,
+    client_layouts: Vec<client::ClientLayout>,
 }
 impl App {
     /// Creates an empty application.
@@ -344,7 +347,7 @@ impl App {
         if self.layouts.iter().any(|l| l.name == name) {
             return Err(AppError::DuplicateName);
         }
-        if self.layouts.len() == MAX_APP_LAYOUTS {
+        if self.layouts.len() + self.client_layouts.len() == MAX_APP_LAYOUTS {
             return Err(AppError::TooManyLayouts);
         }
         let parent = self.layout_index(parent)?;

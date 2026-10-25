@@ -1,5 +1,5 @@
 // DOM and action bridge for RVN6 commands.
-export const ABI_VERSION = 8;
+export const ABI_VERSION = 9;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
 const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a" });
 const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision", "ruvane_page_validate"];
@@ -22,19 +22,33 @@ export function internalTarget(target) {
 }
 /** Reads routing metadata. Rust validates the complete typed seed and application schema. */
 export function decodePage(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length < 34 || bytes.length > 65536 || String.fromCharCode(...bytes.slice(0, 4)) !== "RVP1") throw invalid();
-  const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }); let pos = 4;
-  const take = size => { if (size > bytes.length - pos) throw invalid(); const value = bytes.subarray(pos, pos + size); pos += size; return value; };
-  const u32 = () => { take(4); return data.getUint32(pos - 4, true); };
-  const string = limit => { const size = u32(); if (size > limit) throw invalid(); return decoder.decode(take(size)); };
-  take(2); const status = data.getUint16(4, true); if (![200, 400, 404].includes(status)) throw invalid();
-  const url = internalTarget(string(4096)), title = string(1024);
-  if (!title.trim() || /[\u0000-\u001f\u007f-\u009f]/.test(title)) throw invalid();
-  const component = uint(u32()), kind = u32(), value = u32();
-  if (![1, 2].includes(kind) || (kind === 2 && value > 1)) throw invalid();
-  const seed = take(u32());
-  if (seed.length < 7 || String.fromCharCode(...seed.slice(0, 4)) !== "RVA1" || seed[4] !== 0 || pos !== bytes.length) throw invalid();
-  return Object.freeze({ url, title, status, component, kind, value });
+  if (!(bytes instanceof Uint8Array) || bytes.length < 34 || bytes.length > 65536) throw invalid();
+  const version = String.fromCharCode(...bytes.slice(0,4)); if (!["RVP1","RVP2"].includes(version)) throw invalid();
+  const data = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength), decoder = new TextDecoder("utf-8",{fatal:true,ignoreBOM:true}); let pos=4;
+  const take = size => { if (size > bytes.length-pos) throw invalid(); const value=bytes.subarray(pos,pos+size);pos+=size;return value; };
+  const u32 = () => {take(4);return data.getUint32(pos-4,true);};
+  const string = limit => {const size=u32();if(size>limit)throw invalid();return decoder.decode(take(size));};
+  const selected = version === "RVP2" ? take(1)[0] : 0;
+  take(2);const status=data.getUint16(pos-2,true);if(![200,400,404].includes(status))throw invalid();
+  const url=internalTarget(string(4096)),title=string(1024);
+  if(!title.trim()||/[\u0000-\u001f\u007f-\u009f]/.test(title))throw invalid();
+  const componentSeed = () => {
+    const component=uint(u32()),kind=u32(),value=u32();
+    if(![1,2].includes(kind)||(kind===2&&value>1))throw invalid();
+    const seed=take(u32());if(seed.length<7||String.fromCharCode(...seed.slice(0,4))!=="RVA1"||seed[4]!==0)throw invalid();
+    return {component,kind,value,seed:seed.slice()};
+  };
+  const leaf=componentSeed(),layouts=[];
+  if(version==="RVP2"){
+    const count=take(1)[0];if(count<1||count>6||status!==200||selected>count)throw invalid();
+    for(let n=0;n<count;n++){
+      const name=string(48),key=internalTarget(string(4096));
+      if(!/^[A-Za-z][A-Za-z0-9_-]*$/.test(name)||layouts.some(layout=>layout.name===name))throw invalid();
+      layouts.push(Object.freeze({name,key,...componentSeed()}));
+    }
+  }
+  if(pos!==bytes.length)throw invalid();
+  return Object.freeze({url,title,status,component:leaf.component,kind:leaf.kind,value:leaf.value,selected,layouts:Object.freeze(layouts)});
 }
 function actionPath(path) {
   if (typeof path !== "string" || path.length > 1024 || !path.startsWith("/") || path.includes("//") || /[^A-Za-z0-9\-._~!$&'()*+,;=:@/%]/.test(path)) throw invalid();
@@ -749,7 +763,11 @@ export async function createRuntime(url, options = {}) {
       live(); if (typeof observer !== "function" || actionObservers.size >= 16) throw new Error("Invalid Ruvane action observer");
       actionObservers.add(observer); return () => actionObservers.delete(observer);
     },
-    mountPage(root, bytes) { decodePage(bytes); return start(root, null, false, bytes); },
+    mountPage(root, bytes) { const page=decodePage(bytes); if(page.selected!==0)throw invalid(); return start(root, null, false, bytes); },
+    mountPageSegment(root, bytes, index) {
+      const page=decodePage(bytes);if(page.selected!==0||!Number.isInteger(index)||index<1||index>page.layouts.length)throw invalid();
+      const selected=bytes.slice();selected[4]=index;return start(root,null,false,selected);
+    },
     mount(root, props) { return start(root, validateProps(props), false); },
     hydrate(root) {
       live(); host(root); const controller = start(root, readProps(root), true), view = views.get(controller.id);

@@ -96,7 +96,7 @@ the supplied outlet/status content and must not depend on the changing route or
 page title. It may include sibling hydratable islands. The bootstrap hydrates
 those islands, then prepares the current page with the navigator. The page title
 and outlet change during navigation; the shell and its islands retain state.
-Route-dependent nested client layouts remain separate work.
+Route-dependent nested client layouts use [persistent client branches](client-layouts.md).
 
 The framework reserves `ruvane-application`, `ruvane-status`, `ruvane-outlet` and
 `ruvane-fallback` element IDs. Application shells must not duplicate them. The

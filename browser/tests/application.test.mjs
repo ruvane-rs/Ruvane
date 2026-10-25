@@ -31,7 +31,7 @@ await test("a generated application ships an independent, revision-matched Wasm 
     assert.equal(e.ruvane_application_revision(),BigInt(revision));
     assert.equal(WebAssembly.Module.exports(module).filter(e=>e.kind === "function").length,21);
     const drain = () => { const commands = decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr() >>> 0,e.ruvane_commands_len() >>> 0).slice()); assert.equal(e.ruvane_commands_clear(),1); return commands; };
-    const stage = bytes => { assert.equal(e.ruvane_page_begin(bytes.length),1); for (let offset=0;offset<bytes.length;offset+=4) { const count=Math.min(4,bytes.length-offset); let word=0;for(let i=0;i<count;i++)word|=bytes[offset+i]<<(i*8);assert.equal(e.ruvane_page_chunk(word >>> 0,count),1); } return e.ruvane_page_mount(2); };
+    const stage = (bytes,probe=false) => { assert.equal(e.ruvane_page_begin(bytes.length),1); for (let offset=0;offset<bytes.length;offset+=4) { const count=Math.min(4,bytes.length-offset); let word=0;for(let i=0;i<count;i++)word|=bytes[offset+i]<<(i*8);assert.equal(e.ruvane_page_chunk(word >>> 0,count),1); } return probe ? e.ruvane_page_validate() : e.ruvane_page_mount(2); };
     await t.test("the app owns its components instead of using the repository demo", () => {
       const id=e.ruvane_mount(1,1,1,5); assert.ok(id); const initial=drain();
       assert.ok(initial.some(c=>c.op===2 && c.text==="Layout counter")); assert.ok(!initial.some(c=>c.op===2 && c.text==="Ruvane counter"));
@@ -42,6 +42,18 @@ await test("a generated application ships an independent, revision-matched Wasm 
       for(const bytes of [packet("/",9,0),packet("/tasks/01",10,1),packet("/other",8,0)]) { assert.equal(stage(bytes),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),0); }
       const page=stage(packet("/",8,0));assert.ok(page);assert.ok(drain().some(c=>c.op===12 && c.url==="/tasks"));assert.equal(e.ruvane_dispose(page),1);drain();
       const error=stage(packet("/unknown",11,404,404,true));assert.ok(error);assert.ok(drain().some(c=>c.op===2 && c.text==="Page not found"));assert.equal(e.ruvane_dispose(error),1);drain();assert.equal(e.ruvane_live_instances(),0);
+    });
+    await t.test("nested packets validate layout ownership and mount selected segments", () => {
+      const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
+      const branch=(name="workspace",key="/tasks")=>{
+        const leaf=packet("/tasks",9,0),empty=[82,86,65,49,0,0,0];
+        return new Uint8Array([82,86,80,50,0,...leaf.slice(4),1,...text(name),...text(key),...word(12),...word(1),...word(0),...word(empty.length),...empty]);
+      };
+      for(const bytes of [packet("/tasks",9,0),branch("forged"),branch("workspace","/other")]){assert.equal(stage(bytes),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),0);}
+      const bytes=branch();for(let n=0;n<1000;n++){assert.equal(stage(bytes,true),1);assert.equal(e.ruvane_live_instances(),0);assert.deepEqual(drain(),[]);}
+      bytes[4]=1;const layout=stage(bytes);assert.ok(layout);assert.ok(drain().some(c=>c.op===2&&c.text==="Tasks workspace"));assert.equal(e.ruvane_dispose(layout),1);drain();
+      bytes[4]=0;const leaf=stage(bytes);assert.ok(leaf);assert.ok(drain().some(c=>c.op===2&&c.text==="Server tasks / Rust + Wasm"));assert.equal(e.ruvane_dispose(leaf),1);drain();
+      bytes[4]=2;assert.equal(stage(bytes),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),0);
     });
     await t.test("the generated Cargo graph has only project and framework packages", () => {
       const metadata=JSON.parse(run(process.env.CARGO || "cargo",["metadata","--offline","--locked","--format-version","1"],project));

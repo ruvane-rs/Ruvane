@@ -1,5 +1,19 @@
 # Security
 
+Alpha.21 adds bounded client layout branches. The shared App validator checks the
+complete chain, canonical prefix keys and resolved props before the runtime
+checks every component seed, view and resource budget. HTTP packets select only
+the leaf page; numeric staging can select a validated segment for mounting. The
+64 KiB packet limit includes all layout seeds. Layout components own separate
+hosts and cannot patch child outlets through their own command frames.
+Matching requires equal declaration, key, initial props and seed; changed parents
+recreate their child branch. Factories/loaders remain trusted read-only code.
+Cache permission is the intersection of the page and all layout policies, with
+the shortest freshness bound. Private/error responses remain no-store. Preparation
+failure releases temporary owners and retains the old branch. See
+[client layouts](docs/client-layouts.md) for the ownership and wire contract.
+
+
 Alpha.20 adds only explicit public navigation caching. App pages default to
 no-store; HTML, action replies, errors and requests carrying Cookie/Authorization
 stay no-store. A loader can tighten a public declaration. Never opt user-specific
@@ -28,7 +42,7 @@ seeds and views before serving them, and refuses initial queued actions. Explici
 native forms retain the existing Origin, Host, framing and field checks.
 
 The server embeds one prepared module and serves resources under its build
-revision. Before hydration the bridge checks ABI v8 and the exact u64 revision.
+revision. Before hydration the bridge checks ABI v9 and the exact u64 revision.
 The export macro isolates twenty-one numeric exports, accepts no input pointers and
 provides no host imports; only the reviewed no_mangle attributes allow unsafe
 code annotations. The core continues to forbid unsafe code.
@@ -82,7 +96,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v8/RVN6 isolate twenty-one reviewed numeric exports. The reply
+Browser ABI v9/RVN6 isolate twenty-one reviewed numeric exports. The reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts

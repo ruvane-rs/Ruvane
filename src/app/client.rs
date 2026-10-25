@@ -3,6 +3,9 @@ use crate::{
     ActionData, Component, ComponentError, ComponentProps, InitialState, NavigationMatch,
     NavigationPage, NavigationRoutes,
 };
+mod layouts;
+pub(super) use layouts::ClientLayout;
+pub use layouts::ClientLayoutData;
 
 /// Application-owned component constructor shared by native and Wasm builds.
 pub type ComponentFactory = fn(ComponentProps) -> Result<Box<dyn Component>, ComponentError>;
@@ -129,6 +132,7 @@ pub(super) struct ClientRoute {
     component: u32,
     cache: crate::NavigationCachePolicy,
     state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
+    layout: Option<usize>,
 }
 
 impl App {
@@ -186,6 +190,7 @@ impl App {
             component,
             state,
             cache: crate::NavigationCachePolicy::no_store(),
+            layout: None,
         });
         candidate.validate()?;
         *self = candidate;
@@ -224,6 +229,18 @@ impl App {
         {
             return Err(AppError::InvalidPage);
         }
+        if self
+            .layout_chain(page.client.unwrap().layout)
+            .iter()
+            .any(|index| {
+                self.client_layouts[*index]
+                    .cache
+                    .max_age_seconds()
+                    .is_none()
+            })
+        {
+            return Err(AppError::InvalidPage);
+        }
         Ok(crate::prefetch_link(&self.url(name, params)?, label))
     }
     /// Checks route ownership and props without executing loaders. The runtime then
@@ -234,6 +251,7 @@ impl App {
         }
         if page.status() != StatusCode::Ok {
             return matches!(page.status(), StatusCode::BadRequest | StatusCode::NotFound)
+                && page.layouts().is_empty()
                 && page.data().is_empty()
                 && page.props()
                     == ComponentProps::new(
@@ -244,6 +262,7 @@ impl App {
         }
         self.client_props(page.url())
             .is_ok_and(|props| props == page.props())
+            && self.validate_layouts(page)
     }
     fn routes(&self) -> Result<NavigationRoutes, AppError> {
         let mut routes = NavigationRoutes::new();
@@ -360,6 +379,7 @@ impl App {
             let url = Self::target(request)?;
             let props = self.client_props(&url)?;
             let page = (self.pages[index].render)(context)?;
+            let (layouts, layout_policy) = self.load_layouts(index, &url, context)?;
             let packet = NavigationPage::new(
                 url,
                 &page.title,
@@ -367,6 +387,7 @@ impl App {
                 page.client_data.ok_or(PageError::InternalServerError)?,
                 StatusCode::Ok,
             )
+            .and_then(|packet| packet.with_layouts(layouts))
             .map_err(|_| PageError::InternalServerError)?;
             let policy = if page.client_no_store
                 || request.header("cookie").is_some()
@@ -374,7 +395,7 @@ impl App {
             {
                 crate::NavigationCachePolicy::no_store()
             } else {
-                self.pages[index].client.unwrap().cache
+                Self::combine_cache(self.pages[index].client.unwrap().cache, layout_policy)
             };
             self.client_finish(&packet, page.body, request, policy)
         })();
@@ -424,17 +445,29 @@ impl App {
         policy: crate::NavigationCachePolicy,
     ) -> Result<Response, PageError> {
         let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
-        let mut component = factory(packet.props()).map_err(|_| PageError::InternalServerError)?;
-        component
-            .page_data(packet.data().clone())
-            .map_err(|_| PageError::InternalServerError)?;
-        let view = component
-            .view()
-            .map_err(|_| PageError::InternalServerError)?;
-        view.snapshot()
-            .map_err(|_| PageError::InternalServerError)?;
-        if component.take_action().is_some() {
-            return Err(PageError::InternalServerError);
+        let render = |props, data: &ActionData| -> Result<Html, PageError> {
+            let mut component = factory(props).map_err(|_| PageError::InternalServerError)?;
+            component
+                .page_data(data.clone())
+                .map_err(|_| PageError::InternalServerError)?;
+            let view = component
+                .view()
+                .map_err(|_| PageError::InternalServerError)?;
+            view.snapshot()
+                .map_err(|_| PageError::InternalServerError)?;
+            if component.take_action().is_some() {
+                return Err(PageError::InternalServerError);
+            }
+            view.hydratable(props)
+                .map_err(|_| PageError::InternalServerError)
+        };
+        let mut page_html = render(packet.props(), packet.data())?;
+        for layout in packet.layouts().iter().rev() {
+            let own = render(layout.props(), layout.data())?;
+            page_html = Self::layout_html(layout.name(), own, page_html);
+            if page_html.as_str().len() > MAX_STATIC_FILE_BYTES {
+                return Err(PageError::InternalServerError);
+            }
         }
         if request.header("accept") == Some(crate::NAVIGATION_MEDIA_TYPE) {
             return Ok(Response::navigation_with_cache(packet, policy));
@@ -456,10 +489,7 @@ impl App {
                 .render(),
             crate::element(crate::Tag::Div)
                 .attr(crate::Attribute::Id, "ruvane-outlet")
-                .child(
-                    view.hydratable(packet.props())
-                        .map_err(|_| PageError::InternalServerError)?,
-                )
+                .child(page_html)
                 .child(
                     crate::element(crate::Tag::Div)
                         .attr(crate::Attribute::Id, "ruvane-fallback")

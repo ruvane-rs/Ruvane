@@ -1,5 +1,8 @@
 # Pages and layouts
 
+Alpha.21 adds [persistent client layout branches](client-layouts.md), with shared
+SSR declarations and parent component reuse during client navigation.
+
 Alpha.19 adds `App::components`, `App::client_page` and `App::client_runtime` for
 shared SSR/Wasm pages and one persistent shell. These pages are explicitly
 server-only; ordinary `App::page` and its static/layout behavior remain available.

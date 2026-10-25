@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-alpha.21 — Unreleased
+
+- Add shared client layout declarations, prefix contexts and bounded root-first
+  branches for SSR and client navigation, with explicit leaf-page attachment.
+- Preserve matching parent components and DOM; prepare changed branches before
+  commit and release temporary owners on failure and departing owners on success.
+- Combine page/layout cache policies conservatively and validate every seed
+  before prefetch storage or mounting. Refresh recreates the complete branch.
+- Add RVP2 branch packets under the existing 64 KiB budget and ABI v9 segment
+  selection through the same 21 numeric exports. Keep RVN6, RVA1 and leaf RVP1.
+- Generate a task workspace with nested context layouts and a sibling settings
+  page. Add native, compiled application Wasm and browser lifetime coverage.
+- Keep the two first-party crates and zero third-party dependencies.
+
 ## 0.1.0-alpha.20 — Unreleased
 
 - Add explicit public client-page caching with bounded freshness, no-store

@@ -2,7 +2,7 @@
 
 Alpha.20 adds explicit public page caching and speculative GET loading without
 third-party crates or browser packages. Cache storage is private to one navigator
-in one document and holds only validated RVP1 bytes. No live component, DOM tree,
+in one document and holds only validated RVP1/RVP2 bytes. No live component, DOM tree,
 localStorage, sessionStorage or database is used as a page cache.
 
 ## Server policy
@@ -148,7 +148,7 @@ code; even then, in-flight server side effects are not a transaction.
 
 ## ABI and verification
 
-Browser ABI v8 adds `ruvane_page_validate() -> u32` after normal bounded page
+Browser ABI v9 adds `ruvane_page_validate() -> u32` after normal bounded page
 staging. It checks framing, registered route/props, application seed schema,
 view/resource budgets and absence of initial actions, then drops temporary state.
 It emits no commands, consumes no view IDs and retains no instances or scopes.
@@ -156,7 +156,8 @@ The core still forbids unsafe code and the adapter isolates 21 numeric exports.
 
 RVN6 adds opcode 13: view u32, node u32, boolean u8. Every initial link includes
 its prefetch eligibility; updates can toggle it while keeping the keyed node.
-RVP1 and RVA1 remain unchanged. Rebuild Wasm with its matching bridge.
+Leaf RVP1 and RVA1 remain supported; RVP2 carries complete layout branches.
+All layouts must permit storage. See [client layouts](client-layouts.md). Rebuild Wasm with its matching bridge.
 
 `/cache-tests` on the server_forms example checks warm reuse, native resource
 counts, link intent, no-store, credential guards, bounded concurrency/queueing,

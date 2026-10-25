@@ -11,6 +11,9 @@ pub mod navigation_pages;
 /// Checks the demo page registry before mounting.
 #[allow(dead_code)]
 pub fn validate_page(page: &ruvane::NavigationPage) -> bool {
+    if !page.layouts().is_empty() {
+        return false;
+    }
     navigation_pages::validate(page)
 }
 
