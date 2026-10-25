@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.6 implements a small development profile based on the
+Ruvane 0.1.0-alpha.7 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -53,6 +53,12 @@ Rejecting ambiguous framing and closing connections does not make this
 limited profile suitable for an arbitrary proxy chain.
 
 ## Routing and responses
+
+`StaticSite::preview_router` adds exact declared static paths with shared
+immutable bodies. It has no URL-to-disk lookup, directory serving, slash or
+index-file aliases, and does not serve build metadata. Normal query validation
+still applies; valid query fields do not change the planned static content.
+See [static export](static-export.md) for its path and hosting contracts.
 
 `Router::get` and `Router::get_form` register an exact, case-sensitive path or a pattern with named
 single-segment captures. Exact paths win regardless of registration order.

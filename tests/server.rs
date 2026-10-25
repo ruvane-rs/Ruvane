@@ -1651,3 +1651,191 @@ fn configured_canonicals_ignore_forwarding_and_host_aliases() {
             .any(|part| part == b"evil.test")
     );
 }
+
+#[test]
+fn static_preview_serves_only_declared_bytes_with_head_csp_and_query_validation() {
+    use ruvane::{MediaType, StaticPath, StaticSite};
+    let mut site = StaticSite::new();
+    site.page(
+        StaticPath::new("/hello/").unwrap(),
+        Document::new("Static", "é🦀").render(),
+    )
+    .unwrap();
+    site.asset(
+        StaticPath::new("/data.bin").unwrap(),
+        [0, 255, 13, 10],
+        MediaType::OctetStream,
+    )
+    .unwrap();
+    let router = site.preview_router().unwrap();
+    site.page(
+        StaticPath::new("/later/").unwrap(),
+        Document::new("Later", "").render(),
+    )
+    .unwrap();
+    drop(site);
+    let server = Running::start(router, ServerConfig::default());
+    let get = server.request("GET", "/hello/");
+    assert_eq!(status(&get), 200);
+    assert!(std::str::from_utf8(parts(&get).1).unwrap().contains("é🦀"));
+    assert_eq!(
+        parts(&server.request("GET", "/hello/?page=2")).1,
+        parts(&get).1
+    );
+    let head = server.request("HEAD", "/hello/");
+    assert_eq!(parts(&head).0, parts(&get).0);
+    assert!(parts(&head).1.is_empty());
+    assert_eq!(
+        parts(&server.request("GET", "/data.bin")).1,
+        [0, 255, 13, 10]
+    );
+    for path in [
+        "/hello",
+        "/hello/index.html",
+        "/%68ello/",
+        "/%2e%2e/",
+        "/later/",
+        "/_ruvane/manifest.tsv",
+        "/_ruvane/headers.txt",
+        "/_ruvane/complete",
+    ] {
+        assert_eq!(status(&server.request("GET", path)), 404, "{path}");
+    }
+    assert_eq!(status(&server.request("GET", "/hello/?a=1&%61=2")), 400);
+    assert_eq!(status(&server.request("GET", "/hello/?q=%FF")), 400);
+    assert_eq!(status(&server.request("GET", "/../outside")), 400);
+    assert_eq!(status(&server.request("POST", "/hello/")), 405);
+}
+
+#[test]
+fn exported_blog_preview_has_complete_internal_links_assets_and_canonicals() {
+    use std::collections::BTreeSet;
+    let site =
+        blog::static_site(ruvane::SiteOrigin::parse("https://journal.example").unwrap()).unwrap();
+    assert_eq!(site.len(), 14);
+    let manifest = site.manifest();
+    let rows: Vec<_> = manifest
+        .lines()
+        .skip(2)
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect();
+    let declared: BTreeSet<_> = rows.iter().map(|row| row[1]).collect();
+    let server = Running::start(site.preview_router().unwrap(), ServerConfig::default());
+    let mut links = BTreeSet::new();
+    for row in rows {
+        let output = server.request("GET", row[1]);
+        assert_eq!(status(&output), 200, "{}", row[1]);
+        let (headers, body) = parts(&output);
+        assert!(headers.contains(&format!("Content-Type: {}", row[3])));
+        assert_eq!(body.len(), row[4].parse::<usize>().unwrap());
+        let head = server.request("HEAD", row[1]);
+        assert_eq!(headers, parts(&head).0);
+        assert!(parts(&head).1.is_empty());
+        if row[0] == "page" {
+            let html = std::str::from_utf8(body).unwrap();
+            assert!(html.contains(&format!(
+                "rel=\"canonical\" href=\"https://journal.example{}\"",
+                row[1]
+            )));
+            assert!(!html.contains("<form"));
+            assert!(!html.contains("<script>"));
+            for attribute in [" href=\"", " src=\""] {
+                for tail in html.split(attribute).skip(1) {
+                    let value = tail.split('"').next().unwrap();
+                    if value.starts_with('/') {
+                        links.insert(value.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    for link in links {
+        assert!(
+            declared.contains(link.as_str()),
+            "unexported internal link: {link}"
+        );
+        assert!(!link.contains('?'));
+    }
+    let page2 = server.request("GET", "/articles/page/2/");
+    let html = std::str::from_utf8(parts(&page2).1).unwrap();
+    assert!(html.contains("Été en Rust"));
+    assert!(html.contains("href=\"/articles/ete-rust/\""));
+    assert!(html.contains("href=\"/articles/\">Previous page"));
+    assert!(html.contains("href=\"/articles/page/3/\">Next page"));
+    assert_eq!(
+        parts(&server.request("GET", "/assets/mark.png")).1,
+        include_bytes!("../examples/assets/mark.png")
+    );
+}
+
+#[test]
+fn static_shared_preview_responses_obey_the_server_output_budget() {
+    let mut site = ruvane::StaticSite::new();
+    site.page(
+        ruvane::StaticPath::new("/").unwrap(),
+        Document::new("Large", "x".repeat(256)).render(),
+    )
+    .unwrap();
+    let server = Running::start(
+        site.preview_router().unwrap(),
+        ServerConfig {
+            max_response_body_bytes: 64,
+            ..ServerConfig::default()
+        },
+    );
+    let get = server.request("GET", "/");
+    let head = server.request("HEAD", "/");
+    assert_eq!(status(&get), 500);
+    assert_eq!(parts(&get).1, b"Internal Server Error\n");
+    assert_eq!(parts(&head).0, parts(&get).0);
+    assert!(parts(&head).1.is_empty());
+}
+
+#[test]
+fn existing_export_preview_uses_disk_snapshot_and_never_serves_extra_files() {
+    use ruvane::{StaticPath, StaticSite};
+    use std::fs;
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let base = fs::canonicalize(std::env::temp_dir()).unwrap();
+    let root = loop {
+        let candidate = base.join(format!(
+            "ruvane-loaded-preview-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::create_dir(&candidate) {
+            Ok(()) => break candidate,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("test directory: {error}"),
+        }
+    };
+    let directory = root.join("site");
+    let mut site = StaticSite::new();
+    site.page(
+        StaticPath::new("/").unwrap(),
+        Document::new("Snapshot", "old").render(),
+    )
+    .unwrap();
+    site.export_to(&directory).unwrap();
+    let html = fs::read_to_string(directory.join("index.html"))
+        .unwrap()
+        .replace(">old<", ">new<");
+    fs::write(directory.join("index.html"), html).unwrap();
+    fs::write(directory.join("extra.txt"), b"private extra").unwrap();
+    let router = StaticSite::preview_export(&directory).unwrap();
+    fs::remove_dir_all(root).unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    let get = server.request("GET", "/");
+    assert_eq!(status(&get), 200);
+    assert!(
+        std::str::from_utf8(parts(&get).1)
+            .unwrap()
+            .contains(">new<")
+    );
+    let head = server.request("HEAD", "/");
+    assert_eq!(parts(&head).0, parts(&get).0);
+    assert!(parts(&head).1.is_empty());
+    for path in ["/extra.txt", "/_ruvane/manifest.tsv", "/index.html"] {
+        assert_eq!(status(&server.request("GET", path)), 404);
+    }
+}

@@ -7,7 +7,8 @@ without third-party dependencies.
 The current alpha provides HTML rendering, a bounded loopback HTTP server,
 fixed and dynamic GET/HEAD routes, typed parameter conversion, validated
 internal links, embedded CSS/image assets, typed native GET forms, page
-metadata, canonical URLs, and a fixed browser Content Security Policy.
+metadata, canonical URLs, a fixed browser Content Security Policy, and bounded
+static export with a local preview.
 Server actions and browser-side reactivity are planned for future versions.
 
 ## Principles
@@ -194,6 +195,67 @@ at compile time and served locally. No external fonts or scripts are required.
 Article data is stored in the example's source. Its handlers and assets are
 also exercised by the integration tests.
 
+## Static export
+
+```rust
+use ruvane::{Document, MediaType, StaticPath, StaticSite};
+
+let mut site = StaticSite::new();
+let articles = ["hello-rust", "typed-urls"];
+for slug in articles {
+    let path = StaticPath::new(&format!("/articles/{slug}/")).unwrap();
+    site.page(path, Document::new(slug, "Rendered at build time.").render()).unwrap();
+}
+site.asset(StaticPath::new("/assets/site.css").unwrap(),
+    b"body { color: #193e33; }", MediaType::Css).unwrap();
+assert_eq!(site.len(), 3);
+```
+
+`site.export_to("dist")` writes the plan to a **new** directory under an
+existing trusted parent. Directory URLs map to `index.html`. Paths follow a
+portable lowercase ASCII profile; encoded aliases, Unicode filenames, device
+names, traversal, and collisions are rejected. Page text remains UTF-8.
+Assets require suffixes consistent with their fixed MIME declaration.
+
+Plans allow up to 256 content entries, 1 MiB per entry, and 16 MiB total,
+including generated metadata. Failed registration consumes no budget. Existing
+destinations are refused. An I/O failure may leave partial files, without the
+completion marker; the exporter performs no recursive deletion or overwrite.
+The caller must keep the parent and output tree free from hostile concurrent
+modification. This is not a filesystem sandbox or an atomic deployment system.
+
+To export the mini-blog from a checkout:
+
+```sh
+cargo run --example blog -- export dist https://journal.example
+cargo run --example blog -- preview dist 3001
+```
+
+Open `http://127.0.0.1:3001` while the preview command is running. `dist` is
+the generated website: HTML, CSS, and images for HTTP hosting. Opening
+`dist/index.html` directly as `file://` does not reproduce the site's root-relative
+links or HTTP headers. Preview reads the existing export without rewriting it;
+`export` continues to refuse an existing destination.
+
+The static edition exports the home page, five articles, three listing pages,
+About, CSS, images, and metadata: 17 files. Pagination uses paths such as
+`/articles/page/2/`. The explicitly authored static slug `ete-rust` retains
+the article's UTF-8 title and text. GET search belongs to the server edition;
+the static edition uses lists and pagination without a search form.
+
+`site.preview_router()` serves a snapshot of the planned bytes through the
+normal loopback server and CSP, with no per-request disk lookup or body copy.
+It does not reload edited output files. External hosting must configure the
+headers listed in `_ruvane/headers.txt` and MIME types in the sorted manifest.
+Those files are provider-neutral instructions, not automatically applied
+hosting configuration. See [static export](docs/static-export.md) for the
+path contract, completion marker, hosting requirements, and security limits.
+
+`StaticSite::preview_export("dist")` loads an existing trusted export once.
+It validates the completion marker, bounded canonical manifest, file lengths,
+MIME types, and symlink-free file paths before creating preview routes. Extra
+files are never served. This reads trusted generated HTML, not sanitized uploads.
+
 ## Embedded assets and typed images
 
 ```rust
@@ -285,6 +347,8 @@ when composed. Serialized output is available through `as_str()`,
 | `Server` | Bind a loopback socket and run a bounded worker pool. |
 | `ServerConfig` | Configure byte, count, concurrency, and I/O time budgets. |
 | `ShutdownHandle` | Stop accepting connections and interrupt socket I/O. |
+| `StaticSite` | Plan bounded pages/assets, export to a new directory, and build an exact local preview. |
+| `StaticPath` | Validate a portable static URL and derive its relative output filename. |
 
 ## Security scope
 
@@ -313,6 +377,12 @@ server responses carry the fixed CSP exposed as `CONTENT_SECURITY_POLICY`.
 Metadata has no arbitrary tag names, `http-equiv`, or raw markup interface.
 Public origins come from explicit configuration. See
 [metadata and CSP](docs/metadata-and-csp.md) for compatibility and security limits.
+
+Static export requires a trusted filesystem parent, exclusive destination/file
+creation, and an output tree protected from concurrent tampering. Preview
+routes serve registered immutable bytes rather than mapping URLs to disk.
+Exported HTML needs the hosting server to provide CSP and the other required
+headers; a metadata manifest cannot enforce them.
 
 Form query decoding is selected by route registration, never inferred from
 request fields. Forms do not add POST, uploads, authentication, sessions,

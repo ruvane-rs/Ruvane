@@ -2,6 +2,7 @@ use crate::{Html, MediaType, ParamError, Query, QueryMode};
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// The fixed browser policy sent on every local HTTP response, including errors.
 ///
@@ -174,7 +175,22 @@ impl fmt::Display for StatusCode {
 pub struct Response {
     status: StatusCode,
     content_type: &'static str,
-    body: Cow<'static, [u8]>,
+    body: Body,
+}
+
+#[derive(Clone, Debug)]
+enum Body {
+    Bytes(Cow<'static, [u8]>),
+    Shared(Arc<[u8]>),
+}
+
+impl AsRef<[u8]> for Body {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Bytes(bytes) => bytes,
+            Self::Shared(bytes) => bytes,
+        }
+    }
 }
 
 impl Response {
@@ -183,7 +199,7 @@ impl Response {
         Self {
             status: StatusCode::Ok,
             content_type: "text/plain; charset=utf-8",
-            body: Cow::Owned(body.into().into_bytes()),
+            body: Body::Bytes(Cow::Owned(body.into().into_bytes())),
         }
     }
 
@@ -192,7 +208,7 @@ impl Response {
         Self {
             status: StatusCode::Ok,
             content_type: "text/html; charset=utf-8",
-            body: Cow::Owned(body.into_string().into_bytes()),
+            body: Body::Bytes(Cow::Owned(body.into_string().into_bytes())),
         }
     }
 
@@ -211,7 +227,7 @@ impl Response {
         Self {
             status: StatusCode::Ok,
             content_type: media_type.as_str(),
-            body: Cow::Owned(body.into()),
+            body: Body::Bytes(Cow::Owned(body.into())),
         }
     }
 
@@ -219,7 +235,7 @@ impl Response {
         Self {
             status: StatusCode::Ok,
             content_type: media_type.as_str(),
-            body: Cow::Borrowed(body),
+            body: Body::Bytes(Cow::Borrowed(body)),
         }
     }
 
@@ -227,6 +243,14 @@ impl Response {
     pub fn with_status(mut self, status: StatusCode) -> Self {
         self.status = status;
         self
+    }
+
+    pub(crate) fn shared(body: Arc<[u8]>, content_type: &'static str) -> Self {
+        Self {
+            status: StatusCode::Ok,
+            content_type,
+            body: Body::Shared(body),
+        }
     }
 
     /// Returns the response status.
@@ -238,7 +262,7 @@ impl Response {
     ///
     /// This returned `&str` before alpha.4. Use `body_text()` when UTF-8 is needed.
     pub fn body(&self) -> &[u8] {
-        &self.body
+        self.body.as_ref()
     }
 
     /// Borrows the body as UTF-8, returning an error for invalid byte sequences.
@@ -267,7 +291,7 @@ impl Response {
             "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-store\r\nContent-Security-Policy: {}\r\n{}\r\n",
             self.status,
             self.content_type,
-            self.body.len(),
+            self.body().len(),
             CONTENT_SECURITY_POLICY,
             allow
         )
@@ -435,6 +459,22 @@ pub(crate) fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_preview_bodies_clone_handles_and_embedded_assets_still_borrow() {
+        let body: Arc<[u8]> = Arc::from(&b"shared"[..]);
+        let response = Response::shared(Arc::clone(&body), "text/plain; charset=utf-8");
+        let clone = response.clone();
+        assert_eq!(response.body().as_ptr(), body.as_ptr());
+        assert_eq!(clone.body().as_ptr(), body.as_ptr());
+        static ASSET: &[u8] = b"embedded";
+        assert_eq!(
+            Response::embedded(ASSET, MediaType::PlainText)
+                .body()
+                .as_ptr(),
+            ASSET.as_ptr()
+        );
+    }
 
     #[test]
     fn parses_raw_path_query_and_trimmed_case_insensitive_headers() {

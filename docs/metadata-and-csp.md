@@ -129,6 +129,12 @@ loopback-only development server and does not add public serving or TLS.
 
 ## Compatibility and verification
 
+Static export in alpha.7 writes the header contract alongside generated files;
+the hosting server must apply it explicitly. Its local preview uses the same
+CSP as ordinary responses. The mini-blog's static edition builds distinct
+path-based pagination canonicals from its explicit static paths. See
+[static export](static-export.md).
+
 All rendered documents now include the fixed viewport, so exact HTML snapshots
 change. Optional metadata is otherwise opt-in. HTTP responses gain one fixed
 header; their status, body bytes, content length, and HEAD behavior are preserved.

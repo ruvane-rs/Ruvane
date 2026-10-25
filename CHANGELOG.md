@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.0-alpha.7 — Unreleased
+
+- Add a separate preview command for existing completed exports, with bounded
+  manifest/file loading and no writes. Document HTTP preview versus file://
+  browsing, and ignore generated dist output and macOS folder metadata in Git.
+
+- Add StaticPath and StaticSite for explicitly enumerated static HTML pages
+  and trusted assets, with a portable lowercase ASCII path profile, fixed MIME
+  suffix checks, collision rejection, and file/count/total byte budgets.
+- Add deterministic export to a fresh directory, ancestor symlink checks,
+  exclusive file creation, provider-neutral manifest/headers, and a completion
+  marker created only after all writes succeed. Partial I/O failures leave
+  incomplete output without deleting or replacing existing data.
+- Add exact GET/HEAD preview routes backed by shared immutable bytes, retaining
+  loopback-only serving, CSP, query validation, and response budgets without
+  request-time filesystem access or per-response body copies.
+- Add a static mini-blog edition with shared layouts/content, five explicitly
+  enumerated articles, path-based pagination, canonical metadata, and local
+  assets. Add the blog export subcommand with optional local preview.
+- Add tests for path aliases, Unicode/case/device-name rejection, byte/count
+  boundaries, reproducibility, symlinks, existing destinations, interrupted
+  writes, export completeness, internal links, CSP, and shared response bodies.
+- Continue to use no third-party dependencies and forbid unsafe code.
+
 ## 0.1.0-alpha.6 — Unreleased
 
 - Add typed page metadata: bounded escaped descriptions, consistent robots

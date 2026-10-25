@@ -51,6 +51,25 @@ not emit an HTTP policy. CSP supplements escaping and does not sandbox server
 code or add authorization or CSRF protection. See
 [metadata and CSP](docs/metadata-and-csp.md).
 
+Starting with 0.1.0-alpha.7, static export uses explicit portable paths and
+bounded pages/assets. Output paths are derived from a restricted lowercase
+ASCII profile, never from request targets. Plans reject aliases, device names,
+duplicate/conflicting files, and MIME suffix mismatches. Content remains
+trusted application input: assets are not sanitized or decoded.
+
+Exports require a new destination under an existing trusted parent, reject
+observed ancestor symlinks, and exclusively create files. They never overwrite
+or recursively delete output. I/O failures may leave partial files without the
+final completion marker. The caller must prevent concurrent hostile changes
+to the parent and output tree; portable safe std APIs do not provide a complete
+filesystem sandbox. The marker is not an integrity signature or crash-durability
+guarantee. See [static export](docs/static-export.md) for the precise scope.
+
+Static previews serve registered shared bytes, not arbitrary disk paths. They
+retain the existing local HTTP profile and CSP. Exported files carry no HTTP
+headers themselves; the hosting server must apply the generated header contract
+and declared MIME types. GET search remains part of the server edition.
+
 The framework rejects ambiguous request framing before dispatch and uses
 fixed response headers. HTML strings are escaped by the renderer. Handler
 code remains trusted: response limits apply after construction, socket
