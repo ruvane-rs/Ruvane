@@ -1,9 +1,9 @@
 [package]
 name = "ruvane"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2024"
 rust-version = "1.85"
-description = "Dependency-free HTML rendering primitives for the Ruvane web framework."
+description = "A dependency-free Rust web framework with HTML rendering and a bounded local HTTP server."
 license = "MIT"
 repository = "https://github.com/ruvane-rs/Ruvane"
 readme = "README.md"
@@ -20,6 +20,7 @@ include = [
     "/src/**",
     "/tests/**",
     "/examples/**",
+    "/docs/**",
 ]
 
 [lib]
