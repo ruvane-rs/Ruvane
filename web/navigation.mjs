@@ -1,4 +1,4 @@
-import { decodePage, internalTarget, NAVIGATION_MEDIA_TYPE, NAVIGATION_STREAM_MEDIA_TYPE } from "./bridge.mjs";
+import { decodePage, decodeNavigationSnapshot, internalTarget, NAVIGATION_MEDIA_TYPE, NAVIGATION_STREAM_MEDIA_TYPE } from "./bridge.mjs";
 
 export const CACHE_LIMITS = Object.freeze({ entries: 32, bytes: 2097152, prefetches: 2, jobs: 32, ttlMs: 300000 });
 const OWNERS = new WeakSet(), KEY = "__ruvane_navigation_v1";
@@ -127,6 +127,19 @@ export function readBoundaries(root){
     return {kind:value("kind"),name:value("name"),pattern:value("pattern"),chain:value("chain")?value("chain").split(","):[],loading:number("loading"),error:number("error")};
   });
   return boundaryConfig(items);
+}
+
+/** Reads only the document's inert, bounded RVI1 metadata. No loader is called. */
+export function readInitialSnapshot(root){
+  if(!(root instanceof HTMLElement)||root.ownerDocument!==document)throw failure();
+  const items=root.querySelectorAll("#ruvane-initial"),node=items[0];
+  if(items.length!==1||document.querySelectorAll("#ruvane-initial").length!==1||node.parentNode!==root||node.localName!=="div"||node.attributes.length!==2||!node.hasAttribute("hidden")||node.childNodes.length!==1||node.firstChild.nodeType!==3)throw failure();
+  const text=node.textContent;
+  if(text.length>131104||text.length%2||!/^[0-9a-f]+$/.test(text))throw failure();
+  const bytes=new Uint8Array(text.length/2);for(let n=0;n<bytes.length;n++)bytes[n]=parseInt(text.slice(n*2,n*2+2),16);
+  const snapshot=decodeNavigationSnapshot(bytes);
+  if(snapshot.revision!==root.getAttribute("data-ruvane-revision")||snapshot.page.url!==target())throw failure();
+  return bytes;
 }
 
 /** Keeps page data in a bounded cache; live views belong to the runtime. */
@@ -375,9 +388,44 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     if(disposed||pending||!lastFailure||blocked||runtime.actionState().state!=="active")return Promise.resolve("skipped");
     const attempt=lastFailure;invalidate(attempt.url);return run(attempt.url,attempt.mode,attempt.point,attempt.accept,true,false);
   }
+  function initialDOM(page){
+    const fallback=outlet.lastChild,layouts=[],roots=[];
+    if(outlet.childNodes.length!==2||fallback.nodeType!==1||fallback.localName!=="div"||fallback.id!=="ruvane-fallback"||fallback.attributes.length!==1||outlet.querySelectorAll("#ruvane-fallback").length!==1)throw failure();
+    let slot=outlet;
+    for(const descriptor of page.layouts){
+      const host=slot.firstChild,own=host?.firstChild,child=host?.lastChild;
+      if(slot.childNodes.length!==(slot===outlet?2:1)||host?.nodeType!==1||host.localName!=="section"||host.attributes.length!==1||host.getAttribute("data-ruvane-layout")!==descriptor.name||host.childNodes.length!==2||own.localName!=="div"||own.attributes.length!==1||!own.hasAttribute("data-ruvane-layout-view")||own.childNodes.length!==1||child.localName!=="div"||child.attributes.length!==1||!child.hasAttribute("data-ruvane-child-outlet"))throw failure();
+      layouts.push({descriptor,host,own,outlet:child});roots.push(own.firstChild);slot=child;
+    }
+    const host=slot.firstChild;
+    if(slot.childNodes.length!==(slot===outlet?2:1)||host?.nodeType!==1||host.localName!=="div"||host.attributes.length!==2||!host.hasAttribute("data-ruvane-page")||host.getAttribute("tabindex")!=="-1"||host.childNodes.length!==1)throw failure();
+    roots.push(host.firstChild);return{layouts,roots,host,fallback};
+  }
+  function initialize(snapshotBytes,accept){
+    let transaction=null;
+    try{
+      const {revision,bytes,page}=decodeNavigationSnapshot(snapshotBytes),epoch=runtime.actionState().epoch;
+      if(revision!==runtime.applicationRevision||page.url!==target()||runtime.actionState().pending||runtime.actionState().uncertain||typeof runtime.preparePageHydration!=="function")throw failure();
+      runtime.validatePage(bytes);
+      if(accept&&!accept()){status.textContent="Native forms are ready.";return "native";}
+      if(disposed||pending||started)throw failure();
+      const server=initialDOM(page);transaction=runtime.preparePageHydration(server.roots,bytes);
+      const controllers=transaction.activate(),after=initialDOM(page);
+      if(after.host!==server.host||after.fallback!==server.fallback||!after.roots.every((root,n)=>root===server.roots[n])||page.url!==target()||runtime.actionState().epoch!==epoch||accept&&!accept()||disposed||pending||started)throw failure();
+      history.replaceState({...stateObject(history.state),[KEY]:entry(target()+location.hash,scrollX,scrollY)},"",location.href);
+      if(disposed||pending||started||page.url!==target())throw failure();
+      server.fallback.remove();transaction.commit();transaction=null;
+      branch=server.layouts.map((item,n)=>({...item,controller:controllers[n]}));current=controllers.at(-1);pageHost=server.host;activeURL=page.url;started=true;history.scrollRestoration="manual";
+      status.textContent=page.status===200?"Ready.":`Page ${page.status}.`;
+      if(page.failed!==null){lastFailure={url:page.url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(page.url,"error",false);}
+      return "success";
+    }catch{
+      transaction?.rollback();status.textContent="Interactive mode is unavailable. Native links and forms are ready.";return "native";
+    }
+  }
   scope.addEventListener("click",click); scope.addEventListener("pointerover",intend); scope.addEventListener("focusin",intend); window.addEventListener("popstate",pop); window.addEventListener("scroll",scroll,{passive:true});
   return Object.freeze({
-    start({accept}={}) { if (started || pending || disposed || accept !== undefined && typeof accept !== "function") throw failure(); return run(target(),"start",{x:scrollX,y:scrollY},accept); },
+    start({accept,snapshot}={}) { if (started || pending || disposed || accept !== undefined && typeof accept !== "function") throw failure(); if(snapshot!==undefined){idle=Promise.resolve(initialize(snapshot,accept));return idle;} return run(target(),"start",{x:scrollX,y:scrollY},accept); },
     navigate(url,{replace=false}={}) { return run(url,replace ? "replace" : "push"); },
     prefetch,
     retry,

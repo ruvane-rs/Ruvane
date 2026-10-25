@@ -103,6 +103,67 @@ fn app(loads: Arc<AtomicUsize>) -> App {
 fn runtime() -> ClientRuntime {
     ClientRuntime::new(b"\0asm\x01\0\0\0", 123).unwrap()
 }
+fn initial_snapshot(html: &str) -> ruvane::NavigationSnapshot {
+    let hex = html
+        .split("<div hidden id=\"ruvane-initial\">")
+        .nth(1)
+        .unwrap()
+        .split("</div>")
+        .next()
+        .unwrap();
+    assert!(
+        hex.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    );
+    let bytes = hex
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect::<Vec<_>>();
+    ruvane::NavigationSnapshot::decode(&bytes).unwrap()
+}
+#[test]
+fn ssr_carries_the_exact_initial_seed_without_executable_markup_or_an_extra_loader_call() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let mut app = app(Arc::clone(&loads));
+    app.client_page_cache("home", ruvane::NavigationCachePolicy::public(30).unwrap())
+        .unwrap();
+    let server = Running::new(app);
+    let (headers, bytes) = server.get("GET", "/?q=%3Cscript%3E", false);
+    let html = String::from_utf8(bytes).unwrap();
+    let snapshot = initial_snapshot(&html);
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    assert_eq!(snapshot.revision(), 123);
+    assert_eq!(snapshot.page().url().as_str(), "/?q=%3Cscript%3E");
+    assert_eq!(
+        snapshot.page().data().text("value"),
+        Some("<script> & Rust")
+    );
+    assert!(headers.contains("Cache-Control: no-store") && headers.contains("script-src 'self'"));
+    assert!(html.contains("&lt;script&gt; &amp; Rust"));
+    assert!(html.contains("data-ruvane-page=\"\" tabindex=\"-1\""));
+    assert_eq!(html.matches("id=\"ruvane-initial\"").count(), 1);
+    assert!(!html.contains("<script>"));
+    let (_, native) = server.get("GET", "/?native=yes", false);
+    assert!(
+        !String::from_utf8(native)
+            .unwrap()
+            .contains("id=\"ruvane-initial\"")
+    );
+    let (_, typed) = server.get("GET", "/", true);
+    assert!(typed.starts_with(b"RVP1"));
+}
+#[test]
+fn initial_snapshots_keep_ssr_layouts_and_scoped_errors() {
+    let server = Running::new(boundary_app());
+    for (url, status) in [("/items/1", 200), ("/items/99", 404)] {
+        let (headers, bytes) = server.get("GET", url, false);
+        assert!(headers.starts_with(&format!("HTTP/1.1 {status}")));
+        let snapshot = initial_snapshot(&String::from_utf8(bytes).unwrap());
+        assert_eq!(snapshot.page().status().as_u16(), status);
+        assert!(!snapshot.page().layouts().is_empty());
+    }
+}
 #[test]
 fn declarations_are_shared_without_running_loaders_and_runtime_is_explicit() {
     let loads = Arc::new(AtomicUsize::new(0));

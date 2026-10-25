@@ -12,6 +12,12 @@ Edit `src/pages.rs` to declare pages and their GET loaders once. Edit
 typed actions use `src/store.rs`; the bounded in-memory state resets on restart.
 The layout counter persists during client navigation. `?native=yes` blocks scripts.
 
+Startup reuses the server's page/layout nodes and embedded typed snapshot without
+another page GET. Early text edits and focus survive activation. Dirty native
+fallback forms decline activation; invalid metadata or DOM keeps native content
+available. Snapshots are public, inert and no-store. Rebuild both targets and
+browser assets together when changing shared components.
+
 The tasks section has a persistent workspace layout and a sibling settings page.
 Task details add a nested context layout. Moving between task IDs retains the
 workspace and recreates the context. Leaving tasks releases both layouts.

@@ -420,7 +420,7 @@ impl View {
             .map(|(_, commands)| commands)
     }
 
-    fn markup(&self, parent: u32, inert: bool, output: &mut String) {
+    fn markup(&self, parent: u32, inert: bool, editable: bool, output: &mut String) {
         use std::fmt::Write;
         for (index, node) in self
             .nodes
@@ -495,7 +495,10 @@ impl View {
                 }
             }
             if (matches!(node.tag, BrowserTag::Button | BrowserTag::Submit) || is_control(node.tag))
-                && (inert || node.disabled)
+                && (node.disabled
+                    || inert
+                        && !(editable
+                            && matches!(node.tag, BrowserTag::Input | BrowserTag::TextArea)))
             {
                 output.push_str(" disabled");
             }
@@ -513,7 +516,7 @@ impl View {
                 }
                 output.push_str(text(value).as_str());
             }
-            self.markup(id, inert, output);
+            self.markup(id, inert, editable, output);
             write!(output, "</{tag}>").unwrap();
         }
     }
@@ -522,12 +525,18 @@ impl View {
     pub fn render(&self) -> Result<Html, ViewError> {
         self.check()?;
         let mut output = String::new();
-        self.markup(0, false, &mut output);
+        self.markup(0, false, false, &mut output);
         Ok(Html::rendered(output))
     }
 
     /// Wraps server HTML with versioned props. Controls stay disabled until hydration.
     pub fn hydratable(&self, props: ComponentProps) -> Result<Html, ViewError> {
+        self.hydration_markup(props, false)
+    }
+    pub(crate) fn hydratable_page(&self, props: ComponentProps) -> Result<Html, ViewError> {
+        self.hydration_markup(props, true)
+    }
+    fn hydration_markup(&self, props: ComponentProps, editable: bool) -> Result<Html, ViewError> {
         self.check()?;
         let (kind, value) = props.state.to_wire();
         let mut output = format!(
@@ -535,7 +544,7 @@ impl View {
             crate::BROWSER_ABI_VERSION,
             props.component
         );
-        self.markup(0, true, &mut output);
+        self.markup(0, true, editable, &mut output);
         output.push_str("</div>");
         Ok(Html::rendered(output))
     }

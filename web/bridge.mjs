@@ -54,6 +54,15 @@ export function decodePage(bytes) {
   if(pos!==bytes.length)throw invalid();
   return Object.freeze({url,title,status,component:leaf.component,kind:leaf.kind,value:leaf.value,selected,failed,pending,layouts:Object.freeze(layouts)});
 }
+/** Decodes an inert initial-page envelope. Rust still checks ownership and schemas. */
+export function decodeNavigationSnapshot(bytes) {
+  if(!(bytes instanceof Uint8Array)||bytes.length<16||bytes.length>65552||String.fromCharCode(...bytes.slice(0,4))!=="RVI1")throw invalid();
+  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  if(view.getUint32(12,true)!==bytes.length-16)throw invalid();
+  const packet=bytes.slice(16),page=decodePage(packet);
+  if(page.pending!==null||page.selected!==0)throw invalid();
+  return Object.freeze({revision:view.getBigUint64(4,true).toString(),bytes:packet,page});
+}
 function actionPath(path) {
   if (typeof path !== "string" || path.length > 1024 || !path.startsWith("/") || path.includes("//") || /[^A-Za-z0-9\-._~!$&'()*+,;=:@/%]/.test(path)) throw invalid();
   for (const part of path.slice(1).split("/")) {
@@ -371,10 +380,10 @@ export async function createRuntime(url, options = {}) {
     const state = actionState(); for (const observer of [...actionObservers]) { try { observer(state); } catch { /* Observers do not control delivery. */ } }
   }
   function endAction(operation, uncertain = false) { if (!operation.ended) { operation.ended = true; uncertainActions ||= uncertain; actionChanged(); } }
-  let nextRoot = 0, busy = false, closed = false, faulted = false, finalRust = null;
+  let nextRoot = 0, busy = false, closed = false, faulted = false, finalRust = null, hydratingBranch = false;
 
   function live() { if (closed) throw new Error("Ruvane browser runtime disposed"); }
-  function forget(id, preserve = false) {
+  function forget(id, preserve = false, disable = true) {
     const view = views.get(id);
     if (!view) return;
     if (view.action) { const operation = view.action; clearTimeout(operation.timer); operation.controller.abort(); view.action = null; endAction(operation,true); }
@@ -384,7 +393,7 @@ export async function createRuntime(url, options = {}) {
     // A failed hydration leaves the server's content in place.
     for (const node of view.nodes.values()) {
       if (preserve) {
-        if (disableable(node.tag) && view.root.contains(node.element)) node.element.disabled = true;
+        if (disable && disableable(node.tag) && view.root.contains(node.element)) node.element.disabled = true;
       } else if (node.parent === 0 && node.element?.parentNode === view.root) node.element.remove();
     }
     view.nodes.clear(); view.events.clear(); view.edits.clear(); view.ingress.clear(); CLAIMS.delete(view.root); views.delete(id);
@@ -593,9 +602,10 @@ export async function createRuntime(url, options = {}) {
       else place(children, null);
     }
   }
-  function drain(id, phase) {
-    const decoded = commands(), view = views.get(id);
+  function drain(id, phase, decoded = commands()) {
+    const view = views.get(id);
     const actions = decoded.filter(command => command.op === 11), batch = decoded.filter(command => command.op !== 11);
+    if(hydratingBranch&&actions.length)throw new HydrationMismatch();
     if (actions.length > 1 || (phase === "dispose" && actions.length) || actions.some(command => command.view !== id || command.request <= view.lastAction || view.action)) throw invalid();
     if (phase === "dispose") {
       matchDom(view.nodes, view.root, false);
@@ -681,7 +691,7 @@ export async function createRuntime(url, options = {}) {
       throw error;
     } finally { busy = false; }
   }
-  function start(root, props, hydrated, page = null, boundary = false) {
+  function start(root, props, hydrated, page = null, boundary = false, prepare = false) {
     live(); host(root);
     if (!hydrated && root.childNodes.length) throw new Error("Ruvane mount requires an empty root");
     if (views.size === LIMITS.views || nextRoot === 0xffffffff) throw new RangeError("Ruvane view limit exceeded");
@@ -700,7 +710,14 @@ export async function createRuntime(url, options = {}) {
       if (views.has(id)) throw invalid();
       views.set(id, { root, hydrated, nodes: new Map([[0, { element: root, tag: 0, depth: 0, children: [], key: 0 }]]), nextNode: 0, listeners: new Map(), events: new Set(), edits: new Map(), ingress: new Set(), hydrationEdits: [], action: null, lastAction: 0, lastOutcome: "success", idlePromise: null, resolveIdle: null });
       CLAIMS.add(root);
-      drain(id, hydrated ? "hydrate" : "mount");
+      if(prepare){
+        const decoded=commands(),view=views.get(id);
+        if(decoded.some(command=>command.op===11))throw new HydrationMismatch();
+        const plan=planCommands(decoded,id,view,true);matchDom(plan.nodes,root,true);
+        for(const node of plan.nodes.values())if(field(node.tag)){const value=node.tag===12?node.element.checked:node.element.value;if(node.tag!==12&&!validText(node.tag,value))throw new HydrationMismatch();}
+        if(result(exports.ruvane_commands_clear())!==1)throw invalid();
+        view.prepared=decoded;
+      }else drain(id, hydrated ? "hydrate" : "mount");
       return Object.freeze({ id, dispatch: (event, value) => dispatch(id, event, value), whenIdle: () => whenIdle(id), dispose: () => disposeView(id) });
     } catch (error) {
       if (error instanceof HydrationMismatch || error instanceof MountRejected) {
@@ -744,7 +761,7 @@ export async function createRuntime(url, options = {}) {
       }
       drain(id, "dispatch");
     } catch (error) {
-      if (error instanceof PayloadRejected) { if (result(exports.ruvane_commands_clear()) !== 1) stop(true); }
+      if (error instanceof PayloadRejected || hydratingBranch && error instanceof HydrationMismatch) { if (result(exports.ruvane_commands_clear()) !== 1) stop(true); }
       else stop(true);
       throw error;
     } finally { busy = false; }
@@ -759,9 +776,63 @@ export async function createRuntime(url, options = {}) {
     } catch (error) { stop(true); throw error; }
     finally { busy = false; }
   }
+  function preparePageHydration(roots,bytes) {
+    live();const page=decodePage(bytes);
+    if(page.pending!==null||page.selected!==0||!Array.isArray(roots)||roots.length!==page.layouts.length+1||views.size+roots.length>LIMITS.views)throw new MountRejected();
+    const controllers=[],undo=[];let activated=false,finished=false;
+    const focused=document.activeElement,savedSelection=selection(focused),point={x:scrollX,y:scrollY};
+    function remember(root){
+      const records=[];
+      function visit(node){
+        if(node.nodeType===3){records.push({node,text:node.data});return;}
+        const item={node,children:[...node.childNodes],attributes:[...node.attributes].map(a=>[a.name,a.value])};
+        if(node.localName==="input"||node.localName==="textarea"){item.value=node.value;item.checked=node.checked;}
+        records.push(item);for(const child of item.children)visit(child);
+      }
+      visit(root);
+      return()=>{for(const item of records){if("text"in item){item.node.data=item.text;continue;}item.node.replaceChildren(...item.children);for(const a of [...item.node.attributes])item.node.removeAttribute(a.name);for(const [name,value]of item.attributes)item.node.setAttribute(name,value);if("value"in item){item.node.value=item.value;if(item.checked!==undefined)item.node.checked=item.checked;}}};
+    }
+    function rollback(){
+      if(finished)return false;finished=true;
+      for(const controller of [...controllers].reverse()){
+        if(!views.has(controller.id))continue;
+        try{releaseNative(controller.id);forget(controller.id,true,false);}catch{stop(true);}
+      }
+      for(const restore of undo)restore();
+      if(focused?.isConnected){focused.focus({preventScroll:true});restoreSelection(focused,savedSelection);}
+      window.scrollTo(point.x,point.y);undo.length=0;controllers.length=0;return true;
+    }
+    try{
+      for(let index=0;index<roots.length;index++){
+        const root=roots[index],expected=page.layouts[index]??page,props=readProps(root);
+        if(root.localName!=="div"||root.attributes.length!==3||props.component!==expected.component||props.kind!==expected.kind||props.value!==expected.value)throw new HydrationMismatch();
+        const selected=bytes.slice();if(index<page.layouts.length)selected[4]=index+1;
+        controllers.push(start(root,null,true,selected,false,true));
+      }
+      for(const root of roots)undo.push(remember(root));
+    }catch(error){rollback();throw error;}
+    return Object.freeze({
+      activate(){
+        if(finished||activated||closed||busy)throw invalid();activated=true;hydratingBranch=true;
+        try{
+          for(const controller of controllers){
+            const view=views.get(controller.id),decoded=view.prepared;delete view.prepared;
+            busy=true;try{drain(controller.id,"hydrate",decoded);}finally{busy=false;}
+            const edits=view.hydrationEdits;view.hydrationEdits=[];
+            adopt(view,controller.id,edits);
+          }
+          return Object.freeze([...controllers]);
+        }catch(error){rollback();throw error;}
+        finally{hydratingBranch=false;busy=false;}
+      },
+      commit(){if(finished||!activated)throw invalid();finished=true;undo.length=0;controllers.length=0;},
+      rollback,
+    });
+  }
   return Object.freeze({
     applicationRevision,
     validatePage,
+    preparePageHydration,
     actionState,
     subscribeActions(observer) {
       live(); if (typeof observer !== "function" || actionObservers.size >= 16) throw new Error("Invalid Ruvane action observer");

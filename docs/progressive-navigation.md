@@ -17,9 +17,10 @@ no parallel outlets or out-of-order segments. The generated application enables
 this on `/tasks/project`; its slow link adds `?delay=yes`.
 
 The application bootstrap enables `createNavigator(..., { progressive: true })`.
-Manually constructed navigators default to false. Startup still requests a
-complete packet so the native dirty-form activation guard runs before any SSR
-content is hidden. Foreground navigation, pop, refresh and retry can request the
+Manually constructed navigators default to false. The App bootstrap now uses
+[initial snapshot hydration](initial-hydration.md) without another GET and keeps
+the native dirty-form guard. Manual startup without a snapshot still requests a
+complete packet. Foreground navigation, pop, refresh and retry can request the
 progressive representation. Non-opted-in pages return complete packets.
 Prefetch always requests a complete packet.
 

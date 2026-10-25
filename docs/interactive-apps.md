@@ -102,15 +102,18 @@ stylesheets are accepted; register their bytes with the ordinary `App::asset`.
 The shell is `fn(Html) -> Html` and is common to all client pages. It must keep
 the supplied outlet/status content and must not depend on the changing route or
 page title. It may include sibling hydratable islands. The bootstrap hydrates
-those islands, then prepares the current page with the navigator. The page title
+those islands, then hydrates the current page/layouts from an inert embedded
+snapshot without another GET. The page title
 and outlet change during navigation; the shell and its islands retain state.
 Route-dependent nested client layouts use [persistent client branches](client-layouts.md).
 
-The framework reserves `ruvane-boundaries`, `ruvane-application`, `ruvane-status`, `ruvane-outlet` and
+The framework reserves `ruvane-initial`, `ruvane-boundaries`, `ruvane-application`, `ruvane-status`, `ruvane-outlet` and
 `ruvane-fallback` element IDs. Application shells must not duplicate them. The
-bootstrap declines initial replacement when a native fallback field has focus
+bootstrap declines initial activation when a native fallback field has focus
 or a changed value, so it does not discard a native draft. It releases listeners
 and owners on pagehide and reloads a restored back/forward-cache document.
+See [initial hydration](initial-hydration.md) for the envelope, node reuse,
+early text fields, transactional validation and failure cleanup.
 
 ## Application exports and revisions
 

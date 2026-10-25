@@ -12,6 +12,7 @@ mod html;
 mod http;
 mod metadata;
 mod navigation;
+mod navigation_snapshot;
 mod page_route;
 mod reactive;
 mod routing;
@@ -63,6 +64,7 @@ pub use navigation::{
     NavigationLayout, NavigationMatch, NavigationPage, NavigationRoutes, navigation_link,
     prefetch_link,
 };
+pub use navigation_snapshot::{MAX_NAVIGATION_SNAPSHOT_BYTES, NavigationSnapshot};
 pub use page_route::{MAX_PAGE_NAME_BYTES, MAX_PAGE_SEGMENTS, PageParams, PageRoute};
 pub use reactive::{
     Effect, Memo, ReactiveError, ReactiveLimits, ReactiveRuntime, ReactiveStats, Scope, Signal,

@@ -90,12 +90,17 @@ navigator.dispose();
 runtime.dispose();
 ```
 
-`start()` first leaves SSR intact, then prepares a seeded Rust page in a detached
+Without a snapshot, `start()` first leaves SSR intact, then prepares a seeded Rust page in a detached
 empty host. This initial replacement does not hydrate arbitrary SSR HTML.
 Use `start({ accept: () => boolean })` to decline activation if native form
 fields have focus or contain drafts. A declined start releases the prepared
 owner and returns `native`. The example checks both focus and changed fields.
 Sibling layout islands can use normal hydration and remain independent.
+
+The App bootstrap uses `start({ snapshot, accept })` with its embedded RVI1
+snapshot. It hydrates the existing page/layout roots without a second GET.
+The whole branch is validated before activation; failure preserves server nodes
+and native drafts. See [initial hydration](initial-hydration.md).
 
 Successful navigation prepares and validates the next page before changing
 history or disposing the previous page. `pushState`, `replaceState` and

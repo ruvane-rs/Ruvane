@@ -41,6 +41,8 @@ document header before deferred content, with bounded pull-based production.
 Opted-in App pages also support [progressive client navigation](docs/progressive-navigation.md):
 validated layouts become usable while the leaf page is loading, with rollback
 on interruption and history committed only after complete delivery.
+The initial App document now [hydrates from its embedded server snapshot](docs/initial-hydration.md),
+reusing page and layout nodes without another page GET.
 
 Create an interactive project from a local checkout:
 

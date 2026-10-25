@@ -456,6 +456,15 @@ impl App {
         data: &ActionData,
         read_only: bool,
     ) -> Result<Html, PageError> {
+        Self::client_view_inputs(factory, props, data, read_only, false)
+    }
+    fn client_view_inputs(
+        factory: ComponentFactory,
+        props: ComponentProps,
+        data: &ActionData,
+        read_only: bool,
+        editable: bool,
+    ) -> Result<Html, PageError> {
         let mut component = factory(props).map_err(|_| PageError::InternalServerError)?;
         component
             .page_data(data.clone())
@@ -471,8 +480,12 @@ impl App {
         if component.take_action().is_some() {
             return Err(PageError::InternalServerError);
         }
-        view.hydratable(props)
-            .map_err(|_| PageError::InternalServerError)
+        (if editable {
+            view.hydratable_page(props)
+        } else {
+            view.hydratable(props)
+        })
+        .map_err(|_| PageError::InternalServerError)
     }
     fn client_finish(
         &self,
@@ -482,13 +495,21 @@ impl App {
         policy: crate::NavigationCachePolicy,
     ) -> Result<Response, PageError> {
         let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
-        let render = |props, data: &ActionData| Self::client_view(factory, props, data, false);
-        let mut page_html = Self::client_view(
+        let native = request.query_params().get("native") == Some("yes");
+        let render = |props, data: &ActionData| {
+            Self::client_view_inputs(factory, props, data, false, !native)
+        };
+        let page_view = Self::client_view_inputs(
             factory,
             packet.props(),
             packet.data(),
             packet.failed_segment().is_some(),
+            !native,
         )?;
+        let mut page_html = Html::rendered(format!(
+            "<div data-ruvane-page=\"\" tabindex=\"-1\">{}</div>",
+            page_view.as_str()
+        ));
         for layout in packet.layouts().iter().rev() {
             let own = render(layout.props(), layout.data())?;
             page_html = Self::layout_html(layout.name(), own, page_html);
@@ -533,8 +554,12 @@ impl App {
         }
         body.push_str(wrapped.as_str());
         body.push_str(self.boundary_manifest().as_str());
+        if !native {
+            let snapshot = crate::NavigationSnapshot::new(runtime.revision, packet.clone())
+                .map_err(|_| PageError::InternalServerError)?;
+            body.push_str(snapshot.html().as_str());
+        }
         body.push_str("</div>");
-        let native = request.query_params().get("native") == Some("yes");
         if !native {
             body.push_str(
                 crate::module_script(&InternalUrl::new(&runtime.asset("application.mjs")).unwrap())

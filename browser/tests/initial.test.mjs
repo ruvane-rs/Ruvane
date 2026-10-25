@@ -1,0 +1,12 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { decodeNavigationSnapshot } from "../../web/bridge.mjs";
+const word=n=>[n&255,n>>>8&255,n>>>16&255,n>>>24&255];
+const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
+function page(version=1,selected=0){return new Uint8Array([82,86,80,48+version,...(version===1?[]:[selected]),...(version===4?[0]:[]),200,0,...text("/tasks?q=%3Cscript%3E"),...text("Report 🦀"),...word(9),...word(1),...word(0),...word(7),82,86,65,49,0,0,0,...(version===1?[]:[0])]);}
+function snapshot(packet=page(),revision=9007199254740993n){const bytes=new Uint8Array(16+packet.length),view=new DataView(bytes.buffer);bytes.set([82,86,73,49]);view.setBigUint64(4,revision,true);view.setUint32(12,packet.length,true);bytes.set(packet,16);return bytes;}
+test("RVI1 keeps complete public packets and exact u64 revisions",()=>{for(const revision of [0n,1n,9007199254740993n,0xffffffffffffffffn]){const decoded=decodeNavigationSnapshot(snapshot(page(),revision));assert.equal(decoded.revision,String(revision));assert.equal(decoded.page.url,"/tasks?q=%3Cscript%3E");assert.equal(decoded.page.title,"Report 🦀");assert.deepEqual(decoded.bytes,page());}});
+test("RVI1 rejects every truncation, trailing bytes and mismatched lengths",()=>{const bytes=snapshot();for(let n=0;n<bytes.length;n++)assert.throws(()=>decodeNavigationSnapshot(bytes.slice(0,n)));assert.throws(()=>decodeNavigationSnapshot(new Uint8Array([...bytes,0])));for(const index of [0,12,13,14,15,16]){const bad=bytes.slice();bad[index]^=255;assert.throws(()=>decodeNavigationSnapshot(bad));}});
+test("pending prefixes and selected or malformed branches cannot initialize a page",()=>{assert.throws(()=>decodeNavigationSnapshot(snapshot(page(4))));assert.throws(()=>decodeNavigationSnapshot(snapshot(page(2,1))));const bad=page();bad[4]=201;assert.throws(()=>decodeNavigationSnapshot(snapshot(bad)));});
+test("snapshot input types and envelope budgets are bounded before decoding",()=>{for(const value of [null,{},new ArrayBuffer(100),new Uint8Array(65553)])assert.throws(()=>decodeNavigationSnapshot(value));});
+test("decoded packet bytes are isolated from subsequent envelope mutation",()=>{const bytes=snapshot(),decoded=decodeNavigationSnapshot(bytes);bytes.fill(0);assert.deepEqual(decoded.bytes,page());assert.equal(decoded.page.pending,null);});

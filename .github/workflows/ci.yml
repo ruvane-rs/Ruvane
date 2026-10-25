@@ -35,6 +35,7 @@ jobs:
           node --test browser/tests/bridge.test.mjs
           node --test browser/tests/application.test.mjs
           node --test browser/tests/progressive.test.mjs
+          node --test browser/tests/initial.test.mjs
           cargo check --offline --locked -p ruvane-browser --no-default-features --target wasm32-unknown-unknown
       - name: Build documentation
         env:

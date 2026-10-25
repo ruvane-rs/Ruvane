@@ -142,6 +142,10 @@ not make a page interactive. Static suffix/manifest support for .js, .mjs and
 
 ## Browser ABI v11
 
+Alpha.25 reuses the page ingress for transactional initial App hydration from
+an inert RVI1 snapshot. No export or ABI change is required. See
+[initial hydration](initial-hydration.md).
+
 Alpha.24 adds RVP4 pending prefixes for ordered client navigation. Validation
 checks their loaded layouts without a leaf seed; pending leaves cannot mount.
 The same 22 numeric exports remain. See

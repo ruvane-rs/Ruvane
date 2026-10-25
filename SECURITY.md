@@ -1,5 +1,17 @@
 # Security
 
+Alpha.25 embeds a bounded inert RVI1 snapshot in interactive App HTML. Hex text
+cannot inject markup, but its seeds remain public browser data. HTML stays
+no-store. The bootstrap checks exact target/revision and Rust/Wasm validates
+complete ownership, props, schemas and resources before page events activate.
+The whole branch must match its server DOM. Failed activation releases all
+temporary owners and restores nodes, attributes, draft values and selection.
+Native fallback guards remain active and input adoption cannot send automatic
+POST actions. Corrupt startup does not trigger a hidden recovery GET. Late Wasm
+completion after pagehide is retired. Application callbacks remain trusted.
+ABI v11, existing CSP values and the 22 numeric exports remain unchanged. See
+[initial hydration](docs/initial-hydration.md).
+
 Alpha.24 adds ordered progressive client navigation. RVS1 binds the exact
 application revision and request token; each RVP4 prefix passes shared route,
 canonical key, props and component schema validation in Rust/Wasm. Pending leaves

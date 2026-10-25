@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.25 — Unreleased
+
+- Embed a bounded inert RVI1 initial snapshot with the exact server page and
+  module revision. Add a first-party codec without changing navigation formats.
+- Hydrate App layouts and pages from their existing DOM and seeds, with no
+  second page GET. Keep shell islands and matching adopted parents alive.
+- Prepare the full branch before activation and roll back controls, fields,
+  listeners and owners after validation or commit failures.
+- Allow early text editing on interactive App pages, preserve focus/selection
+  and native fallback guards, and refuse automatic actions during input adoption.
+- Retire late startup after document departure, hydrate typed SSR error scopes,
+  and keep snapshots out of the cache. Native SSR and generic hydration remain.
+- Add codec, SSR and browser regression coverage while retaining ABI v11,
+  22 numeric exports, two first-party packages and zero third-party dependencies.
+
 ## 0.1.0-alpha.24 — Unreleased
 
 - Add explicit App page streaming with ordered root-first layouts and a final
