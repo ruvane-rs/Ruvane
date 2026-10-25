@@ -134,6 +134,11 @@ export function readInitialSnapshot(root){
   if(!(root instanceof HTMLElement)||root.ownerDocument!==document)throw failure();
   const items=root.querySelectorAll("#ruvane-initial"),node=items[0];
   if(items.length!==1||document.querySelectorAll("#ruvane-initial").length!==1||node.parentNode!==root||node.localName!=="div"||node.attributes.length!==2||!node.hasAttribute("hidden")||node.childNodes.length!==1||node.firstChild.nodeType!==3)throw failure();
+  const profile=root.getAttribute("data-ruvane-document");
+  if(profile!==null){
+    const markers=root.querySelectorAll("#ruvane-complete"),end=markers[0];
+    if(profile!=="stream"||document.readyState==="loading"||markers.length!==1||document.querySelectorAll("#ruvane-complete").length!==1||end.parentNode!==root||end!==root.lastElementChild||node.nextElementSibling!==end||end.localName!=="div"||end.attributes.length!==2||!end.hasAttribute("hidden")||end.childNodes.length!==0)throw failure();
+  }
   const text=node.textContent;
   if(text.length>131104||text.length%2||!/^[0-9a-f]+$/.test(text))throw failure();
   const bytes=new Uint8Array(text.length/2);for(let n=0;n<bytes.length;n++)bytes[n]=parseInt(text.slice(n*2,n*2+2),16);

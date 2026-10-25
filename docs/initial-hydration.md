@@ -3,7 +3,7 @@
 Alpha.25 activates App pages and layouts directly from their server HTML and
 public seeds. The application bootstrap sends no second page GET and runs no
 page loader in the browser. Native SSR remains complete; initial document
-streaming is a separate feature.
+streaming is available as an [explicit opt-in](document-streaming.md) since alpha.26.
 
 ## Server output
 

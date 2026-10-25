@@ -39,6 +39,12 @@ no-store; complete public prefetches still use the existing bounded cache.
 `PageContext::stream_context()` lets progressive loaders check their deadline
 and shutdown cooperatively.
 
+Open **Streaming App document** for `/tasks/document?delay=yes`. Its shell and
+workspace layout arrive before the leaf. A fixed `ClientDocument` head is known
+before headers, then the final snapshot hydrates the same server nodes without
+a second page GET. Late loader failures leave the response incomplete. Use
+`?native=yes` for buffered SSR with normal HTTP error statuses.
+
 Open **Streaming SSR** for `/stream`, a native progressive report. Its header
 arrives before the deferred content. Edit `progressive_report` in `src/main.rs`;
 typed fragments use `HtmlStream` with the default byte, yield and time budgets.

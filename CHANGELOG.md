@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-alpha.26 — Unreleased
+
+- Add opt-in initial App document streaming with a fixed typed head, root-first
+  layouts, a final RVI1 snapshot and hydration of the existing server nodes.
+- Validate route/props/head before headers; keep native and navigation profiles
+  separate and retain bounded cooperative transport with single loader execution.
+- Require inert completion metadata before streamed document activation. Withhold
+  the final suffix until producer cleanup succeeds, including native/RVS1 streams.
+- Leave late failures incomplete without diagnostics, partial activation or an
+  automatic page GET. Preserve early text editing and native fallback guards.
+- Add a generated application demo and native/browser coverage. Keep ABI v11,
+  22 exports, four runtime assets and zero third-party dependencies.
+
 ## 0.1.0-alpha.25 — Unreleased
 
 - Embed a bounded inert RVI1 initial snapshot with the exact server page and

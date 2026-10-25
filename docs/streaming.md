@@ -91,7 +91,8 @@ application's responsibility.
 Streaming responses use `Transfer-Encoding: chunked`, omit Content-Length and
 retain `Connection: close`, `Cache-Control: no-store`, nosniff and the fixed
 script-blocking CSP. Chunk lengths count payload bytes. No trailers, extensions,
-compression, arbitrary headers or interactive streaming CSP are exposed.
+compression or arbitrary headers are exposed by this API. Initial App documents have their own
+[opt-in streaming path](document-streaming.md) with the existing interactive CSP.
 Chunked request bodies are still rejected. See
 [RFC 9112 section 7.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-7.1).
 
@@ -146,7 +147,7 @@ explicitly to the router after `App::router`; it is not a client-page loader.
 Alpha.24 also offers [progressive client navigation](progressive-navigation.md)
 for opted-in App pages, with typed layouts and a pending leaf. That RVS1 data
 transport shares the bounded socket writer but has its own ownership protocol.
-Complete RVP1/RVP2/RVP3 navigation remains available. Interactive initial document
-streaming, partial hydration, parallel outlets and out-of-order replacement
-remain separate work. The loopback development transport still has no TLS,
+Complete RVP1/RVP2/RVP3 navigation remains available.
+[Initial App document streaming](document-streaming.md) has a separate opt-in.
+Partial hydration, parallel outlets and out-of-order replacement remain future work. The loopback development transport still has no TLS,
 HTTP/2 or public deployment profile.

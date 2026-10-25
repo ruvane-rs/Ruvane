@@ -249,6 +249,11 @@ impl Response {
         response.navigation_variance = true;
         response
     }
+    pub(crate) fn stream_application(plan: crate::streaming::BodyStream) -> Self {
+        let mut response = Self::interactive_html(Html::default()).navigation_variance();
+        response.body = Body::Stream(Arc::new(plan));
+        response
+    }
     /// Whether this response contains a lazy stream rather than a complete body.
     pub fn is_streaming(&self) -> bool {
         matches!(self.body, Body::Stream(_))

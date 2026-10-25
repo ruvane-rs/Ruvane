@@ -4,9 +4,11 @@ use crate::{
     NavigationPage, NavigationRoutes,
 };
 mod boundaries;
+mod document;
 mod layouts;
 mod progressive;
 pub use boundaries::ClientBoundary;
+pub use document::{ClientDocument, ClientDocumentHead};
 pub(super) use layouts::ClientLayout;
 pub use layouts::ClientLayoutData;
 
@@ -91,6 +93,7 @@ impl ClientRuntime {
         })
     }
     /// Sets a common shell. It must not depend on the current route or page title.
+    /// Streamed documents require children exactly once in normal block flow.
     pub fn shell(mut self, shell: fn(Html) -> Html) -> Self {
         self.shell = shell;
         self
@@ -138,6 +141,7 @@ pub(super) struct ClientRoute {
     layout: Option<usize>,
     boundary: Option<ClientBoundary>,
     progressive: bool,
+    document: Option<ClientDocumentHead>,
 }
 
 impl App {
@@ -198,6 +202,7 @@ impl App {
             layout: None,
             boundary: None,
             progressive: false,
+            document: None,
         });
         candidate.validate()?;
         *self = candidate;
@@ -410,6 +415,14 @@ impl App {
             && self.pages[index].client.unwrap().progressive
         {
             return self.client_stream_response(index, context, request);
+        }
+        if !matches!(
+            request.header("accept"),
+            Some(crate::NAVIGATION_MEDIA_TYPE | crate::NAVIGATION_STREAM_MEDIA_TYPE)
+        ) && request.query_params().get("native") != Some("yes")
+            && self.pages[index].client.unwrap().document.is_some()
+        {
+            return self.client_document_response(index, context, request);
         }
         self.client_branch_response(index, context, request)
     }

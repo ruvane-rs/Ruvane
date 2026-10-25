@@ -499,7 +499,7 @@ fn producer_drop_panics_cannot_mark_completion_or_kill_the_worker() {
     let wire = server.request("GET");
     let (body, complete, _) = decode(&wire);
     assert!(!complete);
-    assert!(body.ends_with(b"</body></html>"));
+    assert!(!body.ends_with(b"</body></html>"));
     server.healthy();
 }
 #[test]

@@ -7,8 +7,8 @@ use crate::{
     RouteError, Router, SiteOrigin, StaticPath, StaticSite, StatusCode, UrlError,
 };
 pub use client::{
-    ClientBoundary, ClientLayoutData, ClientPageData, ClientRuntime, ComponentFactory,
-    application_revision,
+    ClientBoundary, ClientDocument, ClientDocumentHead, ClientLayoutData, ClientPageData,
+    ClientRuntime, ComponentFactory, application_revision,
 };
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};

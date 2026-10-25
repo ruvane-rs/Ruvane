@@ -229,7 +229,7 @@ type ByteFactory =
     dyn Fn(&StreamContext) -> Result<Box<dyn ByteProducer>, StreamError> + Send + Sync;
 pub(crate) struct BodyStream {
     prefix: Vec<u8>,
-    suffix: &'static [u8],
+    suffix: Vec<u8>,
     limits: StreamLimits,
     factory: Arc<ByteFactory>,
 }
@@ -244,7 +244,7 @@ impl fmt::Debug for BodyStream {
 impl BodyStream {
     pub(crate) fn new(
         prefix: Vec<u8>,
-        suffix: &'static [u8],
+        suffix: impl Into<Vec<u8>>,
         limits: StreamLimits,
         factory: impl Fn(&StreamContext) -> Result<Box<dyn ByteProducer>, StreamError>
         + Send
@@ -253,7 +253,7 @@ impl BodyStream {
     ) -> Self {
         Self {
             prefix,
-            suffix,
+            suffix: suffix.into(),
             limits,
             factory: Arc::new(factory),
         }
@@ -318,8 +318,15 @@ impl BodyStream {
                 emit(&fragment)?;
             }
         }
+        context.check()
+    }
+    pub(crate) fn finish(
+        &self,
+        context: &StreamContext,
+        mut emit: impl FnMut(&[u8]) -> Result<(), StreamError>,
+    ) -> Result<(), StreamError> {
         context.check()?;
-        emit(self.suffix)
+        emit(&self.suffix)
     }
 }
 const END: &[u8] = b"</body></html>";
@@ -380,6 +387,12 @@ mod tests {
         let mut producer = plan.start(&context).unwrap();
         let mut output = Vec::new();
         plan.send(producer.as_mut(), &context, cap, |chunk| {
+            output.extend_from_slice(chunk);
+            Ok(())
+        })
+        .unwrap();
+        drop(producer);
+        plan.finish(&context, |chunk| {
             output.extend_from_slice(chunk);
             Ok(())
         })

@@ -1,5 +1,16 @@
 # Security
 
+Alpha.26 adds opt-in initial App document streaming. The typed head and route
+props are resolved before headers. HTML is escaped and bounded; all seeds remain
+public, no-store browser data. The completion suffix is withheld until producer
+cleanup succeeds. Streamed startup requires the complete snapshot and a unique
+inert end marker before preparing any page events. Late failures truncate the
+response without diagnostics, partial activation or automatic data retry.
+Native-only SSR retains buffered errors and its blocking CSP. The end marker
+proves generation completed, not independent verification of HTTP framing by
+document scripts. Callbacks remain trusted and cancellation is cooperative.
+See [initial document streaming](docs/document-streaming.md).
+
 Alpha.25 embeds a bounded inert RVI1 snapshot in interactive App HTML. Hex text
 cannot inject markup, but its seeds remain public browser data. HTML stays
 no-store. The bootstrap checks exact target/revision and Rust/Wasm validates

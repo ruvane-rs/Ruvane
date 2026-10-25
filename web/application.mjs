@@ -17,7 +17,7 @@ try {
     const fallback = root.querySelector("#ruvane-fallback");
     return !fallback || !fallback.contains(document.activeElement) && ![...fallback.querySelectorAll("input,textarea")].some(field => field.type === "checkbox" ? field.checked !== field.defaultChecked : field.value !== field.defaultValue);
   } });
-  if(result==="success")root.querySelector("#ruvane-initial").remove();
+  if(result==="success"){root.querySelector("#ruvane-initial").remove();root.querySelector("#ruvane-complete")?.remove();}
   else navigator.dispose();
 } catch {
   navigator?.dispose();

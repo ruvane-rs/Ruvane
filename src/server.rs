@@ -355,7 +355,13 @@ fn serve(
         };
         let dropped = catch_unwind(AssertUnwindSafe(|| drop(producer))).is_ok();
         if outcome.is_ok() && dropped && context.check().is_ok() {
-            let _ = write_until(&mut job.stream, b"0\r\n\r\n", deadline, stopped);
+            let finished = plan.finish(&context, |bytes| {
+                write_chunk(&mut job.stream, bytes, deadline, stopped)
+                    .map_err(|_| StreamError::Transport)
+            });
+            if finished.is_ok() && context.check().is_ok() {
+                let _ = write_until(&mut job.stream, b"0\r\n\r\n", deadline, stopped);
+            }
         }
     } else if written.is_ok() && !head {
         let _ = write_until(&mut job.stream, response.body(), deadline, stopped);

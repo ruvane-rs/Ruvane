@@ -43,6 +43,8 @@ validated layouts become usable while the leaf page is loading, with rollback
 on interruption and history committed only after complete delivery.
 The initial App document now [hydrates from its embedded server snapshot](docs/initial-hydration.md),
 reusing page and layout nodes without another page GET.
+Opted-in pages can also [stream their initial App document](docs/document-streaming.md):
+the shell and layouts arrive first, followed by the leaf and final snapshot.
 
 Create an interactive project from a local checkout:
 

@@ -75,7 +75,7 @@ impl App {
             let origin = context.origin.cloned();
             let plan = BodyStream::new(
                 prefix,
-                &[0, 0, 0, 0],
+                [0, 0, 0, 0],
                 StreamLimits {
                     chunk_bytes: MAX_NAVIGATION_BYTES,
                     body_bytes: MAX_NAVIGATION_STREAM_BYTES,
