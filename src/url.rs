@@ -298,6 +298,22 @@ pub struct InternalUrl {
 }
 
 impl InternalUrl {
+    /// Validates an encoded internal path and optional URI query, preserving spelling.
+    pub fn from_target(target: &str) -> Result<Self, UrlError> {
+        if target.len() > MAX_INTERNAL_URL_BYTES {
+            return Err(UrlError::TooLarge);
+        }
+        let (path, query) = target
+            .split_once('?')
+            .map_or((target, None), |(path, query)| (path, Some(query)));
+        let mut url = Self::new(path)?;
+        if let Some(query) = query {
+            let fields = Query::parse(query)?;
+            url.query_keys = fields.iter().map(|(key, _)| key.to_owned()).collect();
+            url.encoded = target.to_owned();
+        }
+        Ok(url)
+    }
     /// Validates an already encoded internal path, without decoding it in place.
     ///
     /// Empty leading/trailing root segments are allowed; empty interior
@@ -326,7 +342,7 @@ impl InternalUrl {
     /// assert_eq!(url.as_str(), "/articles/%F0%9F%A6%80%20%26%20Rust");
     /// ```
     pub fn segment(mut self, value: &str) -> Result<Self, UrlError> {
-        if !self.query_keys.is_empty() {
+        if self.encoded.contains('?') {
             return Err(UrlError::QueryAlreadyStarted);
         }
         valid_segment(value)?;
@@ -357,12 +373,22 @@ impl InternalUrl {
         }
         let key_encoded = encode(key);
         let value_encoded = encode(value);
-        if self.encoded.len() + key_encoded.len() + value_encoded.len() + 2 > MAX_INTERNAL_URL_BYTES
+        let separator = usize::from(
+            !self
+                .encoded
+                .split_once('?')
+                .is_some_and(|(_, query)| query.is_empty()),
+        );
+        if self.encoded.len() + key_encoded.len() + value_encoded.len() + separator + 1
+            > MAX_INTERNAL_URL_BYTES
         {
             return Err(UrlError::TooLarge);
         }
-        self.encoded
-            .push(if self.query_keys.is_empty() { '?' } else { '&' });
+        if !self.encoded.contains('?') {
+            self.encoded.push('?');
+        } else if separator != 0 {
+            self.encoded.push('&');
+        }
         self.encoded.push_str(&key_encoded);
         self.encoded.push('=');
         self.encoded.push_str(&value_encoded);

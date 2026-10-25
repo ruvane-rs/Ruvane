@@ -47,7 +47,7 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="5" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="6" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
@@ -140,15 +140,15 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v5
+## Browser ABI v6
 
-Alpha.17 adds action completions and uses RVN4 command frames. Rebuild the Wasm and use its
-matching bridge together. The module exports memory and these sixteen functions,
+Alpha.18 adds typed page ingress and internal links with RVN5 command frames. Rebuild the Wasm and use its
+matching bridge together. The module exports memory and these nineteen functions,
 with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 5 |
+| `ruvane_abi_version()` | Returns 6 |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
 | `ruvane_dispatch(view, node, event, kind, value)` | Commit an event; 1 on success, zero on error |
 | `ruvane_event_begin(view, node, event, length)` | Start one text payload of 0..=1024 bytes |
@@ -156,6 +156,9 @@ with no host imports:
 | `ruvane_action_begin(view, request, length)` | Stage at most 64 KiB for a live action |
 | `ruvane_action_chunk(word, count)` | Append 1..=4 little-endian reply bytes |
 | `ruvane_action_complete(view, request, kind)` | Commit RVA1 (0) or failure (1..=4); 1 handled, 2 handled malformed RVA1, 0 ABI error |
+| `ruvane_page_begin(length)` | Stage one RVP1 packet of at most 64 KiB |
+| `ruvane_page_chunk(word, count)` | Append 1..=4 little-endian page bytes |
+| `ruvane_page_mount(root)` | Validate route/seed and create a prepared page owner |
 | `ruvane_dispose(view)` | 1 on success, zero for a stale/invalid view |
 | `ruvane_commands_ptr()` | Borrowed output offset |
 | `ruvane_commands_len()` | Output bytes including the frame header |
@@ -167,7 +170,7 @@ with no host imports:
 
 Errors are 1=invalid/duplicate root, 2=limit, 3=unknown view, 4=unknown event,
 5=busy/unacknowledged batch, 6=reactive failure, 7=invalid props, 8=invalid
-view/patch, 9=invalid payload and 10=expired action request. Mutations refuse a
+view/patch, 9=invalid payload, 10=expired action request and 11=invalid page/route/seed. Mutations refuse a
 pending batch or staged input. An action awaiting network I/O does not hold the ABI busy.
 Root/view IDs are numeric;
 view IDs increase with checked arithmetic and never wrap or get reused.
@@ -192,9 +195,9 @@ memory view, checks ranges and copies the bounded batch before acknowledging
 it. Signed JavaScript i32 results are interpreted as u32 bit patterns; public
 JavaScript inputs are validated before crossing the ABI.
 
-## RVN4 command frames
+## RVN5 command frames
 
-Integers are little-endian. The header is `RVN4` plus a u32 count, with no trailing
+Integers are little-endian. The header is `RVN5` plus a u32 count, with no trailing
 bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 
 | Opcode | Remaining fields | Operation |
@@ -211,8 +214,11 @@ bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 | 10 | node u32, boolean u8 | Set a field's aria-invalid state |
 | 11 | request u32, action u32, URL length u32 + UTF-8, body length u32 + ASCII | Queue an internal POST action |
 
+| 12 | node u32, target length u32, encoded ASCII target | Set an internal link href |
+
 Tags are section=1, h2=2, p=3, span=4, output=5, button=6, ul=7, li=8,
-form=9, label=10, text input=11, checkbox=12, textarea=13 and submit button=14. New
+form=9, label=10, text input=11, checkbox=12, textarea=13, submit button=14 and
+internal link=15. New
 handles must increase beyond every handle previously allocated in that view.
 Keys are nonzero u32 values unique among siblings. They are separate from node
 handles and unkeyed positions. A tag/event change creates a new node lifetime.
@@ -277,3 +283,6 @@ node --test browser/tests/bridge.test.mjs
 Rust 1.85.0, the Cargo graph and ABI attributes. The source guard is a regression
 check, not a Rust parser or independent security audit. Browser checks run at
 `/tests`; their report includes the browser version.
+
+See [client navigation](navigation.md) for shared routes, RVP1 pages, persistent
+layouts and the navigation controller.

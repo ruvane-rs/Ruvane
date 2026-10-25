@@ -49,6 +49,8 @@ pub enum BrowserError {
     InvalidPayload = 9,
     /// An action completion no longer belongs to this live component.
     InvalidAction = 10,
+    /// A navigation page or its application schema was rejected.
+    InvalidPage = 11,
 }
 
 impl fmt::Display for BrowserError {
@@ -64,6 +66,7 @@ impl fmt::Display for BrowserError {
             Self::InvalidView => "invalid component view",
             Self::InvalidPayload => "invalid event payload",
             Self::InvalidAction => "expired action request",
+            Self::InvalidPage => "invalid navigation page",
         })
     }
 }
@@ -101,6 +104,12 @@ struct PendingReply {
     length: usize,
     bytes: Vec<u8>,
 }
+struct PendingPage {
+    length: usize,
+    bytes: Vec<u8>,
+}
+/// Application validation of compatible page routes and component props.
+pub type PageValidator = fn(&ruvane::NavigationPage) -> bool;
 
 /// Owns components and encodes their DOM updates. The factory belongs to the application.
 pub struct BrowserRuntime {
@@ -111,6 +120,8 @@ pub struct BrowserRuntime {
     pending: Option<PendingText>,
     reply: Option<PendingReply>,
     next_action: u32,
+    page_validator: Option<PageValidator>,
+    page_input: Option<PendingPage>,
 }
 
 impl BrowserRuntime {
@@ -124,11 +135,17 @@ impl BrowserRuntime {
             pending: None,
             reply: None,
             next_action: 0,
+            page_validator: None,
+            page_input: None,
         }
     }
 
     fn ready(&self) -> Result<(), BrowserError> {
-        if self.buffer.is_empty() && self.pending.is_none() && self.reply.is_none() {
+        if self.buffer.is_empty()
+            && self.pending.is_none()
+            && self.reply.is_none()
+            && self.page_input.is_none()
+        {
             Ok(())
         } else {
             Err(BrowserError::Busy)
@@ -146,6 +163,34 @@ impl BrowserRuntime {
 
     /// Creates a component on a unique nonzero host root and queues its DOM.
     pub fn mount(&mut self, root: u32, props: ComponentProps) -> Result<u32, BrowserError> {
+        self.mount_inner(root, props, None)
+    }
+
+    /// Configures the shared application page validator.
+    pub fn with_navigation(mut self, validator: PageValidator) -> Self {
+        self.page_validator = Some(validator);
+        self
+    }
+
+    /// Creates a fully seeded page. Initial actions are forbidden during preparation.
+    pub fn mount_page(
+        &mut self,
+        root: u32,
+        page: &ruvane::NavigationPage,
+    ) -> Result<u32, BrowserError> {
+        self.ready()?;
+        if !self.page_validator.is_some_and(|validate| validate(page)) {
+            return Err(BrowserError::InvalidPage);
+        }
+        self.mount_inner(root, page.props(), Some(page.data()))
+    }
+
+    fn mount_inner(
+        &mut self,
+        root: u32,
+        props: ComponentProps,
+        seed: Option<&ruvane::ActionData>,
+    ) -> Result<u32, BrowserError> {
         self.ready()?;
         if root == 0 || self.instances.values().any(|c| c.root == root) {
             return Err(BrowserError::InvalidRoot);
@@ -156,6 +201,11 @@ impl BrowserRuntime {
         let id = self.next.checked_add(1).ok_or(BrowserError::Limit)?;
         self.next = id;
         let mut component = (self.factory)(props)?;
+        if let Some(seed) = seed {
+            component
+                .page_data(seed.clone())
+                .map_err(|_| BrowserError::InvalidPage)?;
+        }
         Self::resources(component.as_ref())?;
         let view = component.view()?;
         let snapshot = view.snapshot().map_err(|_| BrowserError::InvalidView)?;
@@ -163,13 +213,19 @@ impl BrowserRuntime {
             .commands(id)
             .map_err(|_| BrowserError::InvalidView)?;
         let mut action = None;
-        Self::queue_action(
-            component.as_mut(),
-            &mut action,
-            &mut self.next_action,
-            &mut commands,
-            id,
-        )?;
+        if seed.is_some() {
+            if component.take_action().is_some() {
+                return Err(BrowserError::InvalidPage);
+            }
+        } else {
+            Self::queue_action(
+                component.as_mut(),
+                &mut action,
+                &mut self.next_action,
+                &mut commands,
+                id,
+            )?;
+        }
         self.instances.insert(
             id,
             Instance {
@@ -182,6 +238,43 @@ impl BrowserRuntime {
         );
         self.buffer = commands;
         Ok(id)
+    }
+
+    /// Starts one bounded navigation packet, without input pointers.
+    pub fn begin_page(&mut self, length: u32) -> Result<(), BrowserError> {
+        self.ready()?;
+        if length as usize > ruvane::MAX_NAVIGATION_BYTES {
+            return Err(BrowserError::InvalidPayload);
+        }
+        self.page_input = Some(PendingPage {
+            length: length as usize,
+            bytes: Vec::with_capacity(length as usize),
+        });
+        Ok(())
+    }
+    /// Appends one to four little-endian page bytes. Invalid chunks discard input.
+    pub fn page_chunk(&mut self, word: u32, count: u32) -> Result<(), BrowserError> {
+        let mut page = self.page_input.take().ok_or(BrowserError::InvalidPayload)?;
+        if !(1..=4).contains(&count)
+            || (count < 4 && word >> (count * 8) != 0)
+            || page.bytes.len() + count as usize > page.length
+        {
+            return Err(BrowserError::InvalidPayload);
+        }
+        page.bytes
+            .extend_from_slice(&word.to_le_bytes()[..count as usize]);
+        self.page_input = Some(page);
+        Ok(())
+    }
+    /// Decodes and prepares a page after its exact declared byte count arrived.
+    pub fn mount_page_wire(&mut self, root: u32) -> Result<u32, BrowserError> {
+        let page = self.page_input.take().ok_or(BrowserError::InvalidPage)?;
+        if page.bytes.len() != page.length {
+            return Err(BrowserError::InvalidPage);
+        }
+        let page =
+            ruvane::NavigationPage::decode(&page.bytes).map_err(|_| BrowserError::InvalidPage)?;
+        self.mount_page(root, &page)
     }
 
     /// Dispatches an application event through one of its live nodes.
@@ -512,6 +605,7 @@ impl BrowserRuntime {
         self.buffer.clear();
         self.pending = None;
         self.reply = None;
+        self.page_input = None;
     }
     /// Number of live components.
     pub fn live_instances(&self) -> usize {
@@ -731,7 +825,7 @@ mod tests {
             };
             assert_eq!(runtime.dispatch(id, 42), Err(expected));
             assert_eq!(runtime.live_instances(), 0);
-            assert_eq!(runtime.command_bytes(), b"RVN4\0\0\0\0");
+            assert_eq!(runtime.command_bytes(), b"RVN5\0\0\0\0");
             assert_eq!(runtime.dispatch(id, 42), Err(BrowserError::InvalidHandle));
         }
         assert_eq!(runtime.mount(1, counter(1)), Err(BrowserError::Limit));
@@ -914,5 +1008,186 @@ mod tests {
         runtime.next_action = u32::MAX;
         assert_eq!(runtime.mount(1, remote()), Err(BrowserError::Limit));
         assert_eq!(runtime.live_instances(), 0);
+    }
+    fn navigation_page(component: u32, target: &str) -> ruvane::NavigationPage {
+        ruvane::NavigationPage::new(
+            ruvane::InternalUrl::from_target(target).unwrap(),
+            "Page",
+            ComponentProps::new(component, InitialState::Number(0)).unwrap(),
+            empty_tasks().data().clone(),
+            ruvane::StatusCode::Ok,
+        )
+        .unwrap()
+    }
+    #[test]
+    fn navigation_seed_validation_is_atomic_and_keeps_existing_components() {
+        let mut runtime = BrowserRuntime::new(demo::create).with_navigation(demo::validate_page);
+        let counter = runtime.mount(1, counter(5)).unwrap();
+        runtime.clear_commands();
+        for page in [
+            navigation_page(8, "/other"),
+            navigation_page(9, "/app"),
+            ruvane::NavigationPage::new(
+                ruvane::InternalUrl::new("/app").unwrap(),
+                "Home",
+                ComponentProps::new(8, InitialState::Number(0)).unwrap(),
+                ruvane::ActionData::default(),
+                ruvane::StatusCode::Ok,
+            )
+            .unwrap(),
+        ] {
+            assert_eq!(runtime.mount_page(2, &page), Err(BrowserError::InvalidPage));
+            assert_eq!(runtime.live_instances(), 1);
+            assert!(runtime.buffer.is_empty());
+        }
+        let page = navigation_page(9, "/app/tasks?q=a+b");
+        let id = runtime.mount_page(2, &page).unwrap();
+        assert!(runtime.instances[&id].action.is_none());
+        runtime.clear_commands();
+        runtime.dispatch(counter, 1).unwrap();
+        runtime.clear_commands();
+        assert!(
+            runtime.instances[&counter]
+                .view
+                .render()
+                .unwrap()
+                .as_str()
+                .contains("6")
+        );
+        runtime.dispose(id).unwrap();
+        runtime.clear_commands();
+        assert_eq!(
+            (
+                runtime.live_instances(),
+                runtime.live_signals(),
+                runtime.live_effects()
+            ),
+            (1, 2, 1)
+        );
+    }
+    #[test]
+    fn navigation_wire_input_is_bounded_exact_and_does_not_block_after_rejection() {
+        let mut runtime = BrowserRuntime::new(demo::create).with_navigation(demo::validate_page);
+        let bytes = navigation_page(8, "/app").encode();
+        assert_eq!(runtime.begin_page(65537), Err(BrowserError::InvalidPayload));
+        runtime.begin_page(1).unwrap();
+        assert_eq!(
+            runtime.page_chunk(256, 1),
+            Err(BrowserError::InvalidPayload)
+        );
+        runtime.begin_page(4).unwrap();
+        runtime.page_chunk(u32::from_le_bytes(*b"RVP1"), 4).unwrap();
+        assert_eq!(runtime.mount_page_wire(1), Err(BrowserError::InvalidPage));
+        runtime.begin_page(bytes.len() as u32).unwrap();
+        assert_eq!(runtime.mount(1, counter(0)), Err(BrowserError::Busy));
+        runtime.clear_commands();
+        for n in 0..bytes.len() {
+            runtime.begin_page(n as u32).unwrap();
+            for chunk in bytes[..n].chunks(4) {
+                let mut word = [0; 4];
+                word[..chunk.len()].copy_from_slice(chunk);
+                runtime
+                    .page_chunk(u32::from_le_bytes(word), chunk.len() as u32)
+                    .unwrap();
+            }
+            assert_eq!(runtime.mount_page_wire(1), Err(BrowserError::InvalidPage));
+            assert_eq!(runtime.live_instances(), 0);
+        }
+        runtime.begin_page(bytes.len() as u32).unwrap();
+        for chunk in bytes.chunks(4) {
+            let mut word = [0; 4];
+            word[..chunk.len()].copy_from_slice(chunk);
+            runtime
+                .page_chunk(u32::from_le_bytes(word), chunk.len() as u32)
+                .unwrap();
+        }
+        let id = runtime.mount_page_wire(1).unwrap();
+        runtime.clear_commands();
+        runtime.dispose(id).unwrap();
+        runtime.clear_commands();
+        assert_eq!(runtime.live_instances(), 0);
+    }
+    #[test]
+    fn thousand_page_replacements_release_page_resources_and_stale_handles() {
+        let mut runtime = BrowserRuntime::new(demo::create).with_navigation(demo::validate_page);
+        let counter = runtime.mount(1, counter(5)).unwrap();
+        runtime.clear_commands();
+        let mut previous = 0;
+        for n in 0..1000 {
+            let page = if n % 2 == 0 {
+                navigation_page(8, "/app")
+            } else {
+                navigation_page(9, "/app/tasks")
+            };
+            let id = runtime.mount_page(2, &page).unwrap();
+            assert!(id > previous);
+            runtime.clear_commands();
+            assert!(runtime.instances[&id].action.is_none());
+            runtime.dispose(id).unwrap();
+            runtime.clear_commands();
+            assert_eq!(runtime.dispatch(id, 1), Err(BrowserError::InvalidHandle));
+            assert_eq!(
+                (
+                    runtime.live_instances(),
+                    runtime.live_signals(),
+                    runtime.live_effects()
+                ),
+                (1, 2, 1)
+            );
+            previous = id;
+        }
+        runtime.dispose(counter).unwrap();
+        runtime.clear_commands();
+        assert_eq!(runtime.live_instances(), 0);
+    }
+    #[test]
+    fn seeded_preparation_cannot_start_an_initial_action_or_overrun_view_slots() {
+        struct Eager;
+        impl Component for Eager {
+            fn page_data(&mut self, _: ruvane::ActionData) -> Result<(), ComponentError> {
+                Ok(())
+            }
+            fn view(&self) -> Result<View, ComponentError> {
+                let mut view = View::new();
+                view.leaf(0, ruvane::BrowserTag::Heading, "Page")?;
+                Ok(view)
+            }
+            fn dispatch(&mut self, _: u32) -> Result<(), ComponentError> {
+                Ok(())
+            }
+            fn take_action(&mut self) -> Option<ruvane::ActionRequest> {
+                Some(
+                    ruvane::ActionRequest::new(
+                        1,
+                        ruvane::InternalUrl::new("/actions/forbidden").unwrap(),
+                        ruvane::FormData::default(),
+                    )
+                    .unwrap(),
+                )
+            }
+        }
+        let mut eager = BrowserRuntime::new(|_| Ok(Box::new(Eager))).with_navigation(|_| true);
+        assert_eq!(
+            eager.mount_page(1, &navigation_page(8, "/app")),
+            Err(BrowserError::InvalidPage)
+        );
+        assert_eq!(eager.live_instances(), 0);
+        assert!(eager.buffer.is_empty());
+        assert_eq!(eager.next_action, 0);
+        let mut runtime = BrowserRuntime::new(demo::create).with_navigation(demo::validate_page);
+        for root in 1..=16 {
+            runtime.mount(root, counter(0)).unwrap();
+            runtime.clear_commands();
+        }
+        assert_eq!(
+            runtime.mount_page(17, &navigation_page(8, "/app")),
+            Err(BrowserError::Limit)
+        );
+        assert_eq!(runtime.live_instances(), 16);
+        for id in 1..=16 {
+            runtime.dispose(id).unwrap();
+            runtime.clear_commands();
+        }
+        assert_eq!(runtime.live_signals(), 0);
     }
 }

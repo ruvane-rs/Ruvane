@@ -11,6 +11,7 @@ mod forms;
 mod html;
 mod http;
 mod metadata;
+mod navigation;
 mod page_route;
 mod reactive;
 mod routing;
@@ -52,6 +53,10 @@ pub use http::{
 pub use metadata::{
     CanonicalUrl, MAX_METADATA_TEXT_BYTES, MAX_SITE_ORIGIN_BYTES, Metadata, MetadataError,
     OriginError, Robots, SiteOrigin,
+};
+pub use navigation::{
+    BROWSER_NAVIGATION_MODULE, MAX_NAVIGATION_BYTES, MAX_NAVIGATION_ROUTES, NAVIGATION_MEDIA_TYPE,
+    NavigationError, NavigationMatch, NavigationPage, NavigationRoutes, navigation_link,
 };
 pub use page_route::{MAX_PAGE_NAME_BYTES, MAX_PAGE_SEGMENTS, PageParams, PageRoute};
 pub use reactive::{

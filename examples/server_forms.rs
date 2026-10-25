@@ -41,6 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Interactive tasks: http://{}/interactive",
         server.local_addr()?
     );
+    println!("Navigation: http://{}/app", server.local_addr()?);
     server.run()?;
     Ok(())
 }

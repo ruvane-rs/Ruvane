@@ -1,10 +1,10 @@
-//! Numeric exports for browser ABI v5.
+//! Numeric exports for browser ABI v6.
 use super::{BrowserError, BrowserRuntime};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
     // Each Wasm instance has its own state.
-    static STATE: RefCell<BrowserRuntime> = RefCell::new(BrowserRuntime::new(super::demo::create));
+    static STATE: RefCell<BrowserRuntime> = RefCell::new(BrowserRuntime::new(super::demo::create).with_navigation(super::demo::validate_page));
     static ERROR: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -32,7 +32,7 @@ fn read(f: impl FnOnce(&BrowserRuntime) -> u32) -> u32 {
     })
 }
 
-// SAFETY: This module owns all sixteen ruvane_ export names.
+// SAFETY: This module owns all nineteen ruvane_ export names.
 #[unsafe(no_mangle)]
 pub extern "C" fn ruvane_abi_version() -> u32 {
     ruvane::BROWSER_ABI_VERSION
@@ -131,4 +131,22 @@ pub extern "C" fn ruvane_action_complete(view: u32, request: u32, kind: u32) -> 
             2
         })
     })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn ruvane_page_begin(length: u32) -> u32 {
+    operation(|state| {
+        state.begin_page(length)?;
+        Ok(1)
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn ruvane_page_chunk(word: u32, count: u32) -> u32 {
+    operation(|state| {
+        state.page_chunk(word, count)?;
+        Ok(1)
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn ruvane_page_mount(root: u32) -> u32 {
+    operation(|state| state.mount_page_wire(root))
 }

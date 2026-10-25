@@ -1,8 +1,8 @@
-//! RVN4 browser command encoding.
+//! RVN5 browser command encoding.
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 5;
+pub const BROWSER_ABI_VERSION: u32 = 6;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.
@@ -44,6 +44,8 @@ pub enum BrowserTag {
     TextArea = 13,
     /// A native submit button.
     Submit = 14,
+    /// A normal internal link eligible for client navigation.
+    Link = 15,
 }
 
 /// Command encoding errors.
@@ -81,6 +83,20 @@ impl Default for BrowserCommands {
 }
 
 impl BrowserCommands {
+    /// Sets a validated internal link target.
+    pub fn link(
+        &mut self,
+        view: u32,
+        node: u32,
+        url: &crate::InternalUrl,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node])?;
+        self.push(
+            12,
+            &[view, node, url.as_str().len() as u32],
+            url.as_str().as_bytes(),
+        )
+    }
     /// Queues a validated POST action after this batch's DOM updates.
     pub fn action(
         &mut self,
@@ -98,10 +114,10 @@ impl BrowserCommands {
         data.extend_from_slice(body);
         self.push(11, &[view, request, action.action()], &data)
     }
-    /// Creates an empty batch with an RVN4 header.
+    /// Creates an empty batch with an RVN5 header.
     pub fn new() -> Self {
         Self {
-            bytes: b"RVN4\0\0\0\0".to_vec(),
+            bytes: b"RVN5\0\0\0\0".to_vec(),
             count: 0,
         }
     }

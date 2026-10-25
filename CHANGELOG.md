@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-alpha.18 — Unreleased
+
+- Add shared NavigationRoutes based on PageRoute, named link generation, typed
+  navigation pages and RVP1 framing with URL/title/status/schema validation.
+- Add a first-party navigation controller with native links, push/replace/pop
+  history, latest-request ordering, fetch/read deadlines, loading/errors,
+  title/focus updates and scroll restoration. Preserve independent layout islands.
+- Prepare seeded pages before committing and retire old page actions/listeners.
+  Refuse initial actions during preparation; preserve SSR or the current page on
+  preparation failure, and use a document request after failed pop/commit.
+- Introduce browser ABI v6 with three numeric page ingress exports, RVN5 link
+  tag 15 and opcode 12. Rebuild Wasm with the matching bridge.
+- Add home/list/detail/error pages sharing the server task state and native POST
+  fallback. Cover direct SSR URLs, history, failures, seeds and page lifetimes.
+- Keep the two first-party Cargo packages and zero third-party dependencies.
+
 ## 0.1.0-alpha.17 — Unreleased
 
 - Connect Rust/Wasm components to explicit `Router::post_action` routes. Queue

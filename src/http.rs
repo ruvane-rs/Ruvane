@@ -227,6 +227,10 @@ impl AsRef<[u8]> for Body {
 }
 
 impl Response {
+    /// Serves a typed page with its real HTTP status and fixed RVP1 MIME.
+    pub fn navigation(page: &crate::NavigationPage) -> Self {
+        Self::bytes(page.encode(), MediaType::Navigation).with_status(page.status())
+    }
     /// Serves a typed RVA1 action reply with fixed MIME and success/validation status.
     pub fn action(reply: &crate::ActionReply) -> Self {
         let mut response = Self::bytes(reply.encode(), MediaType::Action);

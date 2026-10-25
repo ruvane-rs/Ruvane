@@ -8,6 +8,9 @@ use std::sync::{Arc, Mutex};
 #[path = "action_fixtures.rs"]
 mod action_fixtures;
 
+#[path = "navigation_app.rs"]
+mod navigation_app;
+
 const MAX_TASKS: usize = 32;
 #[derive(Clone)]
 struct Task {
@@ -61,7 +64,7 @@ fn page(
         );
     }
     Ok(Document::new(
-        "Ruvane alpha.17 — Server tasks",
+        "Ruvane alpha.18 — Server tasks",
         element(Tag::Main)
             .child(element(Tag::H1).child("Ruvane / Server tasks"))
             .child(
@@ -274,6 +277,7 @@ fn update(state: &Mutex<State>, request: &Request, remove: bool) -> Response {
 pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
     let state = Arc::new(Mutex::new(State::default()));
     let mut router = Router::new();
+    navigation_app::register(&mut router, Arc::clone(&state))?;
     action_fixtures::register(&mut router)?;
     router.get("/", |_| Response::see_other(destination()))?;
     let current = Arc::clone(&state);

@@ -1,9 +1,41 @@
-// DOM and action bridge for RVN4 commands.
-export const ABI_VERSION = 5;
+// DOM and action bridge for RVN5 commands.
+export const ABI_VERSION = 6;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
-const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button" });
-const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete"];
+const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a" });
+const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount"];
 export const ACTION_MEDIA_TYPE = "application/vnd.ruvane.action";
+export const NAVIGATION_MEDIA_TYPE = "application/vnd.ruvane.page";
+/** Validates a complete origin-relative target, without URL normalization. */
+export function internalTarget(target) {
+  if (typeof target !== "string" || target.length > 4096 || !target.startsWith("/") || /[^A-Za-z0-9\-._~!$&'()*+,;=:@/%?]/.test(target)) throw invalid();
+  const index = target.indexOf("?"), path = index < 0 ? target : target.slice(0, index), query = index < 0 ? "" : target.slice(index + 1);
+  if (path.includes("//")) throw invalid();
+  const decode = part => { let value; try { value = decodeURIComponent(part); } catch { throw invalid(); } if (new TextEncoder().encode(value).length > 1024 || /[\u0000-\u001f\u007f-\u009f]/.test(value)) throw invalid(); return value; };
+  for (const raw of path.slice(1).split("/")) { const value = decode(raw); if (value === "." || value === ".." || /[/\\]/.test(value)) throw invalid(); }
+  const keys = new Set();
+  if (query) for (const pair of query.split("&")) {
+    const split = pair.indexOf("="), key = decode(split < 0 ? pair : pair.slice(0, split));
+    decode(split < 0 ? "" : pair.slice(split + 1));
+    if (!key || keys.has(key) || keys.size === 32) throw invalid(); keys.add(key);
+  }
+  return target;
+}
+/** Reads routing metadata. Rust validates the complete typed seed and application schema. */
+export function decodePage(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 34 || bytes.length > 65536 || String.fromCharCode(...bytes.slice(0, 4)) !== "RVP1") throw invalid();
+  const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }); let pos = 4;
+  const take = size => { if (size > bytes.length - pos) throw invalid(); const value = bytes.subarray(pos, pos + size); pos += size; return value; };
+  const u32 = () => { take(4); return data.getUint32(pos - 4, true); };
+  const string = limit => { const size = u32(); if (size > limit) throw invalid(); return decoder.decode(take(size)); };
+  take(2); const status = data.getUint16(4, true); if (![200, 400, 404].includes(status)) throw invalid();
+  const url = internalTarget(string(4096)), title = string(1024);
+  if (!title.trim() || /[\u0000-\u001f\u007f-\u009f]/.test(title)) throw invalid();
+  const component = uint(u32()), kind = u32(), value = u32();
+  if (![1, 2].includes(kind) || (kind === 2 && value > 1)) throw invalid();
+  const seed = take(u32());
+  if (seed.length < 7 || String.fromCharCode(...seed.slice(0, 4)) !== "RVA1" || seed[4] !== 0 || pos !== bytes.length) throw invalid();
+  return Object.freeze({ url, title, status, component, kind, value });
+}
 function actionPath(path) {
   if (typeof path !== "string" || path.length > 1024 || !path.startsWith("/") || path.includes("//") || /[^A-Za-z0-9\-._~!$&'()*+,;=:@/%]/.test(path)) throw invalid();
   for (const part of path.slice(1).split("/")) {
@@ -33,7 +65,7 @@ export function validateExports(exports) {
 /** Decodes a batch before touching the DOM. */
 export function decodeCommands(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 8 || bytes.length > LIMITS.bytes) throw invalid();
-  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 52) throw invalid();
+  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 53) throw invalid();
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 4;
   const u8 = () => { if (offset >= bytes.length) throw invalid(); return bytes[offset++]; };
@@ -54,9 +86,13 @@ export function decodeCommands(bytes) {
       if (/[^\x21-\x7e]/.test(body)) throw invalid();
       commands.push({ op, view, request, action, url, body }); continue;
     }
-    if (![1, 2, 3, 4, 6, 7, 8, 9, 10].includes(op)) throw invalid();
+    if (![1, 2, 3, 4, 6, 7, 8, 9, 10, 12].includes(op)) throw invalid();
     const node = uint(u32());
-    if (op === 1) {
+    if (op === 12) {
+      const size = u32(); if (size > 4096 || offset + size > bytes.length) throw invalid();
+      const url = internalTarget(decoder.decode(bytes.subarray(offset, offset + size))); offset += size;
+      commands.push({ op, view, node, url });
+    } else if (op === 1) {
       const parent = u32(), tag = u8(), key = u32();
       if (!Object.hasOwn(TAGS, tag)) throw invalid();
       commands.push({ op, view, node, parent, tag, key });
@@ -112,7 +148,7 @@ async function loadModule(url) {
     bytes = new Uint8Array(total);
     let offset = 0;
     for (const part of parts) { bytes.set(part, offset); offset += part.length; }
-  } finally { clearTimeout(timer); }
+  } finally { abort.abort(); clearTimeout(timer); }
   // Modules are application code. They receive no host imports.
   return validateExports((await WebAssembly.instantiate(bytes, {})).instance.exports);
 }
@@ -140,7 +176,7 @@ function validText(tag, value) {
   }
   return !(tag === 13 ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/ : /[\u0000-\u001f\u007f-\u009f]/).test(value);
 }
-const leaf = tag => [2, 4, 5, 6, 14].includes(tag);
+const leaf = tag => [2, 4, 5, 6, 14, 15].includes(tag);
 
 /** Checks and copies public mount props. */
 export function validateProps(props) {
@@ -174,7 +210,7 @@ function host(root) {
 function accepts(parent, tag) {
   if (parent === 7) return tag === 8;
   if (tag === 8) return false;
-  if (parent === 3) return [4, 5, 6].includes(tag);
+  if (parent === 3) return [4, 5, 6, 15].includes(tag);
   if (parent === 10) return tag === 4 || field(tag);
   if (field(tag)) return false;
   return [0, 1, 8, 9].includes(parent);
@@ -201,7 +237,7 @@ export function planCommands(commands, id, previous, initial = false) {
       let ancestor = command.parent, inForm = false;
       while (ancestor) { inForm ||= nodes.get(ancestor).tag === 9; ancestor = nodes.get(ancestor).parent; }
       if ((command.tag === 9 && inForm) || (command.tag === 14 && !inForm)) throw invalid();
-      nodes.set(command.node, { value: null, checked: null, invalid: null, epoch: null, seed: null, element: null, key: command.key, tag: command.tag, parent: command.parent, depth: parent.depth + 1, children: [], text: null, event: null, disabled: null });
+      nodes.set(command.node, { url: null, value: null, checked: null, invalid: null, epoch: null, seed: null, element: null, key: command.key, tag: command.tag, parent: command.parent, depth: parent.depth + 1, children: [], text: null, event: null, disabled: null });
       fresh.add(command.node); nextNode = command.node; parent.children.push(command.node);
       continue;
     }
@@ -210,6 +246,8 @@ export function planCommands(commands, id, previous, initial = false) {
     if (command.op === 2 && leaf(node.tag)) {
       if (typeof command.text !== "string" || command.text.length > LIMITS.text || new TextEncoder().encode(command.text).length > LIMITS.text) throw invalid();
       node.text = command.text;
+    } else if (command.op === 12 && node.tag === 15) {
+      node.url = internalTarget(command.url);
     } else if (command.op === 3 && (node.tag === 6 || node.tag === 9 || field(node.tag)) && fresh.has(command.node) && node.event === null) {
       node.event = uint(command.event);
     } else if (command.op === 4 && disableable(node.tag) && typeof command.disabled === "boolean") {
@@ -248,6 +286,7 @@ export function planCommands(commands, id, previous, initial = false) {
   if (nodes.size < 2) throw invalid();
   let listeners = 0;
   for (const [id, node] of nodes) {
+    if (node.tag === 15 && node.url === null) throw invalid();
     if (id && leaf(node.tag) && node.text === null) throw invalid();
     if ((node.tag === 6 || node.tag === 9 || field(node.tag)) && (node.event === null || ++listeners > LIMITS.listeners)) throw invalid();
     if (disableable(node.tag) && node.disabled === null) throw invalid();
@@ -268,6 +307,7 @@ function matchDom(nodes, root, inert) {
       if (node.event !== null) attributes[eventAttribute(node.tag)] = String(node.event);
       if (node.tag === 6 || node.tag === 14) attributes.type = node.tag === 6 ? "button" : "submit";
       if (node.tag === 9) attributes.novalidate = "";
+      if (node.tag === 15) { attributes.href = node.url; attributes["data-ruvane-nav"] = ""; }
       if (field(node.tag)) {
         attributes["aria-invalid"] = String(node.invalid); attributes["data-ruvane-epoch"] = String(node.epoch);
         if (textField(node.tag)) attributes.maxlength = "1024";
@@ -548,6 +588,7 @@ export async function createRuntime(url, options = {}) {
         if (command.op === 6) { old.get(command.node).element.remove(); continue; }
         if (command.op === 1) { createElement(nodes, command); continue; }
         const node = nodes.get(command.node);
+        if (command.op === 12) { node.element.setAttribute("href", node.url); node.element.setAttribute("data-ruvane-nav", ""); }
         if (command.op === 2) node.element.textContent = command.text;
         else if (command.op === 3) node.element.setAttribute(eventAttribute(node.tag), String(command.event));
       }
@@ -583,7 +624,7 @@ export async function createRuntime(url, options = {}) {
     }
     if (actions.length) launch(id, view, actions[0]);
   }
-  function start(root, props, hydrated) {
+  function start(root, props, hydrated, page = null) {
     live(); host(root);
     if (!hydrated && root.childNodes.length) throw new Error("Ruvane mount requires an empty root");
     if (views.size === LIMITS.views || nextRoot === 0xffffffff) throw new RangeError("Ruvane view limit exceeded");
@@ -591,9 +632,17 @@ export async function createRuntime(url, options = {}) {
     busy = true;
     let id = 0;
     try {
-      id = result(exports.ruvane_mount(++nextRoot, props.component, props.kind, props.value));
+      if (page) {
+        if (result(exports.ruvane_page_begin(page.length)) !== 1) throw invalid();
+        for (let offset = 0; offset < page.length; offset += 4) {
+          const count = Math.min(4, page.length - offset); let word = 0;
+          for (let index = 0; index < count; index++) word |= page[offset + index] << (index * 8);
+          if (result(exports.ruvane_page_chunk(word >>> 0, count)) !== 1) throw invalid();
+        }
+        id = result(exports.ruvane_page_mount(++nextRoot));
+      } else id = result(exports.ruvane_mount(++nextRoot, props.component, props.kind, props.value));
       if (!id) {
-        if ([1, 2, 7].includes(result(exports.ruvane_last_error()))) throw new MountRejected();
+        if ([1, 2, 7, 11].includes(result(exports.ruvane_last_error()))) throw new MountRejected();
         throw invalid();
       }
       if (views.has(id)) throw invalid();
@@ -659,6 +708,7 @@ export async function createRuntime(url, options = {}) {
     finally { busy = false; }
   }
   return Object.freeze({
+    mountPage(root, bytes) { decodePage(bytes); return start(root, null, false, bytes); },
     mount(root, props) { return start(root, validateProps(props), false); },
     hydrate(root) {
       live(); host(root); const controller = start(root, readProps(root), true), view = views.get(controller.id);

@@ -1,5 +1,9 @@
 # Assets and media
 
+Alpha.18 adds MediaType::Navigation for runtime RVP1 responses. It declares MIME
+without validating bytes and is refused by static export, like Action.
+Use `Response::navigation` for a validated descriptor. See [navigation](navigation.md).
+
 Alpha.17 adds MediaType::Action for RVA1 runtime responses. It declares the
 fixed action MIME without validating bytes. Action replies are not static assets
 and are rejected by static export. See [actions](actions.md).

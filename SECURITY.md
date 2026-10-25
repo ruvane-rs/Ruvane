@@ -1,5 +1,24 @@
 # Security
 
+Alpha.18 adds explicit shared client routes and bounded RVP1 page seeds. GET
+handlers still authorize every request and render direct URLs. The browser
+requests a fixed same-origin MIME, refuses redirects and caps fetch/read time
+at 10 seconds and decoded bytes at 64 KiB. Metadata, exact requested URL, HTTP
+status, complete wire framing, shared route ownership and application seed schema
+are checked before replacing the current page. No fetched HTML is injected.
+Titles are plain text; link targets use the internal URL profile and cannot
+select another origin or an executable scheme. Seeds contain public data only.
+
+The next page is prepared in a detached host. Seeded mounts cannot queue initial
+actions. Preparation failures preserve the current owner; a newer navigation
+supersedes an older request. Committing replaces one page owner and releases its
+listeners/actions while sibling layout islands remain alive. A failed history
+pop or commit falls back to a normal document request. History state is routing
+and scroll metadata, never authorization. The new page ingress uses bounded
+exact-length numeric chunks without pointers or host imports. Runtime
+MediaType::Navigation responses are refused by static export. See
+[client navigation](docs/navigation.md) for API boundaries and deferred work.
+
 Alpha.17 adds explicit typed actions called by Rust/Wasm components. All action
 routes reuse the alpha.16 origin, Host, body, charset and method checks below.
 Action IDs label application callbacks, not authorization or secret function
@@ -14,7 +33,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v5/RVN4 isolate sixteen reviewed numeric exports. The added reply
+Browser ABI v6/RVN5 isolate nineteen reviewed numeric exports. The added reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts

@@ -27,6 +27,8 @@ pub enum MediaType {
     WebAssembly,
     /// An RVA1 action response. The receiving runtime validates its bytes.
     Action,
+    /// An RVP1 page description for client navigation.
+    Navigation,
     /// An already encoded PNG image.
     Png,
     /// An already encoded JPEG image.
@@ -46,6 +48,7 @@ impl MediaType {
             Self::JavaScript => "text/javascript; charset=utf-8",
             Self::WebAssembly => "application/wasm",
             Self::Action => crate::ACTION_MEDIA_TYPE,
+            Self::Navigation => crate::NAVIGATION_MEDIA_TYPE,
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",
             Self::WebP => "image/webp",

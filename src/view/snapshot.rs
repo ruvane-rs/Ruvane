@@ -74,6 +74,9 @@ impl ViewSnapshot {
         if let Some(event) = node.event {
             commands.bind(view, entry.id, event)?;
         }
+        if let Some(url) = &node.link {
+            commands.link(view, entry.id, url)?;
+        }
         if matches!(node.tag, BrowserTag::Button | BrowserTag::Submit) || is_control(node.tag) {
             commands.disabled(view, entry.id, node.disabled)?;
         }
@@ -178,6 +181,17 @@ impl ViewSnapshot {
                 order.entry(entry.node.parent).or_default().push(entry.id);
             } else {
                 let previous = &old[&entry.id].node;
+                if entry.node.link != previous.link {
+                    commands.link(
+                        view_id,
+                        entry.id,
+                        entry
+                            .node
+                            .link
+                            .as_ref()
+                            .ok_or(ViewError::InvalidStructure)?,
+                    )?;
+                }
                 if entry.node.text != previous.text {
                     commands.text(
                         view_id,

@@ -2460,3 +2460,105 @@ fn typed_actions_share_origin_validation_and_the_native_task_store() {
             .is_validation()
     );
 }
+
+#[test]
+fn navigation_urls_share_ssr_status_titles_and_typed_seeds() {
+    use ruvane::{NAVIGATION_MEDIA_TYPE, NavigationPage};
+    let server = Running::start(server_tasks::router().unwrap(), ServerConfig::default());
+    assert_eq!(
+        status(&post(
+            &server,
+            "/tasks",
+            b"title=Rust+%26+HTML&notes=%3Cscript%3E"
+        )),
+        303
+    );
+    for (url, expected, title) in [
+        ("/app", 200, "Home / Ruvane"),
+        ("/app/tasks?q=a+b", 200, "Tasks / Ruvane"),
+        ("/app/tasks/1", 200, "Rust & HTML / Ruvane"),
+        ("/app/tasks/999", 404, "Page not found / Ruvane"),
+        ("/app/missing", 404, "Page not found / Ruvane"),
+        ("/app/tasks/01", 400, "Invalid page request / Ruvane"),
+    ] {
+        let native_url = if url.contains('?') {
+            format!("{url}&native=yes")
+        } else {
+            format!("{url}?native=yes")
+        };
+        let ssr = server.request("GET", &native_url);
+        assert_eq!(status(&ssr), expected);
+        let html = std::str::from_utf8(parts(&ssr).1).unwrap();
+        assert!(html.contains(&format!("<title>{}</title>", ruvane::text(title).as_str())));
+        assert!(html.contains("data-ruvane-nav=\"\" href=\"/app/tasks\""));
+        assert!(html.contains("id=\"layout-counter\"") && html.contains("id=\"page-outlet\""));
+        assert!(!html.contains("navigation-demo.js"));
+        if url.starts_with("/app/tasks/1") {
+            assert!(html.contains("&lt;script&gt;") && html.contains("/tasks/1/status"));
+        }
+        let typed = server.raw(
+            format!(
+                "GET {url} HTTP/1.1\r\nHost: {}\r\nAccept: {NAVIGATION_MEDIA_TYPE}\r\n\r\n",
+                server.address
+            )
+            .as_bytes(),
+        );
+        assert_eq!(status(&typed), expected);
+        assert!(
+            parts(&typed)
+                .0
+                .contains(&format!("Content-Type: {NAVIGATION_MEDIA_TYPE}"))
+        );
+        let page = NavigationPage::decode(parts(&typed).1).unwrap();
+        assert_eq!(page.url().as_str(), url);
+        assert_eq!(page.title(), title);
+        assert_eq!(page.status().as_u16(), expected);
+        if expected == 200 {
+            assert_eq!(page.data().number("count"), Some(1));
+            assert_eq!(page.data().text("title_0"), Some("Rust & HTML"));
+        } else {
+            assert!(page.data().is_empty());
+        }
+        let head = server.raw(
+            format!(
+                "HEAD {url} HTTP/1.1\r\nHost: {}\r\nAccept: {NAVIGATION_MEDIA_TYPE}\r\n\r\n",
+                server.address
+            )
+            .as_bytes(),
+        );
+        assert_eq!(status(&head), expected);
+        assert_eq!(content_length(parts(&head).0), parts(&typed).1.len());
+        assert!(parts(&head).1.is_empty());
+    }
+    let interactive = server.request("GET", "/app/tasks/1");
+    let wire = String::from_utf8(interactive).unwrap();
+    assert!(wire.starts_with("HTTP/1.1 200"));
+    assert!(
+        wire.contains("script-src 'self' 'wasm-unsafe-eval'")
+            && wire.contains("/assets/navigation-demo.js")
+    );
+    assert!(wire.contains("action=\"/tasks/1/remove\"") && wire.contains("&lt;script&gt;"));
+    assert_eq!(status(&post(&server, "/tasks/1/remove", b"")), 303);
+    let deleted = server.request("GET", "/app/tasks/1?native=yes");
+    assert_eq!(status(&deleted), 404);
+}
+
+#[test]
+fn navigation_rejects_targets_above_its_budget_without_poisoning_task_state() {
+    let server = Running::start(
+        server_tasks::router().unwrap(),
+        ServerConfig {
+            max_header_bytes: 16384,
+            max_request_line_bytes: 8192,
+            ..ServerConfig::default()
+        },
+    );
+    let query = (0..5)
+        .map(|n| format!("k{n}={}", "x".repeat(820)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let output = server.request("GET", &format!("/app?{query}"));
+    assert_eq!(status(&output), 400);
+    let healthy = server.request("GET", "/app?native=yes");
+    assert_eq!(status(&healthy), 200);
+}

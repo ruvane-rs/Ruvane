@@ -125,6 +125,7 @@ struct Node {
     event: Option<u32>,
     disabled: bool,
     field: Option<Control>,
+    link: Option<crate::InternalUrl>,
 }
 
 /// A small element tree shared by server rendering and Wasm.
@@ -135,6 +136,21 @@ pub struct View {
 }
 
 impl View {
+    /// Adds an internal link with a nonzero sibling key.
+    pub fn link(
+        &mut self,
+        parent: u32,
+        key: u32,
+        url: &crate::InternalUrl,
+        label: &str,
+    ) -> Result<u32, ViewError> {
+        if key == 0 {
+            return Err(ViewError::InvalidIdentifier);
+        }
+        let id = self.push(parent, key, BrowserTag::Link, Some(label), None, false)?;
+        self.nodes[id as usize - 1].link = Some(url.clone());
+        Ok(id)
+    }
     /// Creates an empty view.
     pub fn new() -> Self {
         Self::default()
@@ -214,6 +230,7 @@ impl View {
             event,
             disabled,
             field: None,
+            link: None,
         });
         Ok(self.nodes.len() as u32)
     }
@@ -345,6 +362,9 @@ impl View {
             Err(ViewError::Empty)
         } else {
             for (index, node) in self.nodes.iter().enumerate() {
+                if (node.tag == BrowserTag::Link) != node.link.is_some() {
+                    return Err(ViewError::InvalidStructure);
+                }
                 if node.tag == BrowserTag::Label {
                     let children: Vec<_> = self
                         .nodes
@@ -401,12 +421,18 @@ impl View {
                 BrowserTag::Label => "label",
                 BrowserTag::Input | BrowserTag::Checkbox => "input",
                 BrowserTag::TextArea => "textarea",
+                BrowserTag::Link => "a",
             };
             write!(output, "<{tag} data-ruvane-node=\"{id}\"").unwrap();
             if node.key != 0 {
                 write!(output, " data-ruvane-key=\"{}\"", node.key).unwrap();
             }
             match node.tag {
+                BrowserTag::Link => {
+                    output.push_str(" data-ruvane-nav=\"\" href=\"");
+                    output.push_str(text(node.link.as_ref().unwrap().as_str()).as_str());
+                    output.push('"');
+                }
                 BrowserTag::Button => output.push_str(" type=\"button\""),
                 BrowserTag::Submit => output.push_str(" type=\"submit\""),
                 BrowserTag::Form => output.push_str(" novalidate"),
@@ -535,6 +561,10 @@ impl From<ViewError> for ComponentError {
 
 /// A reusable component. Dropping it must release its owned resources.
 pub trait Component {
+    /// Applies a public navigation seed before the first view. Page mounts forbid initial actions.
+    fn page_data(&mut self, _data: crate::ActionData) -> Result<(), ComponentError> {
+        Err(ComponentError::InvalidProps)
+    }
     /// Takes one queued action. Only one action per live component may be pending.
     fn take_action(&mut self) -> Option<crate::ActionRequest> {
         None

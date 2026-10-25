@@ -4,6 +4,16 @@ use ruvane::{
     ReactiveRuntime, Scope, Signal, View,
 };
 
+/// Shared page routes and models.
+#[path = "navigation_pages.rs"]
+#[allow(dead_code)]
+pub mod navigation_pages;
+/// Checks the demo page registry before mounting.
+#[allow(dead_code)]
+pub fn validate_page(page: &ruvane::NavigationPage) -> bool {
+    navigation_pages::validate(page)
+}
+
 #[path = "action_probe.rs"]
 mod action_probe;
 #[path = "fields_probe.rs"]
@@ -308,6 +318,6 @@ pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentErro
         (FIELDS_PROBE, InitialState::Number(0)) => Ok(fields_probe::create()),
         (REMOTE_TASKS, InitialState::Number(0)) => Ok(remote_tasks::create()),
         (ACTION_PROBE, InitialState::Number(mode)) if mode <= 9 => Ok(action_probe::create(mode)),
-        _ => Err(ComponentError::InvalidProps),
+        _ => navigation_pages::create(props),
     }
 }

@@ -10,7 +10,7 @@ use std::net::{Shutdown, TcpStream};
 #[test]
 fn command_encoding_is_bounded_atomic_and_utf8_preserving() {
     let mut commands = BrowserCommands::new();
-    assert_eq!(commands.as_bytes(), b"RVN4\0\0\0\0");
+    assert_eq!(commands.as_bytes(), b"RVN5\0\0\0\0");
     commands.element(1, 1, 0, BrowserTag::Section).unwrap();
     commands.text(1, 2, "Rust <script> 🌱").unwrap();
     commands.click(1, 3, 9).unwrap();

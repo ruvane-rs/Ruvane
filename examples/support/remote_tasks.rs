@@ -5,13 +5,15 @@ use ruvane::{
 };
 use std::collections::BTreeSet;
 
-struct Task {
-    id: u32,
-    title: String,
-    notes: String,
-    done: bool,
+#[derive(Clone)]
+pub(super) struct Task {
+    pub id: u32,
+    pub title: String,
+    pub notes: String,
+    pub done: bool,
 }
 struct Tasks {
+    navigation: bool,
     items: Vec<Task>,
     title: String,
     notes: String,
@@ -23,6 +25,9 @@ struct Tasks {
     outgoing: Option<ActionRequest>,
 }
 impl Tasks {
+    fn page_size(&self) -> usize {
+        if self.navigation { 2 } else { 3 }
+    }
     fn request(&mut self, action: u32, fields: FormData) -> Result<(), ComponentError> {
         let path = match action {
             1 => "/actions/tasks/list",
@@ -40,7 +45,7 @@ impl Tasks {
         self.invalid = None;
         Ok(())
     }
-    fn snapshot(data: &ActionData) -> Option<Vec<Task>> {
+    pub(super) fn snapshot(data: &ActionData) -> Option<Vec<Task>> {
         let count = usize::try_from(data.number("count")?).ok()?;
         if count > 32 || data.len() != 1 + count * 4 {
             return None;
@@ -72,6 +77,10 @@ impl Tasks {
     }
 }
 impl Component for Tasks {
+    fn page_data(&mut self, data: ActionData) -> Result<(), ComponentError> {
+        self.items = Self::snapshot(&data).ok_or(ComponentError::InvalidProps)?;
+        Ok(())
+    }
     fn view(&self) -> Result<View, ComponentError> {
         let busy = self.pending.is_some();
         let mut view = View::new();
@@ -91,7 +100,13 @@ impl Component for Tasks {
         view.submit(form, 3, if busy { "Sending…" } else { "Add task" }, busy)?;
         view.keyed_leaf(section, 3, Output, &self.message)?;
         let list = view.keyed_element(section, 4, List)?;
-        for (slot, task) in self.items.iter().skip(self.page * 3).take(3).enumerate() {
+        for (slot, task) in self
+            .items
+            .iter()
+            .skip(self.page * self.page_size())
+            .take(self.page_size())
+            .enumerate()
+        {
             let row = view.keyed_element(list, task.id, ListItem)?;
             let label = view.keyed_element(row, 1, Label)?;
             let text = if task.notes.is_empty() {
@@ -103,6 +118,12 @@ impl Component for Tasks {
             let check = view.checkbox(label, 2, task.done, 100 + slot as u32 * 2)?;
             view.field_disabled(check, busy)?;
             view.keyed_button(row, 2, "Remove task", 101 + slot as u32 * 2, busy)?;
+            if self.navigation {
+                let url = super::navigation_pages::routes()
+                    .url("task", &[("id", &task.id.to_string())])
+                    .unwrap();
+                view.link(row, 3, &url, "Open task")?;
+            }
         }
         view.keyed_button(section, 5, "Previous", 2, busy || self.page == 0)?;
         view.keyed_button(
@@ -110,7 +131,7 @@ impl Component for Tasks {
             6,
             "Next",
             3,
-            busy || (self.page + 1) * 3 >= self.items.len(),
+            busy || (self.page + 1) * self.page_size() >= self.items.len(),
         )?;
         view.keyed_leaf(
             section,
@@ -119,6 +140,9 @@ impl Component for Tasks {
             &format!("{} tasks / page {}", self.items.len(), self.page + 1),
         )?;
         view.keyed_button(section, 8, "Refresh tasks", 4, busy)?;
+        if self.navigation {
+            view.link(section, 9, &InternalUrl::new("/app").unwrap(), "Home")?;
+        }
         Ok(view)
     }
     fn dispatch(&mut self, event: u32) -> Result<(), ComponentError> {
@@ -138,14 +162,14 @@ impl Component for Tasks {
                 Ok(())
             }
             3 => {
-                if (self.page + 1) * 3 < self.items.len() {
+                if (self.page + 1) * self.page_size() < self.items.len() {
                     self.page += 1;
                 }
                 Ok(())
             }
             4 => self.request(1, FormData::default()),
             101 | 103 | 105 => {
-                let index = self.page * 3 + (event as usize - 101) / 2;
+                let index = self.page * self.page_size() + (event as usize - 101) / 2;
                 let task = self.items.get(index).ok_or(ComponentError::InvalidEvent)?;
                 let fields = FormData::default()
                     .field("id", &task.id.to_string())
@@ -169,7 +193,7 @@ impl Component for Tasks {
                 Ok(())
             }
             (event @ (100 | 102 | 104), EventValue::Boolean(value)) => {
-                let index = self.page * 3 + (event as usize - 100) / 2;
+                let index = self.page * self.page_size() + (event as usize - 100) / 2;
                 let task = self.items.get(index).ok_or(ComponentError::InvalidEvent)?;
                 let mut fields = FormData::default()
                     .field("id", &task.id.to_string())
@@ -203,7 +227,7 @@ impl Component for Tasks {
                 }
             }
             Ok(reply) => if let Some(items) = Self::snapshot(reply.data()) {
-                self.items = items; self.page = self.page.min(self.items.len().saturating_sub(1) / 3);
+                self.items = items; self.page = self.page.min(self.items.len().saturating_sub(1) / self.page_size());
                 if action == 2 { self.title.clear(); self.notes.clear(); self.epoch = self.epoch.checked_add(1).ok_or(ComponentError::InvalidProps)?; }
                     if action == 1 { "Loaded.".into() } else { "Saved.".into() }
             } else { "Invalid server response.".into() },
@@ -217,6 +241,7 @@ impl Component for Tasks {
 }
 pub(super) fn create() -> Box<dyn Component> {
     let mut tasks = Tasks {
+        navigation: false,
         items: Vec::new(),
         title: String::new(),
         notes: String::new(),
@@ -229,4 +254,22 @@ pub(super) fn create() -> Box<dyn Component> {
     };
     tasks.request(1, FormData::default()).unwrap();
     Box::new(tasks)
+}
+
+pub(super) fn decode(data: &ActionData) -> Option<Vec<Task>> {
+    Tasks::snapshot(data)
+}
+pub(super) fn create_page() -> Box<dyn Component> {
+    Box::new(Tasks {
+        navigation: true,
+        items: Vec::new(),
+        title: String::new(),
+        notes: String::new(),
+        message: String::new(),
+        invalid: None,
+        epoch: 0,
+        page: 0,
+        pending: None,
+        outgoing: None,
+    })
 }

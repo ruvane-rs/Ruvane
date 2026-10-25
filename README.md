@@ -26,7 +26,8 @@ Native POST forms validate bounded fields on the server, check their source orig
 and support internal 303 redirects. Interactive HTTP pages explicitly opt into a
 fixed module/Wasm CSP. Wasm components can call explicit server actions with
 bounded typed replies, pending state and lifetime-checked completions.
-Client-side navigation remains future work.
+Shared page routes now support client navigation, persistent layouts, typed page
+seeds, back/forward history and native fallbacks. See [navigation](docs/navigation.md).
 
 ## Principles
 
@@ -111,6 +112,11 @@ Build the Wasm target and open `/interactive` for server actions without page
 navigation. A Rust component sends typed requests, handles validation/pending
 state and reconciles replies. Native forms remain available as a fallback.
 See [Wasm actions](docs/actions.md) for the protocol and lifecycle.
+
+Open `/app` for the shared navigation demo. The layout counter stays alive across
+home, task list and detail pages; direct URLs render on the server. Native links
+and forms remain usable when enhancement is unavailable. `/navigation-tests`
+checks transitions, history, scroll, malformed replies and owner cleanup.
 
 The server keeps its loopback-only profile; `/tasks` retains the script-blocking CSP.
 There are no sessions or database. See

@@ -113,8 +113,11 @@ removal drops the item scope. The empty message is a conditional subtree.
 
 Initial props support one `Number(u32)` or `Boolean(bool)`. Factories validate
 state kinds and ranges. The list's number selects its initial item count, 0..=4.
-Rich object/string props, nested hydration roots and compiler macros
-remain future work.
+Navigation pages can initialize a validated public `ActionData` seed through
+`Component::page_data`; it rejects seeds by default. Initial seeded mounts must
+not queue actions. `View::link` adds an internal native link with a sibling key.
+See [navigation](navigation.md). General rich hydration props, nested hydration
+roots and compiler macros remain future work.
 
 ## Limits
 
