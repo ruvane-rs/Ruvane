@@ -33,6 +33,8 @@ jobs:
         run: |
           cargo build --offline --locked -p ruvane-browser --target wasm32-unknown-unknown --release
           node --test browser/tests/bridge.test.mjs
+          node --test browser/tests/application.test.mjs
+          cargo check --offline --locked -p ruvane-browser --no-default-features --target wasm32-unknown-unknown
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings

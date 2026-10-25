@@ -1,0 +1,436 @@
+use super::*;
+use crate::{
+    ActionData, Component, ComponentError, ComponentProps, InitialState, NavigationMatch,
+    NavigationPage, NavigationRoutes,
+};
+
+/// Application-owned component constructor shared by native and Wasm builds.
+pub type ComponentFactory = fn(ComponentProps) -> Result<Box<dyn Component>, ComponentError>;
+
+/// Parses the CLI's decimal build revision at compile time. This is not a secret.
+pub const fn application_revision(value: &str) -> u64 {
+    let bytes = value.as_bytes();
+    assert!(
+        !bytes.is_empty() && bytes.len() <= 20,
+        "invalid application revision"
+    );
+    let mut result = 0u64;
+    let mut index = 0;
+    while index < bytes.len() {
+        assert!(
+            bytes[index] >= b'0' && bytes[index] <= b'9',
+            "invalid application revision"
+        );
+        result = match result.checked_mul(10) {
+            Some(value) => value,
+            None => panic!("invalid application revision"),
+        };
+        result = match result.checked_add((bytes[index] - b'0') as u64) {
+            Some(value) => value,
+            None => panic!("invalid application revision"),
+        };
+        index += 1;
+    }
+    result
+}
+
+/// Public page seed and optional enabled native fallback returned by a GET loader.
+pub struct ClientPageData {
+    title: String,
+    data: ActionData,
+    fallback: Html,
+}
+impl ClientPageData {
+    /// Creates a page seed. The component checks its schema before SSR and mounting.
+    pub fn new(title: impl Into<String>, data: ActionData) -> Self {
+        Self {
+            title: title.into(),
+            data,
+            fallback: Html::default(),
+        }
+    }
+    /// Adds native forms or other server-rendered fallback content.
+    pub fn fallback(mut self, html: impl Into<Html>) -> Self {
+        self.fallback = html.into();
+        self
+    }
+}
+
+/// One immutable module revision and a persistent shell for an interactive App.
+#[derive(Clone)]
+pub struct ClientRuntime {
+    wasm: &'static [u8],
+    revision: u64,
+    shell: fn(Html) -> Html,
+    stylesheets: Vec<InternalUrl>,
+}
+impl ClientRuntime {
+    /// Attaches a trusted, bounded Wasm module with the same exported revision.
+    pub fn new(wasm: &'static [u8], revision: u64) -> Result<Self, AppError> {
+        if wasm.len() > MAX_ASSET_BYTES || !wasm.starts_with(b"\0asm\x01\0\0\0") {
+            return Err(AppError::InvalidPage);
+        }
+        Ok(Self {
+            wasm,
+            revision,
+            shell: |children| children,
+            stylesheets: Vec::new(),
+        })
+    }
+    /// Sets a common shell. It must not depend on the current route or page title.
+    pub fn shell(mut self, shell: fn(Html) -> Html) -> Self {
+        self.shell = shell;
+        self
+    }
+    /// Adds a stylesheet shared by all interactive pages.
+    pub fn stylesheet(mut self, url: InternalUrl) -> Result<Self, AppError> {
+        if !self.stylesheets.contains(&url) {
+            if self.stylesheets.len() == MAX_PAGE_STYLESHEETS {
+                return Err(AppError::InvalidPage);
+            }
+            self.stylesheets.push(url);
+        }
+        Ok(self)
+    }
+    fn asset(&self, name: &str) -> String {
+        format!("/ruvane-runtime/{:016x}/{name}", self.revision)
+    }
+    fn assets(&self) -> [(&str, &'static [u8], MediaType); 4] {
+        [
+            ("app.wasm", self.wasm, MediaType::WebAssembly),
+            (
+                "bridge.mjs",
+                crate::BROWSER_BRIDGE_MODULE.as_bytes(),
+                MediaType::JavaScript,
+            ),
+            (
+                "navigation.mjs",
+                crate::BROWSER_NAVIGATION_MODULE.as_bytes(),
+                MediaType::JavaScript,
+            ),
+            (
+                "application.mjs",
+                include_bytes!("../../web/application.mjs"),
+                MediaType::JavaScript,
+            ),
+        ]
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ClientRoute {
+    component: u32,
+    state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
+}
+
+impl App {
+    /// Registers an application's factory and error component. No factory runs here.
+    /// Error components accept Number(400/404) and an empty page seed.
+    pub fn components(
+        &mut self,
+        factory: ComponentFactory,
+        error_component: u32,
+    ) -> Result<(), AppError> {
+        if self.client_factory.is_some() || error_component == 0 {
+            return Err(AppError::InvalidPage);
+        }
+        self.client_factory = Some(factory);
+        self.client_error = error_component;
+        Ok(())
+    }
+    /// Attaches versioned browser assets to the server. Client pages remain server-only.
+    pub fn client_runtime(&mut self, runtime: ClientRuntime) -> Result<(), AppError> {
+        if self.client_runtime.is_some() || self.client_factory.is_none() {
+            return Err(AppError::InvalidPage);
+        }
+        let mut candidate = self.clone();
+        candidate.client_runtime = Some(runtime);
+        candidate.validate()?;
+        *self = candidate;
+        Ok(())
+    }
+    /// Declares a typed page once for SSR and client navigation. The state resolver
+    /// is shared read-only code; only GET requests execute the loader.
+    pub fn client_page(
+        &mut self,
+        route: PageRoute,
+        component: u32,
+        state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
+        load: impl Fn(&PageContext<'_>) -> Result<ClientPageData, PageError> + Send + Sync + 'static,
+    ) -> Result<(), AppError> {
+        if component == 0 || self.client_factory.is_none() {
+            return Err(AppError::InvalidPage);
+        }
+        let mut candidate = self.clone();
+        candidate.page(
+            route,
+            None,
+            PageMode::ServerOnly(QueryMode::Uri),
+            move |context| {
+                let data = load(context)?;
+                let mut page = Page::new(data.title, data.fallback);
+                page.client_data = Some(data.data);
+                Ok(page)
+            },
+        )?;
+        candidate.pages.last_mut().unwrap().client = Some(ClientRoute { component, state });
+        candidate.validate()?;
+        *self = candidate;
+        Ok(())
+    }
+    /// Checks route ownership and props without executing loaders. The runtime then
+    /// validates the complete seed with Component::page_data before preparing a view.
+    pub fn validate_navigation(&self, page: &NavigationPage) -> bool {
+        if self.client_factory.is_none() {
+            return false;
+        }
+        if page.status() != StatusCode::Ok {
+            return matches!(page.status(), StatusCode::BadRequest | StatusCode::NotFound)
+                && page.data().is_empty()
+                && page.props()
+                    == ComponentProps::new(
+                        self.client_error,
+                        InitialState::Number(page.status().as_u16() as u32),
+                    )
+                    .unwrap();
+        }
+        self.client_props(page.url())
+            .is_ok_and(|props| props == page.props())
+    }
+    fn routes(&self) -> Result<NavigationRoutes, AppError> {
+        let mut routes = NavigationRoutes::new();
+        for page in &self.pages {
+            if let Some(client) = page.client {
+                routes
+                    .register(page.route.clone(), client.component)
+                    .map_err(|_| AppError::RouteConflict)?;
+            }
+        }
+        Ok(routes)
+    }
+    fn client_props(&self, url: &InternalUrl) -> Result<ComponentProps, PageError> {
+        let path = url.as_str().split('?').next().unwrap();
+        let matched = self
+            .routes()
+            .map_err(|_| PageError::InternalServerError)?
+            .resolve(url)
+            .map_err(|_| PageError::BadRequest)?
+            .ok_or(PageError::NotFound)?;
+        if self.owner(path) != Some(matched.name()) {
+            return Err(PageError::NotFound);
+        }
+        let page = self
+            .pages
+            .iter()
+            .find(|page| page.route.name() == matched.name())
+            .unwrap();
+        let client = page.client.unwrap();
+        ComponentProps::new(client.component, (client.state)(&matched)?)
+            .map_err(|_| PageError::BadRequest)
+    }
+    pub(super) fn client_asset_path(&self, path: &str) -> bool {
+        self.client_runtime.as_ref().is_some_and(|runtime| {
+            runtime
+                .assets()
+                .iter()
+                .any(|(name, _, _)| runtime.asset(name) == path)
+        })
+    }
+    pub(super) fn validate_client_routes(&self, router: &mut Router) -> Result<(), AppError> {
+        if self.pages.len() + self.assets.len() + usize::from(self.client_runtime.is_some()) * 4
+            > MAX_APP_ROUTES
+        {
+            return Err(AppError::TooManyRoutes);
+        }
+        self.routes()?;
+        if let Some(runtime) = &self.client_runtime {
+            let total: usize = runtime
+                .assets()
+                .iter()
+                .map(|(_, bytes, _)| bytes.len())
+                .sum();
+            if self.assets.len() + 4 > MAX_ASSETS
+                || self
+                    .assets
+                    .iter()
+                    .map(|asset| asset.bytes.len())
+                    .sum::<usize>()
+                    + total
+                    > MAX_TOTAL_ASSET_BYTES
+            {
+                return Err(AppError::TooManyRoutes);
+            }
+            for (name, bytes, _) in runtime.assets() {
+                if bytes.len() > MAX_ASSET_BYTES {
+                    return Err(AppError::OutputTooLarge);
+                }
+                router.get(runtime.asset(name), |_| Response::text(""))?;
+            }
+        }
+        Ok(())
+    }
+    /// Plans only this application's embedded resources, without running page loaders.
+    /// The CLI uses the resulting static manifest to verify a server bundle.
+    pub fn client_assets(&self) -> Result<StaticSite, AppError> {
+        self.validate()?;
+        let runtime = self.client_runtime.as_ref().ok_or(AppError::InvalidPage)?;
+        let mut site = StaticSite::new();
+        for (name, bytes, kind) in runtime.assets() {
+            site.asset(StaticPath::new(&runtime.asset(name))?, bytes, kind)?;
+        }
+        for asset in &self.assets {
+            site.asset(asset.path.clone(), asset.bytes, asset.kind)?;
+        }
+        Ok(site)
+    }
+    pub(super) fn mount_client_assets(&self, router: &mut Router) -> Result<(), AppError> {
+        if let Some(runtime) = &self.client_runtime {
+            router.application_revision(runtime.revision);
+            for (name, bytes, kind) in runtime.assets() {
+                router
+                    .asset(runtime.asset(name), bytes, kind)
+                    .map_err(|_| AppError::RouteConflict)?;
+            }
+        }
+        Ok(())
+    }
+    fn target(request: &Request) -> Result<InternalUrl, PageError> {
+        let mut target = request.path().to_owned();
+        if let Some(query) = request.query() {
+            target.push('?');
+            target.push_str(query);
+        }
+        InternalUrl::from_target(&target).map_err(|_| PageError::BadRequest)
+    }
+    pub(super) fn client_response(
+        &self,
+        index: usize,
+        context: &PageContext<'_>,
+        request: &Request,
+    ) -> Response {
+        let result = (|| {
+            let url = Self::target(request)?;
+            let props = self.client_props(&url)?;
+            let page = (self.pages[index].render)(context)?;
+            let packet = NavigationPage::new(
+                url,
+                &page.title,
+                props,
+                page.client_data.ok_or(PageError::InternalServerError)?,
+                StatusCode::Ok,
+            )
+            .map_err(|_| PageError::InternalServerError)?;
+            self.client_finish(&packet, page.body, request)
+        })();
+        result.unwrap_or_else(|error| self.client_failure(request, error))
+    }
+    pub(super) fn client_missing(&self, request: &Request) -> Response {
+        self.client_failure(request, PageError::NotFound)
+    }
+    fn client_failure(&self, request: &Request, error: PageError) -> Response {
+        if error == PageError::InternalServerError {
+            return Response::error(StatusCode::InternalServerError);
+        }
+        let Ok(url) = Self::target(request) else {
+            return Response::error(StatusCode::BadRequest);
+        };
+        let status = error.status();
+        let props = ComponentProps::new(
+            self.client_error,
+            InitialState::Number(status.as_u16() as u32),
+        )
+        .unwrap();
+        let packet = NavigationPage::new(
+            url,
+            if status == StatusCode::NotFound {
+                "Page not found"
+            } else {
+                "Invalid page request"
+            },
+            props,
+            ActionData::default(),
+            status,
+        )
+        .unwrap();
+        self.client_finish(&packet, Html::default(), request)
+            .unwrap_or_else(|_| Response::error(StatusCode::InternalServerError))
+    }
+    fn client_finish(
+        &self,
+        packet: &NavigationPage,
+        fallback: Html,
+        request: &Request,
+    ) -> Result<Response, PageError> {
+        let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
+        let mut component = factory(packet.props()).map_err(|_| PageError::InternalServerError)?;
+        component
+            .page_data(packet.data().clone())
+            .map_err(|_| PageError::InternalServerError)?;
+        let view = component
+            .view()
+            .map_err(|_| PageError::InternalServerError)?;
+        view.snapshot()
+            .map_err(|_| PageError::InternalServerError)?;
+        if component.take_action().is_some() {
+            return Err(PageError::InternalServerError);
+        }
+        if request.header("accept") == Some(crate::NAVIGATION_MEDIA_TYPE) {
+            return Ok(Response::navigation(packet));
+        }
+        let runtime = self
+            .client_runtime
+            .as_ref()
+            .ok_or(PageError::InternalServerError)?;
+        let mut body = String::from("<div id=\"ruvane-application\" data-ruvane-module=\"");
+        body.push_str(&runtime.asset("app.wasm"));
+        body.push_str(&format!(
+            "\" data-ruvane-revision=\"{}\">",
+            runtime.revision
+        ));
+        let content = crate::fragment([
+            crate::element(crate::Tag::P)
+                .attr(crate::Attribute::Id, "ruvane-status")
+                .child("Native links and forms are ready.")
+                .render(),
+            crate::element(crate::Tag::Div)
+                .attr(crate::Attribute::Id, "ruvane-outlet")
+                .child(
+                    view.hydratable(packet.props())
+                        .map_err(|_| PageError::InternalServerError)?,
+                )
+                .child(
+                    crate::element(crate::Tag::Div)
+                        .attr(crate::Attribute::Id, "ruvane-fallback")
+                        .child(fallback),
+                )
+                .render(),
+        ]);
+        let wrapped = (runtime.shell)(content);
+        if wrapped.as_str().len() > MAX_STATIC_FILE_BYTES {
+            return Err(PageError::InternalServerError);
+        }
+        body.push_str(wrapped.as_str());
+        body.push_str("</div>");
+        let native = request.query_params().get("native") == Some("yes");
+        if !native {
+            body.push_str(
+                crate::module_script(&InternalUrl::new(&runtime.asset("application.mjs")).unwrap())
+                    .as_str(),
+            );
+        }
+        let mut document = Document::new(packet.title(), Html::rendered(body));
+        for stylesheet in &runtime.stylesheets {
+            document = document.stylesheet(stylesheet.clone());
+        }
+        let html = document.render();
+        if html.as_str().len() > MAX_STATIC_FILE_BYTES {
+            return Err(PageError::InternalServerError);
+        }
+        Ok(if native {
+            Response::html(html)
+        } else {
+            Response::interactive_html(html)
+        }
+        .with_status(packet.status()))
+    }
+}

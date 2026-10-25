@@ -44,6 +44,8 @@ pub struct Router {
     asset_count: usize,
     asset_bytes: usize,
     not_found: Option<Response>,
+    client_not_found: Option<Handler>,
+    application_revision: Option<String>,
     internal_error: Option<Response>,
 }
 
@@ -60,6 +62,7 @@ struct Route {
     dynamic: bool,
     handler: Handler,
     query_mode: QueryMode,
+    action: bool,
 }
 
 impl Route {
@@ -142,7 +145,9 @@ impl Router {
         self.post_form(path, move |request| match handler(request) {
             Ok(reply) => Response::action(&reply),
             Err(_) => Response::error(StatusCode::InternalServerError),
-        })
+        })?;
+        self.routes.last_mut().unwrap().action = true;
+        Ok(())
     }
     /// Creates an empty router, which returns 404 for every path.
     pub fn new() -> Self {
@@ -267,6 +272,7 @@ impl Router {
             segments,
             dynamic,
             handler: Box::new(handler),
+            action: false,
             query_mode,
         };
         if dynamic
@@ -278,6 +284,16 @@ impl Router {
         }
         self.routes.push(route);
         Ok(())
+    }
+
+    pub(crate) fn application_revision(&mut self, revision: u64) {
+        self.application_revision = Some(revision.to_string());
+    }
+    pub(crate) fn client_not_found(
+        &mut self,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) {
+        self.client_not_found = Some(Box::new(handler));
     }
 
     pub(crate) fn page_errors(&mut self, not_found: Option<Response>, internal: Option<Response>) {
@@ -389,6 +405,15 @@ impl Router {
 
     pub(crate) fn dispatch(&self, mut request: Request) -> Response {
         let selected = self.select(request.method(), request.path());
+        if let Some(revision) = &self.application_revision {
+            let supplied = request.header("ruvane-application-revision");
+            let typed_action = selected.is_some_and(|route| route.action);
+            if supplied.is_some_and(|value| value != revision)
+                || typed_action && supplied != Some(revision.as_str())
+            {
+                return Response::error(StatusCode::Conflict);
+            }
+        }
         let mode = selected.map_or(QueryMode::Uri, |route| route.query_mode);
         request.query_params = match Query::parse_with_mode(request.query().unwrap_or(""), mode) {
             Ok(query) => query,
@@ -401,6 +426,11 @@ impl Router {
                 .any(|route| route.matches(request.path()))
             {
                 return Response::error(StatusCode::MethodNotAllowed);
+            }
+            if matches!(request.method(), Method::Get | Method::Head) {
+                if let Some(handler) = &self.client_not_found {
+                    return handler(&request);
+                }
             }
             return self.error_response(StatusCode::NotFound);
         };

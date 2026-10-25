@@ -10,12 +10,15 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 // Export attributes are isolated in the Wasm ABI.
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-#[allow(unsafe_code)]
 mod abi;
+/// ABI version used by application exports.
+pub const ABI_VERSION: u32 = ruvane::BROWSER_ABI_VERSION;
+#[doc(hidden)]
+pub use ruvane::{ComponentProps as ExportComponentProps, InitialState};
 
 /// Components shared with the example server. Applications supply their own registry.
 #[path = "../../examples/support/widgets.rs"]
+#[cfg(any(feature = "demo", test))]
 pub mod demo;
 
 /// Maximum live views per Wasm instance.
@@ -1191,3 +1194,6 @@ mod tests {
         assert_eq!(runtime.live_signals(), 0);
     }
 }
+
+#[cfg(all(feature = "demo", target_arch = "wasm32", target_os = "unknown"))]
+export_application!(crate::demo::create, crate::demo::validate_page, 0);

@@ -540,3 +540,221 @@ fn generated_content_is_embedded_recompiled_and_retained_on_invalid_edits_or_sta
         0
     );
 }
+
+fn interactive_wire(address: SocketAddr, target: &str, typed: bool) -> Vec<u8> {
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .unwrap();
+    write!(
+        stream,
+        "GET {target} HTTP/1.1\r\nHost: {address}\r\n{}\r\n",
+        if typed {
+            "Accept: application/vnd.ruvane.page\r\n"
+        } else {
+            ""
+        }
+    )
+    .unwrap();
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).unwrap();
+    bytes
+}
+fn response_body(bytes: &[u8]) -> &[u8] {
+    let index = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    &bytes[index + 4..]
+}
+fn application_html(address: SocketAddr) -> String {
+    let bytes = interactive_wire(address, "/", false);
+    assert!(bytes.starts_with(b"HTTP/1.1 200"));
+    String::from_utf8(response_body(&bytes).to_vec()).unwrap()
+}
+fn module_path(html: &str) -> &str {
+    html.split("data-ruvane-module=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+}
+fn revision(html: &str) -> &str {
+    html.split("data-ruvane-revision=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+}
+fn application_post(address: SocketAddr, body: &str, revision: Option<&str>) -> Vec<u8> {
+    application_post_accept(address, body, revision, "application/vnd.ruvane.action")
+}
+fn application_post_accept(
+    address: SocketAddr,
+    body: &str,
+    revision: Option<&str>,
+    accept: &str,
+) -> Vec<u8> {
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .unwrap();
+    write!(stream, "POST /actions/tasks/create HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nAccept: {accept}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n{}\r\n{body}", body.len(), revision.map(|value| format!("Ruvane-Application-Revision: {value}\r\n")).unwrap_or_default()).unwrap();
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).unwrap();
+    bytes
+}
+
+#[test]
+fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_errors() {
+    let temp = Temp::new();
+    let output = Command::new(CLI)
+        .current_dir(&temp.0)
+        .args(["new", "application", "--interactive", "--framework-path"])
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let root = temp.0.join("application");
+    let mut running = Running::start(&root, &["dev", "--offline", "--port", "0"]);
+    let address = running.address("Ruvane dev at");
+    let html = application_html(address);
+    let version = revision(&html).to_owned();
+    let path = module_path(&html).to_owned();
+    for wrong in [None, Some("1")] {
+        assert!(application_post(address, "title=Rejected", wrong).starts_with(b"HTTP/1.1 409"));
+    }
+    assert!(
+        application_post_accept(address, "title=Bypass", None, "text/html")
+            .starts_with(b"HTTP/1.1 409")
+    );
+    let unchanged = interactive_wire(address, "/tasks", true);
+    assert_eq!(
+        ruvane::NavigationPage::decode(response_body(&unchanged))
+            .unwrap()
+            .data()
+            .number("count"),
+        Some(0)
+    );
+    assert!(
+        application_post(address, "title=Accepted", Some(&version)).starts_with(b"HTTP/1.1 200")
+    );
+
+    let module = interactive_wire(address, &path, false);
+    assert!(response_body(&module).starts_with(b"\0asm\x01\0\0\0"));
+    assert!(response_body(&module).len() <= ruvane::MAX_ASSET_BYTES);
+    let typed = interactive_wire(address, "/tasks", true);
+    let page = ruvane::NavigationPage::decode(response_body(&typed)).unwrap();
+    assert_eq!(page.props().component(), 9);
+    let missing = interactive_wire(address, "/unknown", true);
+    assert_eq!(
+        ruvane::NavigationPage::decode(response_body(&missing))
+            .unwrap()
+            .status(),
+        ruvane::StatusCode::NotFound
+    );
+    let wasm_path = root.join("browser/src/lib.rs");
+    let wasm = fs::read_to_string(&wasm_path).unwrap();
+    fs::write(
+        &wasm_path,
+        format!("{wasm}\ncompile_error!(\"wasm failure\");\n"),
+    )
+    .unwrap();
+    running.until("keeping the previous server");
+    assert_eq!(revision(&application_html(address)), version);
+    assert_eq!(
+        response_body(&interactive_wire(address, &path, false)),
+        response_body(&module)
+    );
+    fs::write(&wasm_path, &wasm).unwrap();
+    let restored = running.address("Ruvane dev at");
+    assert_eq!(restored, address);
+    let updated = application_html(address);
+    assert_ne!(revision(&updated), version);
+    let native_path = root.join("src/main.rs");
+    let native = fs::read_to_string(&native_path).unwrap();
+    fs::write(
+        &native_path,
+        format!("{native}\ncompile_error!(\"native failure\");\n"),
+    )
+    .unwrap();
+    running.until("keeping the previous server");
+    assert_eq!(revision(&application_html(address)), revision(&updated));
+    fs::write(&native_path, &native).unwrap();
+    running.address("Ruvane dev at");
+    // A compiled server that cannot start must also restore its original module.
+    let healthy = application_html(address);
+    fs::write(
+        &native_path,
+        native.replace(
+            "let server = Server::bind",
+            "return Err(\"startup fixture\".into());\nlet server = Server::bind",
+        ),
+    )
+    .unwrap();
+    running.until("Restored the previous server");
+    assert_eq!(revision(&application_html(address)), revision(&healthy));
+    running.quit();
+    fs::write(&native_path, &native).unwrap();
+    let built = cli(&root, &["build", "--offline"]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("dist/current")).unwrap(),
+        "build-000001\n"
+    );
+    let bundle = root.join("dist/build-000001");
+    let manifest = fs::read_to_string(bundle.join("Ruvane.bundle")).unwrap();
+    assert!(manifest.starts_with("ruvane-application\t1\nrevision\t"));
+    assert_eq!(
+        fs::read(bundle.join("complete")).unwrap(),
+        b"ruvane-application-complete\t1\n"
+    );
+    for line in manifest
+        .lines()
+        .filter_map(|line| line.strip_prefix("file\t"))
+    {
+        let (path, size) = line.split_once('\t').unwrap();
+        assert_eq!(
+            fs::metadata(bundle.join(path)).unwrap().len(),
+            size.parse::<u64>().unwrap()
+        );
+    }
+    fs::write(
+        &wasm_path,
+        format!("{wasm}\ncompile_error!(\"bundle failure\");\n"),
+    )
+    .unwrap();
+    assert!(!cli(&root, &["build", "--offline"]).status.success());
+    assert_eq!(
+        fs::read_to_string(root.join("dist/current")).unwrap(),
+        "build-000001\n"
+    );
+    assert!(!bundle.join(".ruvane-builds").exists());
+}
+#[test]
+fn interactive_options_fail_before_creating_an_incomplete_project() {
+    let temp = Temp::new();
+    assert!(
+        !cli(&temp.0, &["new", "site", "--interactive"])
+            .status
+            .success()
+    );
+    assert!(!temp.0.join("site").exists());
+    for name in ["ruvane", "ruvane-browser", "ruvane-application-browser"] {
+        let output = Command::new(CLI)
+            .current_dir(&temp.0)
+            .args(["new", name, "--interactive", "--framework-path"])
+            .arg(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(!temp.0.join(name).exists());
+    }
+}

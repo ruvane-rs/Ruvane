@@ -148,13 +148,14 @@ deadline to 1..=10000 ms. There is one in-flight navigation and no page cache.
 At most two page owners overlap during preparation, within the runtime's
 16-view budget; reserve space for the prepared page alongside layout islands.
 
-Browser ABI v6 adds `ruvane_page_begin`, `ruvane_page_chunk` and
+Browser ABI v7 adds `ruvane_page_begin`, `ruvane_page_chunk` and
 `ruvane_page_mount`. Input arrives in exact-length chunks of 1..=4 bytes, without
 input pointers or imports. Error 11 means an invalid page/route/seed. RVN5 adds
 link tag 15 and opcode 12 (node u32, target length u32, encoded target bytes).
 Rebuild Wasm with the matching bridge; older versions are rejected.
 
-This first navigation layer uses explicit GET handlers and shared component
-factories. It does not automatically convert arbitrary `App::page` handlers,
-static exports or HTML into client pages. Nested changing layouts, prefetch,
+Alpha.19 integrates this layer through `App::client_page` and application-owned
+factories. See [interactive applications](interactive-apps.md). Ordinary
+`App::page` handlers, static exports and arbitrary HTML are not automatically
+converted into client pages. Nested changing layouts, prefetch,
 page caching, streaming and richer props remain separate work.

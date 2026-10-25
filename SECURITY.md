@@ -1,5 +1,33 @@
 # Security
 
+Alpha.19 adds application-owned browser registries, App client pages and paired
+CLI builds. State resolution and schema checks are shared; only server GETs run
+loaders. Factories, loaders and shells remain trusted Rust callbacks. SSR checks
+seeds and views before serving them, and refuses initial queued actions. Explicit
+native forms retain the existing Origin, Host, framing and field checks.
+
+The server embeds one prepared module and serves resources under its build
+revision. Before hydration the bridge checks ABI v7 and the exact u64 revision.
+The export macro isolates twenty numeric exports, accepts no input pointers and
+provides no host imports; only the reviewed no_mangle attributes allow unsafe
+code annotations. The core continues to forbid unsafe code.
+
+App browser requests carry their public revision. Stale navigation requests and
+stale/missing revisions on typed actions return 409 before handlers, so an old
+open tab cannot apply typed mutations to a rebuilt application. This header does
+not authorize access; native source-origin checks and application authorization
+still apply. Native forms remain usable without the header.
+
+The CLI bounds watched sources, module size and output files, preserves the
+previous server on compilation failure and attempts restoration after startup
+failure. The exact prepared module is embedded in its server. Bundles export
+resources from that executable, validate the manifest and ABI/revision record,
+and compare module bytes before publishing the current pointer. Watched source
+changes reject a candidate. Framework/dependency source trees outside the project
+are not snapshotted. Cargo and application code run as trusted local programs;
+this is not a build sandbox, cryptographic signature or durability guarantee.
+See [interactive applications](docs/interactive-apps.md) for limits and scope.
+
 Alpha.18 adds explicit shared client routes and bounded RVP1 page seeds. GET
 handlers still authorize every request and render direct URLs. The browser
 requests a fixed same-origin MIME, refuses redirects and caps fetch/read time
@@ -33,7 +61,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v6/RVN5 isolate nineteen reviewed numeric exports. The added reply
+Browser ABI v7/RVN5 isolate twenty reviewed numeric exports. The added reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts

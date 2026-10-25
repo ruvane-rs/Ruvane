@@ -1,5 +1,10 @@
 # Pages and layouts
 
+Alpha.19 adds `App::components`, `App::client_page` and `App::client_runtime` for
+shared SSR/Wasm pages and one persistent shell. These pages are explicitly
+server-only; ordinary `App::page` and its static/layout behavior remain available.
+See [interactive applications](interactive-apps.md).
+
 Alpha.9 adds `App`, a common declaration for GET/HEAD pages, named routes,
 fragment layouts and embedded assets. `App::router` creates the server router;
 `App::static_site` renders the explicitly enumerated export. The lower-level

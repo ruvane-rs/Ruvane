@@ -1,0 +1,126 @@
+#![forbid(unsafe_code)]
+use ruvane::{ClientRuntime, InternalUrl, MediaType, Response, Server, StatusCode};
+use ruvane_application::{REVISION, pages, store};
+use std::io::{Read, Write};
+fn application() -> Result<ruvane::App, Box<dyn std::error::Error>> {
+    let mut app = pages::application();
+    app.asset(
+        "/assets/site.css",
+        include_bytes!("../assets/site.css"),
+        MediaType::Css,
+    )?;
+    app.client_runtime(
+        ClientRuntime::new(include_bytes!(env!("RUVANE_WASM_FILE")), REVISION)?
+            .shell(pages::shell)
+            .stylesheet(InternalUrl::new("/assets/site.css")?)?,
+    )?;
+    Ok(app)
+}
+fn router() -> Result<ruvane::Router, Box<dyn std::error::Error>> {
+    let mut router = application()?.router(None)?;
+    for (name, kind) in [("list", 1), ("create", 2), ("status", 3), ("remove", 4)] {
+        router.post_action(format!("/actions/tasks/{name}"), move |request| {
+            store::action(kind, request.form_data().unwrap())
+                .map_err(|_| ruvane::ActionError::InvalidData)
+        })?;
+    }
+    router.post_form("/tasks", |request| {
+        native(2, request.form_data().unwrap().clone())
+    })?;
+    for (name, kind) in [("status", 3), ("remove", 4)] {
+        router.post_form(format!("/tasks/{{id}}/{name}"), move |request| {
+            let fields = request.form_data().unwrap();
+            if !fields.has_only(if kind == 3 { &["done"] } else { &[] }) {
+                return Response::text("Invalid fields").with_status(StatusCode::BadRequest);
+            }
+            let fields = fields.clone().field("id", request.param("id").unwrap());
+            match fields {
+                Ok(fields) => native(kind, fields),
+                Err(_) => Response::text("Invalid fields").with_status(StatusCode::BadRequest),
+            }
+        })?;
+    }
+    Ok(router)
+}
+fn native(kind: u32, fields: ruvane::FormData) -> Response {
+    match store::action(kind, &fields) {
+        Ok(reply) if !reply.is_validation() => {
+            Response::see_other(InternalUrl::new("/tasks").unwrap())
+        }
+        Ok(reply) => {
+            let mut content = vec![
+                ruvane::element(ruvane::Tag::P)
+                    .child(reply.data().text("message").unwrap_or("Invalid fields"))
+                    .render(),
+            ];
+            if kind == 2 {
+                let mut form = ruvane::PostForm::new(InternalUrl::new("/tasks").unwrap())
+                    .unwrap()
+                    .text("title", "Task name", fields.get("title").unwrap_or(""))
+                    .unwrap()
+                    .textarea("notes", "Notes", fields.get("notes").unwrap_or(""))
+                    .unwrap()
+                    .submit_label("Add task")
+                    .unwrap();
+                if let Some(field @ ("title" | "notes")) = reply.data().text("field") {
+                    form = form.invalid(field).unwrap();
+                }
+                content.push(form.render());
+            }
+            content.push(ruvane::link(
+                &InternalUrl::new("/tasks").unwrap(),
+                "Back to tasks",
+            ));
+            Response::html(
+                ruvane::Document::new("Invalid task", ruvane::fragment(content)).render(),
+            )
+            .with_status(StatusCode::BadRequest)
+        }
+        Err(_) => Response::text("Request failed").with_status(StatusCode::BadRequest),
+    }
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "--ruvane-client-assets" {
+        application()?.client_assets()?.export_to(&args[1])?;
+        let mut identity = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        writeln!(
+            identity,
+            "ruvane-runtime\t1\t{}\t{REVISION}",
+            ruvane::BROWSER_ABI_VERSION
+        )?;
+        return Ok(());
+    }
+    let managed = args.first().is_some_and(|arg| arg == "--ruvane-serve");
+    let port = if managed && args.len() == 3 {
+        args[1].to_str().ok_or("invalid port")?.parse::<u16>()?
+    } else if args.len() == 2 && args[0] == "--port" {
+        args[1].to_str().ok_or("invalid port")?.parse::<u16>()?
+    } else if args.is_empty() {
+        3000
+    } else {
+        return Err("usage: ruvane-app [--port PORT]".into());
+    };
+    let server = Server::bind(([127, 0, 0, 1], port).into(), router()?)?;
+    if managed {
+        let shutdown = server.shutdown_handle();
+        std::thread::spawn(move || {
+            let _ = std::io::stdin().read_exact(&mut [0]);
+            shutdown.shutdown();
+        });
+        let mut ready = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        writeln!(ready, "ruvane-ready\t1\t{}", server.local_addr()?)?;
+    }
+    println!(
+        "Ruvane application at http://{} (revision {REVISION})",
+        server.local_addr()?
+    );
+    server.run()?;
+    Ok(())
+}

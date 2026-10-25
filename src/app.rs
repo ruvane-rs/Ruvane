@@ -1,3 +1,4 @@
+mod client;
 use crate::page_route::valid_name;
 use crate::{
     Document, ExportError, Html, InternalUrl, MAX_ASSET_BYTES, MAX_ASSETS, MAX_METADATA_TEXT_BYTES,
@@ -5,6 +6,7 @@ use crate::{
     MetadataError, PageParams, PageRoute, ParamError, QueryMode, Request, Response, Robots,
     RouteError, Router, SiteOrigin, StaticPath, StaticSite, StatusCode, UrlError,
 };
+pub use client::{ClientPageData, ClientRuntime, ComponentFactory, application_revision};
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
@@ -154,6 +156,7 @@ pub struct Page {
     language: String,
     stylesheets: Vec<InternalUrl>,
     bad_request: bool,
+    client_data: Option<crate::ActionData>,
 }
 impl Page {
     /// Creates a page. Titles are limited to 1024 control-free UTF-8 bytes at
@@ -166,6 +169,7 @@ impl Page {
             language: "en".into(),
             stylesheets: Vec::new(),
             bad_request: false,
+            client_data: None,
         }
     }
     /// Marks a server-only validation page as HTTP 400 while retaining its
@@ -268,6 +272,7 @@ struct PageEntry {
     layout: Option<usize>,
     mode: PageMode,
     render: Render,
+    client: Option<client::ClientRoute>,
 }
 #[derive(Clone)]
 struct Layout {
@@ -302,6 +307,9 @@ pub struct App {
     assets: Vec<Asset>,
     not_found: Option<ErrorPage>,
     internal_error: Option<ErrorPage>,
+    client_factory: Option<ComponentFactory>,
+    client_error: u32,
+    client_runtime: Option<ClientRuntime>,
 }
 impl App {
     /// Creates an empty application.
@@ -376,6 +384,7 @@ impl App {
             layout,
             mode,
             render: Arc::new(render),
+            client: None,
         };
         let mut candidate = self.clone();
         candidate.pages.push(entry);
@@ -442,7 +451,9 @@ impl App {
     }
 
     fn check_capacity(&self) -> Result<(), AppError> {
-        if self.pages.len() + self.assets.len() == MAX_APP_ROUTES {
+        if self.pages.len() + self.assets.len() + usize::from(self.client_runtime.is_some()) * 4
+            >= MAX_APP_ROUTES
+        {
             Err(AppError::TooManyRoutes)
         } else {
             Ok(())
@@ -494,6 +505,9 @@ impl App {
     }
 
     fn owner(&self, path: &str) -> Option<&str> {
+        if self.client_asset_path(path) {
+            return None;
+        }
         if self.assets.iter().any(|a| a.path.url().as_str() == path) {
             return None;
         }
@@ -516,6 +530,7 @@ impl App {
         for asset in &self.assets {
             router.get(asset.path.url().as_str(), |_| Response::text(""))?;
         }
+        self.validate_client_routes(&mut router)?;
         let mut paths = Vec::new();
         let mut outputs: Vec<String> = Vec::new();
         for page in &self.pages {
@@ -567,6 +582,9 @@ impl App {
     /// public origin is optional; never derive it from request headers.
     pub fn router(&self, origin: Option<SiteOrigin>) -> Result<Router, AppError> {
         self.validate()?;
+        if self.pages.iter().any(|p| p.client.is_some()) && self.client_runtime.is_none() {
+            return Err(AppError::InvalidPage);
+        }
         let not_found = self.error_response(self.not_found.as_ref(), StatusCode::NotFound)?;
         let internal = self.error_response(
             self.internal_error.as_ref(),
@@ -606,6 +624,9 @@ impl App {
                     origin: origin.as_ref(),
                     exporting: false,
                 };
+                if page.client.is_some() {
+                    return app.client_response(index, &context, request);
+                }
                 match (page.render)(&context).and_then(|rendered| {
                     let status = if rendered.bad_request {
                         StatusCode::BadRequest
@@ -637,6 +658,11 @@ impl App {
             router
                 .asset(asset.path.url().as_str(), asset.bytes, asset.kind)
                 .map_err(|_| AppError::RouteConflict)?;
+        }
+        self.mount_client_assets(&mut router)?;
+        if self.client_runtime.is_some() {
+            let app = Arc::clone(&app);
+            router.client_not_found(move |request| app.client_missing(request));
         }
         Ok(router)
     }

@@ -1,8 +1,8 @@
 // DOM and action bridge for RVN5 commands.
-export const ABI_VERSION = 6;
+export const ABI_VERSION = 7;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
 const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a" });
-const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount"];
+const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision"];
 export const ACTION_MEDIA_TYPE = "application/vnd.ruvane.action";
 export const NAVIGATION_MEDIA_TYPE = "application/vnd.ruvane.page";
 /** Validates a complete origin-relative target, without URL normalization. */
@@ -59,6 +59,8 @@ export function validateExports(exports) {
   if (!exports || !(exports.memory instanceof WebAssembly.Memory) || typeof exports.ruvane_abi_version !== "function") throw invalid();
   if (result(exports.ruvane_abi_version()) !== ABI_VERSION) throw new Error("Unsupported Ruvane browser ABI");
   if (FUNCTIONS.some(name => typeof exports[name] !== "function")) throw invalid();
+  const revision = exports.ruvane_application_revision();
+  if (typeof revision !== "bigint" || revision < 0n || revision > 0xffffffffffffffffn) throw invalid();
   return exports;
 }
 
@@ -334,10 +336,13 @@ function matchDom(nodes, root, inert) {
 }
 /** Loads a module and manages mounted or hydrated views. Disposal is final. */
 export async function createRuntime(url, options = {}) {
-  if (!options || typeof options !== "object" || Object.keys(options).some(key => key !== "actionTimeoutMs")) throw invalid();
+  if (!options || typeof options !== "object" || Object.keys(options).some(key => key !== "actionTimeoutMs" && key !== "applicationRevision")) throw invalid();
   const actionTimeout = options.actionTimeoutMs ?? 10000;
   if (!Number.isInteger(actionTimeout) || actionTimeout < 1 || actionTimeout > 10000) throw invalid();
+  const applicationRevision = options.applicationRevision ?? null;
+  if (applicationRevision !== null && (typeof applicationRevision !== "string" || !/^(0|[1-9][0-9]{0,19})$/.test(applicationRevision) || BigInt(applicationRevision) > 0xffffffffffffffffn)) throw invalid();
   let exports = await loadModule(url);
+  if (applicationRevision !== null && exports.ruvane_application_revision() !== BigInt(applicationRevision)) throw new Error("Ruvane application revision mismatch");
   const views = new Map();
   let nextRoot = 0, busy = false, closed = false, faulted = false, finalRust = null;
 
@@ -428,7 +433,7 @@ export async function createRuntime(url, options = {}) {
   async function perform(id, view, operation) {
     let bytes = null, kind = 0;
     try {
-      const response = await fetch(operation.url, { method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": ACTION_MEDIA_TYPE }, body: operation.body, signal: operation.controller.signal });
+      const response = await fetch(operation.url, { method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": ACTION_MEDIA_TYPE, ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) }, body: operation.body, signal: operation.controller.signal });
       if (![200, 400].includes(response.status)) { await response.body?.cancel(); throw new TransportError(4); }
       if (response.headers.get("content-type")?.trim().toLowerCase() !== ACTION_MEDIA_TYPE || !response.body) { await response.body?.cancel(); throw new TransportError(3); }
       const length = response.headers.get("content-length");
@@ -708,6 +713,7 @@ export async function createRuntime(url, options = {}) {
     finally { busy = false; }
   }
   return Object.freeze({
+    applicationRevision,
     mountPage(root, bytes) { decodePage(bytes); return start(root, null, false, bytes); },
     mount(root, props) { return start(root, validateProps(props), false); },
     hydrate(root) {

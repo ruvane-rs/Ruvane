@@ -74,6 +74,16 @@ pub(super) fn snapshot(root: &Path) -> Result<Snapshot> {
             &mut bytes,
         )?;
     }
+    if fs::symlink_metadata(root.join("browser")).is_ok() {
+        visit(
+            root,
+            &root.join("browser"),
+            0,
+            &mut directories,
+            &mut result,
+            &mut bytes,
+        )?;
+    }
     // Projects created before alpha.10 may lack content and build scripts.
     if fs::symlink_metadata(root.join("content")).is_ok() {
         visit(

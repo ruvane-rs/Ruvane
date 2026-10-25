@@ -56,13 +56,14 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     if (absolute.origin !== location.origin || urlTarget(absolute) !== url) return Promise.reject(failure());
     if (mode !== "start" && !started) return Promise.reject(failure());
     pending?.abort.abort();
-    const operation = { mode, abort: new AbortController(), expired: false }; pending = operation;
+    const operation = { mode, abort: new AbortController(), expired: false, updated: false }; pending = operation;
     status.textContent = "Loading…"; outlet.setAttribute("aria-busy", "true");
     const timer = setTimeout(() => { operation.expired = true; operation.abort.abort(); }, timeoutMs);
     idle = (async () => {
       let prepared = null, committing = false;
       try {
-        const response = await fetch(absolute.href, { method: "GET", mode: "same-origin", credentials: "same-origin", redirect: "error", headers: { Accept: NAVIGATION_MEDIA_TYPE }, signal: operation.abort.signal, cache: "no-store" });
+        const response = await fetch(absolute.href, { method: "GET", mode: "same-origin", credentials: "same-origin", redirect: "error", headers: { Accept: NAVIGATION_MEDIA_TYPE, ...(runtime.applicationRevision ? { "Ruvane-Application-Revision": runtime.applicationRevision } : {}) }, signal: operation.abort.signal, cache: "no-store" });
+        operation.updated = response.status === 409;
         const bytes = await pageBytes(response, operation.abort.signal), page = decodePage(bytes);
         if (page.url !== url || page.status !== response.status || response.redirected) throw failure();
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
@@ -83,7 +84,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
       } catch {
         try { prepared?.dispose(); } catch { fallback(url); }
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
-        status.textContent = operation.expired ? "Navigation timed out. Try the link again." : "Navigation failed. Try the link again or reload.";
+        status.textContent = operation.updated ? "Application updated. Reload to continue." : operation.expired ? "Navigation timed out. Try the link again." : "Navigation failed. Try the link again or reload.";
         if (committing || mode === "pop" || runtime.stats().state !== "active" || activeURL !== target()) fallback(url);
         return "failed";
       } finally {

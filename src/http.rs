@@ -125,6 +125,8 @@ pub enum StatusCode {
     MethodNotAllowed,
     /// 408: the request did not arrive within its total time budget.
     RequestTimeout,
+    /// 409: the browser and server application revisions differ.
+    Conflict,
     /// 411: a POST form has no declared content length.
     LengthRequired,
     /// 413: the request body exceeds the supported budget.
@@ -156,6 +158,7 @@ impl StatusCode {
             Self::NotFound => 404,
             Self::MethodNotAllowed => 405,
             Self::RequestTimeout => 408,
+            Self::Conflict => 409,
             Self::LengthRequired => 411,
             Self::ContentTooLarge => 413,
             Self::UriTooLong => 414,
@@ -178,6 +181,7 @@ impl StatusCode {
             Self::NotFound => "Not Found",
             Self::MethodNotAllowed => "Method Not Allowed",
             Self::RequestTimeout => "Request Timeout",
+            Self::Conflict => "Conflict",
             Self::LengthRequired => "Length Required",
             Self::ContentTooLarge => "Content Too Large",
             Self::UriTooLong => "URI Too Long",

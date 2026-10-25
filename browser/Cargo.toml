@@ -1,6 +1,6 @@
 [package]
 name = "ruvane-browser"
-version = "0.1.0-alpha.18"
+version = "0.1.0-alpha.19"
 edition = "2024"
 rust-version = "1.85"
 publish = false
@@ -9,6 +9,10 @@ license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["demo"]
+demo = []
 
 [dependencies]
 ruvane = { path = ".." }

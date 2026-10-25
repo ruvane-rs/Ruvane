@@ -1,4 +1,4 @@
-use super::{PROJECT_MARKER, Result, WORK_MARKER};
+use super::{INTERACTIVE_MARKER, PROJECT_MARKER, Result, WORK_MARKER};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -6,19 +6,26 @@ use std::path::{Component, Path, PathBuf};
 pub(super) struct Project {
     pub root: PathBuf,
     pub work: PathBuf,
+    pub interactive: bool,
 }
 
 impl Project {
     pub fn open() -> Result<Self> {
         let root = std::env::current_dir()?;
         checked_dir(&root)?;
-        if read(&root.join("Ruvane.project"), 256)? != PROJECT_MARKER.as_bytes() {
+        let marker = read(&root.join("Ruvane.project"), 256)?;
+        let interactive = marker == INTERACTIVE_MARKER.as_bytes();
+        if !interactive && marker != PROJECT_MARKER.as_bytes() {
             return Err("not a supported Ruvane project root".into());
         }
         regular(&root.join("Cargo.toml"))?;
         let work = root.join(".ruvane");
         managed(&work, "owner", WORK_MARKER)?;
-        Ok(Self { root, work })
+        Ok(Self {
+            root,
+            work,
+            interactive,
+        })
     }
 
     pub fn lock(&self) -> Result<Lock> {

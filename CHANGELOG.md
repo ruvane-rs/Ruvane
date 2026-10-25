@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.0-alpha.19 — Unreleased
+
+- Connect App client pages to shared component/state declarations, GET loaders,
+  typed public seeds, SSR, native fallbacks and a persistent application shell.
+- Add application-owned Wasm exports through export_application!, with optional
+  repository demo code. Browser ABI v7 adds an exact u64 application revision;
+  RVN5 commands and RVP1 packets retain their formats.
+- Check module revisions before hydration and carry them on navigation/actions.
+  Reject stale App requests and unversioned typed actions with 409 before their
+  handlers, while retaining native form source-origin validation.
+- Generate interactive workspaces with their own shared library and browser
+  entry point. Build optimized Wasm and native code with one revision, embed the
+  prepared module, watch browser sources and preserve previous builds on errors.
+- Produce versioned release server bundles with resources exported by their own
+  executable. Verify manifests, ABI/revision records and exact module bytes
+  before publishing the new selection.
+- Keep the two first-party framework packages and zero third-party dependencies.
+
 ## 0.1.0-alpha.18 — Unreleased
 
 - Add shared NavigationRoutes based on PageRoute, named link generation, typed

@@ -1,0 +1,208 @@
+use super::remote_tasks::{Task, decode};
+use ruvane::{
+    ActionData, ActionOutcome, ActionRequest, BrowserTag::*, Component, ComponentError,
+    ComponentProps, FormData, InitialState, InternalUrl, View,
+};
+pub const HOME: u32 = 8;
+pub const TASKS: u32 = 9;
+pub const DETAIL: u32 = 10;
+pub const ERROR: u32 = 11;
+
+struct Counter(u32);
+impl Component for Counter {
+    fn view(&self) -> Result<View, ComponentError> {
+        let mut view = View::new();
+        let section = view.element(0, Section)?;
+        view.leaf(section, Heading, "Layout counter")?;
+        view.leaf(section, Output, &self.0.to_string())?;
+        view.button(section, "Increment", 1, self.0 == 1000)?;
+        Ok(view)
+    }
+    fn dispatch(&mut self, event: u32) -> Result<(), ComponentError> {
+        if event != 1 {
+            return Err(ComponentError::InvalidEvent);
+        }
+        self.0 = self.0.saturating_add(1).min(1000);
+        Ok(())
+    }
+}
+pub fn create_component(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
+    if let (1, InitialState::Number(value @ 0..=1000)) = (props.component(), props.state()) {
+        return Ok(Box::new(Counter(value)));
+    }
+    create(props)
+}
+struct Page {
+    kind: u32,
+    id: u32,
+    tasks: Vec<Task>,
+    outgoing: Option<ActionRequest>,
+    pending: Option<u32>,
+    message: String,
+}
+impl Component for Page {
+    fn page_data(&mut self, data: ActionData) -> Result<(), ComponentError> {
+        if self.kind == ERROR {
+            return if data.is_empty() {
+                Ok(())
+            } else {
+                Err(ComponentError::InvalidProps)
+            };
+        }
+        self.tasks = decode(&data).ok_or(ComponentError::InvalidProps)?;
+        if self.kind == DETAIL && !self.tasks.iter().any(|t| t.id == self.id) {
+            return Err(ComponentError::InvalidProps);
+        }
+        Ok(())
+    }
+    fn view(&self) -> Result<View, ComponentError> {
+        let mut view = View::new();
+        let section = view.keyed_element(0, 1, Section)?;
+        match self.kind {
+            HOME => {
+                view.keyed_leaf(section, 1, Heading, "Home")?;
+                let row = view.keyed_element(section, 3, Paragraph)?;
+                view.keyed_leaf(
+                    row,
+                    1,
+                    Span,
+                    &format!("{} tasks saved on the server.", self.tasks.len()),
+                )?;
+                view.link(
+                    section,
+                    4,
+                    &super::pages::application().url("tasks", &[]).unwrap(),
+                    "Browse tasks",
+                )?;
+            }
+            ERROR => {
+                view.keyed_leaf(
+                    section,
+                    1,
+                    Heading,
+                    if self.id == 404 {
+                        "Page not found"
+                    } else {
+                        "Invalid page request"
+                    },
+                )?;
+                view.link(
+                    section,
+                    2,
+                    &super::pages::application().url("home", &[]).unwrap(),
+                    "Go home",
+                )?;
+            }
+            DETAIL => {
+                if let Some(task) = self.tasks.iter().find(|t| t.id == self.id) {
+                    view.keyed_leaf(section, 1, Heading, &task.title)?;
+                    let row = view.keyed_element(section, 2, Paragraph)?;
+                    view.keyed_leaf(row, 1, Span, &task.notes)?;
+                    view.keyed_leaf(
+                        section,
+                        3,
+                        Output,
+                        if task.done { "Completed" } else { "Open" },
+                    )?;
+                    view.keyed_button(
+                        section,
+                        4,
+                        if task.done {
+                            "Mark open"
+                        } else {
+                            "Mark completed"
+                        },
+                        1,
+                        self.pending.is_some(),
+                    )?;
+                    view.keyed_button(section, 5, "Remove task", 2, self.pending.is_some())?;
+                } else {
+                    view.keyed_leaf(section, 1, Heading, "Task removed")?;
+                }
+                view.keyed_leaf(section, 6, Output, &self.message)?;
+                view.link(
+                    section,
+                    7,
+                    &super::pages::application().url("tasks", &[]).unwrap(),
+                    "Back to tasks",
+                )?;
+            }
+            _ => return Err(ComponentError::InvalidProps),
+        }
+        Ok(view)
+    }
+    fn dispatch(&mut self, event: u32) -> Result<(), ComponentError> {
+        if self.pending.is_some() {
+            return Ok(());
+        }
+        let task = self
+            .tasks
+            .iter()
+            .find(|t| t.id == self.id)
+            .ok_or(ComponentError::InvalidEvent)?;
+        let mut fields = FormData::default()
+            .field("id", &task.id.to_string())
+            .map_err(|_| ComponentError::InvalidProps)?;
+        let path = match event {
+            1 => {
+                if !task.done {
+                    fields = fields.field("done", "on").unwrap();
+                }
+                "/actions/tasks/status"
+            }
+            2 => "/actions/tasks/remove",
+            _ => return Err(ComponentError::InvalidEvent),
+        };
+        self.outgoing = Some(
+            ActionRequest::new(event, InternalUrl::new(path).unwrap(), fields)
+                .map_err(|_| ComponentError::InvalidProps)?,
+        );
+        self.pending = Some(event);
+        self.message = "Sending…".into();
+        Ok(())
+    }
+    fn take_action(&mut self) -> Option<ActionRequest> {
+        self.outgoing.take()
+    }
+    fn action_result(&mut self, action: u32, outcome: ActionOutcome) -> Result<(), ComponentError> {
+        if self.pending.take() != Some(action) {
+            return Err(ComponentError::InvalidEvent);
+        }
+        self.message = match outcome {
+            Ok(reply) if !reply.is_validation() => match decode(reply.data()) {
+                Some(tasks) => {
+                    self.tasks = tasks;
+                    "Saved."
+                }
+                None => "Invalid server response.",
+            },
+            Ok(_) => "The server rejected this change. Reload before retrying.",
+            Err(_) => "Request failed. Reload before retrying.",
+        }
+        .into();
+        Ok(())
+    }
+}
+/// Creates a page model. Seeds are supplied separately before the first view.
+pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
+    let InitialState::Number(id) = props.state() else {
+        return Err(ComponentError::InvalidProps);
+    };
+    if props.component() == TASKS && id == 0 {
+        return Ok(super::remote_tasks::create_page());
+    }
+    if !matches!(
+        (props.component(), id),
+        (HOME, 0) | (DETAIL, 1..) | (ERROR, 400 | 404)
+    ) {
+        return Err(ComponentError::InvalidProps);
+    }
+    Ok(Box::new(Page {
+        kind: props.component(),
+        id,
+        tasks: Vec::new(),
+        outgoing: None,
+        pending: None,
+        message: String::new(),
+    }))
+}

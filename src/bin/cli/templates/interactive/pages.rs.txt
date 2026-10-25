@@ -1,0 +1,127 @@
+use crate::{components, store};
+use ruvane::{
+    App, ClientPageData, ComponentProps, Html, InitialState, InternalUrl, NavigationMatch,
+    PageContext, PageError, PageRoute, PostForm, Tag, element, navigation_link,
+};
+fn zero(_: &NavigationMatch) -> Result<InitialState, PageError> {
+    Ok(InitialState::Number(0))
+}
+fn task(route: &NavigationMatch) -> Result<InitialState, PageError> {
+    let raw = route.param("id").ok_or(PageError::BadRequest)?;
+    let id = raw.parse::<u32>().map_err(|_| PageError::BadRequest)?;
+    if id == 0 || id.to_string() != raw {
+        return Err(PageError::BadRequest);
+    }
+    Ok(InitialState::Number(id))
+}
+pub fn application() -> App {
+    let mut app = App::new();
+    app.components(components::create_component, components::ERROR)
+        .unwrap();
+    app.client_page(
+        PageRoute::new("home", "/").unwrap(),
+        components::HOME,
+        zero,
+        |_| Ok(ClientPageData::new("Home / Ruvane", store::snapshot()?)),
+    )
+    .unwrap();
+    app.client_page(
+        PageRoute::new("tasks", "/tasks").unwrap(),
+        components::TASKS,
+        zero,
+        |_| {
+            Ok(ClientPageData::new("Tasks / Ruvane", store::snapshot()?)
+                .fallback(native_forms(None)?))
+        },
+    )
+    .unwrap();
+    app.client_page(
+        PageRoute::new("task", "/tasks/{id}").unwrap(),
+        components::DETAIL,
+        task,
+        |context: &PageContext<'_>| {
+            let id = context
+                .param_as::<u32>("id")
+                .map_err(|_| PageError::BadRequest)?;
+            let title = store::tasks()?
+                .into_iter()
+                .find(|t| t.id == id)
+                .ok_or(PageError::NotFound)?
+                .title;
+            Ok(
+                ClientPageData::new(format!("{title} / Ruvane"), store::snapshot()?)
+                    .fallback(native_forms(Some(id))?),
+            )
+        },
+    )
+    .unwrap();
+    app
+}
+pub fn shell(children: Html) -> Html {
+    let props = ComponentProps::new(1, InitialState::Number(5)).unwrap();
+    let counter = components::create_component(props)
+        .unwrap()
+        .view()
+        .unwrap()
+        .hydratable(props)
+        .unwrap();
+    element(Tag::Main)
+        .child(
+            element(Tag::Header)
+                .child(element(Tag::H1).child("Ruvane application"))
+                .child(element(Tag::P).child("Shared Rust pages. No third-party dependencies."))
+                .child(navigation_link(
+                    &application().url("home", &[]).unwrap(),
+                    "Home",
+                ))
+                .child(" · ")
+                .child(navigation_link(
+                    &application().url("tasks", &[]).unwrap(),
+                    "Tasks",
+                )),
+        )
+        .child(counter)
+        .child(children)
+        .render()
+}
+fn native_forms(id: Option<u32>) -> Result<Html, PageError> {
+    let mut body = element(Tag::Section).child(element(Tag::H2).child("Native forms"));
+    if id.is_none() {
+        body = body.child(
+            PostForm::new(InternalUrl::new("/tasks").unwrap())
+                .unwrap()
+                .text("title", "Task name", "")
+                .unwrap()
+                .textarea("notes", "Notes", "")
+                .unwrap()
+                .submit_label("Add task")
+                .unwrap(),
+        );
+    }
+    for task in store::tasks()?
+        .into_iter()
+        .filter(|t| id.is_none_or(|id| t.id == id))
+    {
+        let url = InternalUrl::new("/tasks")
+            .unwrap()
+            .segment(&task.id.to_string())
+            .unwrap();
+        body = body
+            .child(element(Tag::H3).child(task.title.as_str()))
+            .child(
+                PostForm::new(url.clone().segment("status").unwrap())
+                    .unwrap()
+                    .checkbox("done", "Completed", task.done)
+                    .unwrap()
+                    .submit_label("Save status")
+                    .unwrap(),
+            )
+            .child(
+                PostForm::new(url.segment("remove").unwrap())
+                    .unwrap()
+                    .submit_label("Remove task")
+                    .unwrap(),
+            );
+    }
+    Ok(body.render())
+}

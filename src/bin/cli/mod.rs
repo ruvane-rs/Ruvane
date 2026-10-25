@@ -14,15 +14,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+const INTERACTIVE_MARKER: &str = "ruvane-project\t2\tinteractive\n";
+const APP_BUILDS_MARKER: &str = "ruvane-cli-app-builds\t1\n";
 const PROJECT_MARKER: &str = "ruvane-project\t1\n";
 const WORK_MARKER: &str = "ruvane-cli-work\t1\n";
 const BUILDS_MARKER: &str = "ruvane-cli-builds\t1\n";
 
 const HELP: &str = "Ruvane — zero third-party dependencies
 
-  ruvane new NAME [--framework-path PATH]
+  ruvane new NAME [--interactive] [--framework-path PATH]
   ruvane dev [--port PORT] [--offline]
-  ruvane build --origin ORIGIN [--out NAME] [--offline]
+  ruvane build [--origin ORIGIN] [--out NAME] [--offline]
   ruvane preview DIRECTORY [--port PORT]
 
 Run dev/build inside a generated trusted project. Preview accepts an existing
@@ -82,15 +84,19 @@ fn new(args: &[OsString]) -> Result<()> {
         .and_then(|name| name.to_str())
         .ok_or("new requires a project name")?;
     let mut framework = None;
+    let mut interactive = false;
     let mut index = 1;
     while index < args.len() {
-        if args[index] != "--framework-path" || framework.is_some() {
-            return Err("invalid new option".into());
+        match args[index].to_str() {
+            Some("--framework-path") if framework.is_none() => {
+                framework = Some(PathBuf::from(option(args, &mut index)?))
+            }
+            Some("--interactive") if !interactive => interactive = true,
+            _ => return Err("invalid new option".into()),
         }
-        framework = Some(PathBuf::from(option(args, &mut index)?));
         index += 1;
     }
-    scaffold::create(name, framework.as_deref())?;
+    scaffold::create(name, framework.as_deref(), interactive)?;
     println!("Created {name}.\nNext: cd {name}\n      ruvane dev");
     Ok(())
 }
@@ -238,15 +244,25 @@ fn build(args: &[OsString]) -> Result<()> {
         }
         index += 1;
     }
-    let origin = origin.ok_or("build requires --origin")?;
+
     let output = output.to_str().ok_or("invalid output name")?;
     if !scaffold::valid_name(output)
-        || matches!(output, "src" | "assets" | "target" | "tests" | "examples")
+        || matches!(
+            output,
+            "src" | "assets" | "target" | "tests" | "examples" | "browser" | "content"
+        )
     {
         return Err("output must be a simple project directory name".into());
     }
     let project = project::Project::open()?;
     let _lock = project.lock()?;
+    if project.interactive {
+        if origin.is_some() {
+            return Err("interactive builds do not use --origin in this profile".into());
+        }
+        return process::build_application(&project, output, offline);
+    }
+    let origin = origin.ok_or("build requires --origin")?;
     let container = project.root.join(output);
     project::managed(&container, ".ruvane-builds", BUILDS_MARKER)?;
     let version = project::next_build(&container)?;

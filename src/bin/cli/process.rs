@@ -1,4 +1,4 @@
-use super::{Result, project};
+use super::{Result, project, watch};
 use ruvane::SiteOrigin;
 use std::fs;
 use std::net::SocketAddr;
@@ -18,11 +18,17 @@ pub(super) struct Binary {
     directory: PathBuf,
     executable: PathBuf,
     ready_files: Vec<PathBuf>,
+    wasm: Option<PathBuf>,
+    revision: u64,
+    sources: Option<watch::Snapshot>,
 }
 impl Drop for Binary {
     fn drop(&mut self) {
         for path in &self.ready_files {
             let _ = fs::remove_file(path);
+        }
+        if let Some(wasm) = &self.wasm {
+            let _ = fs::remove_file(wasm);
         }
         let _ = fs::remove_file(&self.executable);
         let _ = fs::remove_dir(&self.directory);
@@ -64,6 +70,14 @@ pub(super) fn compile(
     offline: bool,
     quit: &AtomicBool,
 ) -> Result<Binary> {
+    compile_profile(project, offline, quit, false)
+}
+fn compile_profile(
+    project: &project::Project,
+    offline: bool,
+    quit: &AtomicBool,
+    release: bool,
+) -> Result<Binary> {
     let content = project.root.join("content");
     if fs::symlink_metadata(&content).is_ok() {
         let _ = ruvane::ContentBundle::read_dir(&content)?;
@@ -75,36 +89,6 @@ pub(super) fn compile(
         Err(error) => return Err(error.into()),
     }
     project::checked_dir(&target)?;
-    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
-    command
-        .current_dir(&project.root)
-        .arg("build")
-        .arg("--bin")
-        .arg("ruvane-app")
-        .arg("--manifest-path")
-        .arg(project.root.join("Cargo.toml"))
-        .arg("--target-dir")
-        .arg(&target)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    // Force a rebuild when content changes without a new mtime. This is not a hash.
-    command.env(
-        "RUVANE_CONTENT_REVISION",
-        format!(
-            "{}-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_nanos()
-        ),
-    );
-    if offline {
-        command.arg("--offline");
-    }
-    let mut child = ChildGuard(command.spawn()?);
-    wait(&mut child, quit, Duration::from_secs(120))?;
     let runs = project.work.join("runs");
     match fs::create_dir(&runs) {
         Ok(()) => {}
@@ -127,16 +111,184 @@ pub(super) fn compile(
             Err(error) => return Err(error.into()),
         }
     };
-    let binary = Binary {
+    let mut binary = Binary {
         executable: directory.join(EXECUTABLE),
         directory,
         ready_files: Vec::new(),
+        wasm: None,
+        revision: 0,
+        sources: None,
     };
-    let compiled = target.join("debug").join(EXECUTABLE);
+    let mut before = if project.interactive {
+        Some(watch::snapshot(&project.root)?)
+    } else {
+        None
+    };
+    if project.interactive {
+        binary.revision = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos(),
+        )?
+        .checked_add(NEXT.fetch_add(1, Ordering::Relaxed) as u64)
+        .ok_or("application revision exhausted")?;
+        let mut wasm = cargo(project, &target, offline);
+        wasm.args([
+            "--package",
+            "ruvane-application-browser",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--release",
+        ])
+        .env("RUVANE_APPLICATION_REVISION", binary.revision.to_string());
+        let mut child = ChildGuard(wasm.spawn()?);
+        wait(&mut child, quit, Duration::from_secs(120))?;
+        let bytes = project::read(
+            &target.join("wasm32-unknown-unknown/release/ruvane_application_browser.wasm"),
+            ruvane::MAX_ASSET_BYTES,
+        )?;
+        if !bytes.starts_with(b"\0asm\x01\0\0\0") {
+            return Err("invalid application Wasm".into());
+        }
+        let path = binary.directory.join("app.wasm");
+        project::write_new(&path, &bytes)?;
+        binary.wasm = Some(path);
+        let middle = watch::snapshot(&project.root)?;
+        let mut previous = before.clone().unwrap();
+        previous.remove(Path::new("Cargo.lock"));
+        let mut comparable = middle.clone();
+        comparable.remove(Path::new("Cargo.lock"));
+        if previous != comparable {
+            return Err(
+                "sources changed during Wasm compilation; waiting for the next build".into(),
+            );
+        }
+        before = Some(middle);
+    }
+    let mut command = cargo(project, &target, offline);
+    command.args(["--bin", "ruvane-app"]);
+    if release {
+        command.arg("--release");
+    }
+    if let Some(path) = &binary.wasm {
+        command.arg("--locked");
+        command
+            .env("RUVANE_WASM_FILE", path)
+            .env("RUVANE_APPLICATION_REVISION", binary.revision.to_string());
+    }
+    command.env(
+        "RUVANE_CONTENT_REVISION",
+        format!(
+            "{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ),
+    );
+    let mut child = ChildGuard(command.spawn()?);
+    wait(&mut child, quit, Duration::from_secs(120))?;
+    if let Some(before) = &before {
+        if *before != watch::snapshot(&project.root)? {
+            return Err("sources changed during compilation; waiting for the next build".into());
+        }
+    }
+    binary.sources = before;
+    let compiled = target
+        .join(if release { "release" } else { "debug" })
+        .join(EXECUTABLE);
     let bytes = project::read(&compiled, 64 * 1024 * 1024)?;
     project::write_new(&binary.executable, &bytes)?;
     fs::set_permissions(&binary.executable, fs::metadata(compiled)?.permissions())?;
     Ok(binary)
+}
+
+fn cargo(project: &project::Project, target: &Path, offline: bool) -> Command {
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    command
+        .current_dir(&project.root)
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(project.root.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if offline {
+        command.arg("--offline");
+    }
+    command
+}
+
+pub(super) fn build_application(
+    project: &project::Project,
+    output: &str,
+    offline: bool,
+) -> Result<()> {
+    let container = project.root.join(output);
+    project::managed(&container, ".ruvane-app-builds", super::APP_BUILDS_MARKER)?;
+    let version = project::next_build(&container)?;
+    let destination = container.join(&version);
+    let binary = compile_profile(project, offline, &AtomicBool::new(false), true)?;
+    fs::create_dir(&destination)?;
+    let resources = destination.join("resources");
+    let identity = destination.join("Ruvane.runtime");
+    let mut child = ChildGuard(
+        Command::new(&binary.executable)
+            .arg("--ruvane-client-assets")
+            .arg(&resources)
+            .arg(&identity)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()?,
+    );
+    wait(&mut child, &AtomicBool::new(false), Duration::from_secs(30))?;
+    let expected = format!(
+        "ruvane-runtime\t1\t{}\t{}\n",
+        ruvane::BROWSER_ABI_VERSION,
+        binary.revision
+    );
+    if project::read(&identity, 128)? != expected.as_bytes() {
+        return Err("application bundle ABI or revision mismatch".into());
+    }
+    ruvane::StaticSite::preview_export(&resources)?;
+    let module_path = resources.join(format!("ruvane-runtime/{:016x}/app.wasm", binary.revision));
+    if project::read(&module_path, ruvane::MAX_ASSET_BYTES)?
+        != project::read(
+            binary.wasm.as_ref().ok_or("missing application Wasm")?,
+            ruvane::MAX_ASSET_BYTES,
+        )?
+    {
+        return Err("application bundle module mismatch".into());
+    }
+    let bytes = project::read(&binary.executable, 64 * 1024 * 1024)?;
+    project::write_new(&destination.join(EXECUTABLE), &bytes)?;
+    fs::set_permissions(
+        destination.join(EXECUTABLE),
+        fs::metadata(&binary.executable)?.permissions(),
+    )?;
+    let manifest = format!(
+        "ruvane-application\t1\nrevision\t{}\nabi\t{}\nfile\t{EXECUTABLE}\t{}\nfile\tRuvane.runtime\t{}\nresources\tresources\n",
+        binary.revision,
+        ruvane::BROWSER_ABI_VERSION,
+        bytes.len(),
+        expected.len()
+    );
+    if binary.sources.as_ref() != Some(&watch::snapshot(&project.root)?) {
+        return Err("sources changed while preparing the application bundle".into());
+    }
+    project::write_new(&destination.join("Ruvane.bundle"), manifest.as_bytes())?;
+    project::write_new(
+        &destination.join("complete"),
+        b"ruvane-application-complete\t1\n",
+    )?;
+    project::publish(&container, &version)?;
+    println!(
+        "Built {}\nRun: {} --port 3000",
+        destination.display(),
+        destination.join(EXECUTABLE).display()
+    );
+    Ok(())
 }
 
 pub(super) fn export(
@@ -283,6 +435,9 @@ mod tests {
             directory: directory.clone(),
             executable: executable.clone(),
             ready_files: vec![ready.clone()],
+            wasm: None,
+            revision: 0,
+            sources: None,
         });
         assert!(!executable.exists());
         assert!(!ready.exists());

@@ -37,6 +37,7 @@ fn managed_roots_and_locks_never_replace_existing_data() {
     let work = temp.0.join("managed");
     project::managed(&work, "owner", WORK_MARKER).unwrap();
     let project = project::Project {
+        interactive: false,
         root: temp.0.clone(),
         work: work.clone(),
     };

@@ -1,0 +1,118 @@
+use ruvane::{ActionData, ActionReply, ActionValue, FormData, PageError};
+use std::sync::{Mutex, OnceLock};
+#[derive(Clone)]
+pub struct Task {
+    pub id: u32,
+    pub title: String,
+    pub notes: String,
+    pub done: bool,
+}
+#[derive(Default)]
+struct State {
+    tasks: Vec<Task>,
+    next: u32,
+}
+fn state() -> &'static Mutex<State> {
+    static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(State::default()))
+}
+pub fn tasks() -> Result<Vec<Task>, PageError> {
+    Ok(state()
+        .lock()
+        .map_err(|_| PageError::InternalServerError)?
+        .tasks
+        .clone())
+}
+pub fn snapshot() -> Result<ActionData, PageError> {
+    encode(&tasks()?)
+}
+fn encode(tasks: &[Task]) -> Result<ActionData, PageError> {
+    let mut data = ActionData::default();
+    data.insert("count", ActionValue::Number(tasks.len() as u64))
+        .map_err(|_| PageError::InternalServerError)?;
+    for (index, task) in tasks.iter().enumerate() {
+        for (name, value) in [
+            (format!("id_{index}"), ActionValue::Number(task.id as u64)),
+            (
+                format!("title_{index}"),
+                ActionValue::Text(task.title.clone()),
+            ),
+            (
+                format!("notes_{index}"),
+                ActionValue::Text(task.notes.clone()),
+            ),
+            (format!("done_{index}"), ActionValue::Boolean(task.done)),
+        ] {
+            data.insert(&name, value)
+                .map_err(|_| PageError::InternalServerError)?;
+        }
+    }
+    Ok(data)
+}
+fn invalid(message: &str, field: &str) -> ActionReply {
+    let mut data = ActionData::default();
+    data.insert("message", ActionValue::Text(message.into()))
+        .unwrap();
+    data.insert("field", ActionValue::Text(field.into()))
+        .unwrap();
+    ActionReply::validation(data)
+}
+pub fn action(kind: u32, fields: &FormData) -> Result<ActionReply, PageError> {
+    let mut state = state().lock().map_err(|_| PageError::InternalServerError)?;
+    match kind {
+        1 if !fields.is_empty() => return Ok(invalid("Unexpected fields.", "")),
+        2 => {
+            if !fields.has_only(&["title", "notes"]) {
+                return Ok(invalid("Unexpected fields.", ""));
+            }
+            let title = fields.get("title").unwrap_or("").trim();
+            let notes = fields.get("notes").unwrap_or("");
+            if title.is_empty() || title.len() > 80 || title.chars().any(char::is_control) {
+                return Ok(invalid("Enter a task name of at most 80 bytes.", "title"));
+            }
+            if notes.len() > 160 {
+                return Ok(invalid("Notes must be at most 160 bytes.", "notes"));
+            }
+            if state.tasks.len() == 32 {
+                return Ok(invalid("Task limit reached.", ""));
+            }
+            let id = state
+                .next
+                .checked_add(1)
+                .ok_or(PageError::InternalServerError)?;
+            state.next = id;
+            state.tasks.push(Task {
+                id,
+                title: title.into(),
+                notes: notes.trim().into(),
+                done: false,
+            });
+        }
+        3 | 4 => {
+            if !fields.has_only(if kind == 3 { &["id", "done"] } else { &["id"] }) {
+                return Ok(invalid("Unexpected fields.", ""));
+            }
+            let raw = fields.get("id").unwrap_or("");
+            let Ok(id) = raw.parse::<u32>() else {
+                return Ok(invalid("Invalid task ID.", ""));
+            };
+            if id.to_string() != raw {
+                return Ok(invalid("Invalid task ID.", ""));
+            }
+            let Some(index) = state.tasks.iter().position(|t| t.id == id) else {
+                return Ok(invalid("Task not found.", ""));
+            };
+            if kind == 4 {
+                state.tasks.remove(index);
+            } else {
+                state.tasks[index].done = match fields.checkbox("done") {
+                    Ok(done) => done,
+                    Err(_) => return Ok(invalid("Invalid checkbox value.", "")),
+                };
+            }
+        }
+        1 => (),
+        _ => return Err(PageError::BadRequest),
+    }
+    Ok(ActionReply::success(encode(&state.tasks)?))
+}

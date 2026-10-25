@@ -1,5 +1,11 @@
 # Ruvane CLI
 
+Alpha.19 adds `new --interactive --framework-path PATH`, paired native/Wasm dev
+builds and versioned application bundles. Browser sources join the watched set.
+Interactive `build --offline` does not require an origin; static builds still
+require one. See [interactive applications](interactive-apps.md) for the marker,
+export protocol, revision checks and executable bundle format.
+
 Alpha.8 supplies a `ruvane` binary in the same package as the library, with
 no third-party dependencies. It requires a Rust/Cargo toolchain. Generated
 applications depend only on the first-party Ruvane library.

@@ -27,7 +27,22 @@ and support internal 303 redirects. Interactive HTTP pages explicitly opt into a
 fixed module/Wasm CSP. Wasm components can call explicit server actions with
 bounded typed replies, pending state and lifetime-checked completions.
 Shared page routes now support client navigation, persistent layouts, typed page
-seeds, back/forward history and native fallbacks. See [navigation](docs/navigation.md).
+seeds, back/forward history and native fallbacks. `App` and the CLI now generate,
+compile and bundle interactive applications with their own Wasm registries and
+matching build revisions. See [interactive applications](docs/interactive-apps.md).
+
+Create an interactive project from a local checkout:
+
+```sh
+cargo install --path . --offline --locked
+ruvane new my-app --interactive --framework-path /absolute/path/to/Ruvane
+cd my-app
+ruvane dev --offline
+```
+
+The toolchain needs `wasm32-unknown-unknown`. `ruvane build --offline` produces a
+versioned server bundle. The adapter is not published, so interactive generation
+currently requires a local framework path. [Application guide](docs/interactive-apps.md).
 
 ## Principles
 

@@ -47,7 +47,7 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="6" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="7" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
@@ -140,15 +140,16 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v6
+## Browser ABI v7
 
-Alpha.18 adds typed page ingress and internal links with RVN5 command frames. Rebuild the Wasm and use its
-matching bridge together. The module exports memory and these nineteen functions,
+Alpha.19 adds application-owned exports and a u64 build revision. RVN5 frames stay unchanged. Rebuild the Wasm and use its
+matching bridge together. The module exports memory and these twenty functions,
 with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 6 |
+| `ruvane_abi_version()` | Returns 7 |
+| `ruvane_application_revision()` | Returns the application build revision as u64/BigInt |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
 | `ruvane_dispatch(view, node, event, kind, value)` | Commit an event; 1 on success, zero on error |
 | `ruvane_event_begin(view, node, event, length)` | Start one text payload of 0..=1024 bytes |
@@ -286,3 +287,9 @@ check, not a Rust parser or independent security audit. Browser checks run at
 
 See [client navigation](navigation.md) for shared routes, RVP1 pages, persistent
 layouts and the navigation controller.
+
+Application projects disable the adapter demo feature and use `export_application!`
+with their own factory and validator. `createRuntime` accepts an optional decimal
+`applicationRevision` string and rejects mismatches before hydration. That runtime
+carries its revision on automatic navigation and action requests; stale App
+requests receive 409. See [interactive applications](interactive-apps.md).
