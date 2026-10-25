@@ -1190,3 +1190,299 @@ fn styled_blog_serves_its_css_and_original_png_assets() {
         assert!(parts(&head).1.is_empty());
     }
 }
+
+#[test]
+fn query_mode_is_fixed_by_registration_and_raw_query_remains_available() {
+    use ruvane::QueryMode;
+    let mut router = Router::new();
+    router
+        .get("/uri", |request| {
+            assert_eq!(request.query_mode(), QueryMode::Uri);
+            Response::text(format!(
+                "{}|{}",
+                request.query().unwrap(),
+                request.query_params().get("q").unwrap()
+            ))
+        })
+        .unwrap();
+    router
+        .get_form("/form", |request| {
+            assert_eq!(request.query_mode(), QueryMode::Form);
+            Response::text(format!(
+                "{}|{}",
+                request.query().unwrap(),
+                request.query_params().get("q").unwrap()
+            ))
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    for fields in ["", "&_mode=form", "&_mode=uri&_form=true"] {
+        let query = format!("q=Rust+%2B+HTML%252B{fields}");
+        assert_eq!(
+            parts(&server.request("GET", &format!("/uri?{query}"))).1,
+            format!("{query}|Rust+++HTML%2B").as_bytes()
+        );
+        assert_eq!(
+            parts(&server.request("GET", &format!("/form?{query}"))).1,
+            format!("{query}|Rust + HTML%2B").as_bytes()
+        );
+    }
+}
+
+#[test]
+fn selected_form_mode_does_not_preparse_keys_using_uri_rules() {
+    let mut router = Router::new();
+    router
+        .get_form("/form", |request| {
+            assert_eq!(request.query_params().get("a b"), Some("1"));
+            assert_eq!(request.query_params().get("a+b"), Some("2"));
+            Response::text("distinct")
+        })
+        .unwrap();
+    router.get("/uri", |_| Response::text("distinct")).unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    assert_eq!(
+        parts(&server.request("GET", "/form?a+b=1&a%2Bb=2")).1,
+        b"distinct"
+    );
+    assert_eq!(status(&server.request("GET", "/uri?a+b=1&a%2Bb=2")), 400);
+    assert_eq!(status(&server.request("GET", "/uri?a+b=1&a%20b=2")), 200);
+    assert_eq!(status(&server.request("GET", "/form?a+b=1&a%20b=2")), 400);
+}
+
+#[test]
+fn invalid_form_queries_and_framing_never_reach_the_handler() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let mut router = Router::new();
+    router
+        .get_form("/form", move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Response::text("unreachable")
+        })
+        .unwrap();
+    let server = Running::start(
+        router,
+        ServerConfig {
+            max_request_line_bytes: 8192,
+            ..ServerConfig::default()
+        },
+    );
+    let mut queries = [
+        "q=1&q=2",
+        "a+b=1&a%20b=2",
+        "q=%FF",
+        "q=%00",
+        "q=%0d%0a",
+        "q=%C2%85",
+        "q=%",
+        "q=1&",
+        "=empty",
+    ]
+    .map(String::from)
+    .to_vec();
+    queries.push(format!("q={}", "+".repeat(ruvane::MAX_COMPONENT_BYTES + 1)));
+    queries.push(
+        (0..=ruvane::MAX_QUERY_PAIRS)
+            .map(|i| format!("k{i}=v"))
+            .collect::<Vec<_>>()
+            .join("&"),
+    );
+    queries.push("x".repeat(ruvane::MAX_INTERNAL_URL_BYTES + 1));
+    for query in queries {
+        let output = server.request("GET", &format!("/form?{query}"));
+        assert_eq!(status(&output), 400, "{query}");
+        assert_eq!(parts(&output).1, b"Bad Request\n");
+    }
+    for (headers, expected) in [
+        ("Content-Length: 0\r\nContent-Length: 0\r\n", 400),
+        ("Content-Length: 1\r\n", 413),
+        ("Transfer-Encoding: chunked\r\n", 501),
+        ("Host: evil.test\r\n", 400),
+    ] {
+        let raw = format!(
+            "GET /form?q=Rust+HTML HTTP/1.1\r\nHost: {}\r\n{headers}\r\n",
+            server.address
+        );
+        assert_eq!(status(&server.raw(raw.as_bytes())), expected);
+    }
+    assert_eq!(status(&server.request("POST", "/form?q=Rust+HTML")), 405);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn form_routes_share_duplicate_and_ambiguity_checks_with_uri_routes() {
+    for form_first in [true, false] {
+        let mut router = Router::new();
+        if form_first {
+            router
+                .get_form("/same", |_| Response::text("first"))
+                .unwrap();
+            assert_eq!(
+                router.get("/same", |_| Response::text("second")),
+                Err(RouteError::DuplicatePath)
+            );
+            router
+                .get_form("/a/{id}", |_| Response::text("first"))
+                .unwrap();
+            assert_eq!(
+                router.get("/{area}/new", |_| Response::text("second")),
+                Err(RouteError::AmbiguousRoute)
+            );
+        } else {
+            router.get("/same", |_| Response::text("first")).unwrap();
+            assert_eq!(
+                router.get_form("/same", |_| Response::text("second")),
+                Err(RouteError::DuplicatePath)
+            );
+            router.get("/a/{id}", |_| Response::text("first")).unwrap();
+            assert_eq!(
+                router.get_form("/{area}/new", |_| Response::text("second")),
+                Err(RouteError::AmbiguousRoute)
+            );
+        }
+        assert_eq!(
+            router.get_form("/bad?query", |_| Response::text("bad")),
+            Err(RouteError::InvalidPath)
+        );
+    }
+}
+
+#[test]
+fn raw_route_precedence_selects_mode_before_decoding_and_captures_keep_plus() {
+    use ruvane::QueryMode;
+    for fixed_first in [true, false] {
+        let mut router = Router::new();
+        if fixed_first {
+            router
+                .get("/items/new", |request| {
+                    assert_eq!(request.query_mode(), QueryMode::Uri);
+                    Response::text(request.query_params().get("q").unwrap())
+                })
+                .unwrap();
+        }
+        router
+            .get_form("/items/{slug}", |request| {
+                assert_eq!(request.query_mode(), QueryMode::Form);
+                Response::text(format!(
+                    "{}|{}",
+                    request.param("slug").unwrap(),
+                    request.query_params().get("q").unwrap()
+                ))
+            })
+            .unwrap();
+        if !fixed_first {
+            router
+                .get("/items/new", |request| {
+                    assert_eq!(request.query_mode(), QueryMode::Uri);
+                    Response::text(request.query_params().get("q").unwrap())
+                })
+                .unwrap();
+        }
+        let server = Running::start(router, ServerConfig::default());
+        assert_eq!(parts(&server.request("GET", "/items/new?q=a+b")).1, b"a+b");
+        assert_eq!(
+            parts(&server.request("GET", "/items/%6Eew?q=a+b")).1,
+            b"new|a b"
+        );
+        assert_eq!(
+            parts(&server.request("GET", "/items/a+b?q=a+b")).1,
+            b"a+b|a b"
+        );
+        assert_eq!(status(&server.request("GET", "/items/%2F?q=a+b")), 400);
+    }
+}
+
+#[test]
+fn unknown_paths_and_assets_use_uri_query_rules() {
+    let mut router = Router::new();
+    router
+        .asset("/assets/a.css", b"body{}", ruvane::MediaType::Css)
+        .unwrap();
+    router
+        .get_form("/search", |_| Response::text("form"))
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    assert_eq!(
+        status(&server.request("GET", "/missing?a+b=1&a%20b=2")),
+        404
+    );
+    assert_eq!(
+        status(&server.request("GET", "/missing?a+b=1&a%2Bb=2")),
+        400
+    );
+    assert_eq!(
+        status(&server.request("GET", "/assets/a.css?a+b=1&a%20b=2")),
+        200
+    );
+    assert_eq!(
+        status(&server.request("GET", "/assets/a.css?a+b=1&a%2Bb=2")),
+        400
+    );
+}
+
+#[test]
+fn form_routes_support_head_for_success_and_invalid_queries() {
+    let mut router = Router::new();
+    router
+        .get_form("/form", |request| {
+            Response::text(request.query_params().get("q").unwrap())
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    for (target, expected) in [("/form?q=Rust+%2B+HTML", 200), ("/form?q=1&q=2", 400)] {
+        let get = server.request("GET", target);
+        let head = server.request("HEAD", target);
+        assert_eq!(status(&get), expected);
+        assert_eq!(parts(&get).0, parts(&head).0);
+        assert!(parts(&head).1.is_empty());
+    }
+}
+
+#[test]
+fn blog_native_search_retains_values_resets_page_and_preserves_pagination() {
+    let server = Running::start(blog::router().unwrap(), ServerConfig::default());
+    let output = server.request("GET", "/articles?search=Rust+%2B+HTML&page=1");
+    assert_eq!(status(&output), 200);
+    let html = std::str::from_utf8(parts(&output).1).unwrap();
+    assert!(html.contains("<form method=\"get\" action=\"/articles\" accept-charset=\"UTF-8\">"));
+    assert!(html.contains(
+        "<span>Search articles</span><input type=\"search\" name=\"search\" value=\"Rust + HTML\""
+    ));
+    assert!(html.contains("<input type=\"hidden\" name=\"page\" value=\"1\">"));
+    assert!(html.contains("href=\"/articles\">Clear search</a>"));
+    assert!(html.contains("Search: Rust + HTML"));
+    assert!(html.contains("No articles found."));
+    let output = server.request("GET", "/articles?search=Rust&page=1");
+    let html = std::str::from_utf8(parts(&output).1).unwrap();
+    assert!(html.contains("href=\"/articles?page=2&amp;search=Rust\">Next page</a>"));
+    let output = server.request("GET", "/articles?page=2&search=Rust");
+    assert_eq!(status(&output), 200);
+    let html = std::str::from_utf8(parts(&output).1).unwrap();
+    assert!(html.contains("href=\"/articles?page=1&amp;search=Rust\">Previous page</a>"));
+    assert!(html.contains("name=\"page\" value=\"1\""));
+    let output = server.request("GET", "/articles?search=%C3%A9t%C3%A9+en+Rust");
+    let html = std::str::from_utf8(parts(&output).1).unwrap();
+    assert!(html.contains("value=\"été en Rust\""));
+    assert!(html.contains("Été en Rust"));
+}
+
+#[test]
+fn blog_validation_preserves_escaped_search_without_reflecting_invalid_page() {
+    let server = Running::start(blog::router().unwrap(), ServerConfig::default());
+    for page in [
+        "oops",
+        "0",
+        "18446744073709551615",
+        "99999999999999999999999999",
+    ] {
+        let target = format!("/articles?search=%22%3E%3Cscript%3E%26%27&page={page}");
+        let output = server.request("GET", &target);
+        assert_eq!(status(&output), 400);
+        let html = std::str::from_utf8(parts(&output).1).unwrap();
+        assert!(html.contains("value=\"&quot;&gt;&lt;script&gt;&amp;&#39;\""));
+        assert!(html.contains("That page number is not valid."));
+        assert!(!html.contains("<script>"));
+        assert!(!html.contains(&format!("value=\"{page}\"")));
+    }
+}

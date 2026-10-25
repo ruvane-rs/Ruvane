@@ -13,6 +13,9 @@ pub struct Html {
 }
 
 impl Html {
+    pub(crate) fn rendered(markup: String) -> Self {
+        Self { markup }
+    }
     /// Borrows the serialized HTML, for example to write it to an HTTP body.
     pub fn as_str(&self) -> &str {
         &self.markup
@@ -394,7 +397,7 @@ impl Document {
     }
 }
 
-fn escape_into(output: &mut String, input: &str) {
+pub(crate) fn escape_into(output: &mut String, input: &str) {
     for character in input.chars() {
         match character {
             '&' => output.push_str("&amp;"),

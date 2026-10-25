@@ -1,4 +1,4 @@
-use crate::{Html, MediaType, ParamError, Query};
+use crate::{Html, MediaType, ParamError, Query, QueryMode};
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
@@ -23,7 +23,7 @@ pub struct Request {
     target: String,
     headers: Vec<(String, String)>,
     pub(crate) params: Vec<(String, String)>,
-    query_params: Query,
+    pub(crate) query_params: Query,
 }
 
 impl Request {
@@ -42,9 +42,17 @@ impl Request {
         self.target.split_once('?').map(|(_, query)| query)
     }
 
-    /// Returns the validated query, decoded once with unique keys.
+    /// Returns the query decoded once according to the selected route's mode.
+    ///
+    /// Ordinary routes preserve `+`; routes registered with `get_form()`
+    /// interpret it as a space. Both modes reject duplicate decoded keys.
     pub fn query_params(&self) -> &Query {
         &self.query_params
+    }
+
+    /// Returns the query convention selected by route registration.
+    pub fn query_mode(&self) -> QueryMode {
+        self.query_params.mode()
     }
 
     /// Returns a decoded dynamic path capture by name, if present.
@@ -342,7 +350,6 @@ pub(crate) fn parse(
     if !valid_path(path) || !uri_component(query.as_bytes(), true) {
         return Err(BadRequest);
     }
-    let query_params = Query::parse(query).map_err(|_| BadRequest)?;
     let mut headers: Vec<(String, String)> = Vec::new();
     for line in lines {
         if headers.len() == max_headers {
@@ -409,7 +416,9 @@ pub(crate) fn parse(
         target: target.to_owned(),
         headers,
         params: Vec::new(),
-        query_params,
+        // Semantic query decoding happens after route selection. The transport
+        // validates raw URI syntax and framing without choosing a convention.
+        query_params: Query::default(),
     })
 }
 

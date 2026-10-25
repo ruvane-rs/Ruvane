@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.4 implements a small development profile based on the
+Ruvane 0.1.0-alpha.5 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -21,9 +21,11 @@ use behind a reverse proxy.
   A percent-encoded slash or dot is literal route data, never a filesystem
   operation. Embedded assets use declared exact paths; no filesystem directory
   serving is implemented.
-- Queries are validated before dispatch, with unique decoded keys, strict
-  UTF-8, and explicit budgets. Dynamic captures are decoded only after raw
-  route selection. See [routing and URLs](routing-and-urls.md).
+- Query URI syntax is validated in the transport parser. After raw route
+  selection, queries are decoded once under the route's explicit mode, with
+  unique decoded keys, strict UTF-8, and fixed budgets. Dynamic captures are
+  decoded only after selection and always retain URI semantics. See
+  [routing and URLs](routing-and-urls.md) and [GET forms](get-forms.md).
 - CRLF line endings only. Header names must be nonempty HTTP tokens. Values
   contain printable ASCII or horizontal tabs; outer spaces/tabs are trimmed.
   Obsolete folded lines and non-ASCII header values are rejected.
@@ -52,10 +54,16 @@ limited profile suitable for an arbitrary proxy chain.
 
 ## Routing and responses
 
-`Router::get` registers an exact, case-sensitive path or a pattern with named
+`Router::get` and `Router::get_form` register an exact, case-sensitive path or a pattern with named
 single-segment captures. Exact paths win regardless of registration order.
 Invalid, duplicate, or overlapping dynamic patterns fail at registration.
-Queries do not affect matching. An unmatched path returns 404. There are no
+Queries do not affect matching. Ordinary and asset routes preserve literal
+`+`; form routes decode raw `+` as spaces, while `%2B` stays a plus. Unknown
+paths use the ordinary URI mode. An invalid query returns 400 before any
+handler, including on an unknown path; an unmatched valid request returns 404.
+Framing and unsupported-method checks happen before semantic query decoding,
+so a request with multiple faults may receive a framing or method error first.
+There are no
 wildcard routes, redirects, middleware, actions, or dynamic module lookup.
 
 HEAD uses the same handler as GET, preserving its response status, content

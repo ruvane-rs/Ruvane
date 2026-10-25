@@ -26,6 +26,17 @@ Binary and embedded responses obey the same output and I/O limits as HTML.
 Stylesheet and image attributes use validated internal URLs and HTML escaping.
 See [assets and media](docs/assets-and-media.md) for exact limits and scope.
 
+Starting with 0.1.0-alpha.5, typed GET forms escape text and require an internal,
+query-free action. Field names, counts, and text lengths have fixed budgets.
+The selected raw route fixes query decoding: ordinary routes preserve literal
+plus signs; form routes decode raw plus signs as spaces. Queries are decoded
+once using that mode, and duplicate decoded keys are rejected before a handler
+runs. Request fields cannot switch the mode. Path captures keep URI semantics.
+Hidden fields are untrusted client input, and GET field values appear in URLs;
+they must not contain secrets or establish authorization. Forms add no mutation,
+authentication, session, or CSRF protection mechanism. All handlers remain
+read-only. See [GET forms](docs/get-forms.md).
+
 The framework rejects ambiguous request framing before dispatch and uses
 fixed response headers. HTML strings are escaped by the renderer. Handler
 code remains trusted: response limits apply after construction, socket

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-alpha.5 — Unreleased
+
+- Add typed native GET forms with internal actions, labeled search controls,
+  hidden fields, bounded unique names, and escaped labels and values.
+- Add explicit QueryMode and Query::parse_with_mode, preserving literal-plus
+  behavior in Query::parse and Router::get. Router::get_form selects native
+  form plus-to-space decoding while keeping percent-encoded plus signs literal.
+- Select raw routes before semantic query parsing, with one selected decoding
+  pass and duplicate-key checks before any handler. Path captures retain URI
+  semantics; framing and method checks still run before route selection.
+- Add a styled mini-blog search form, page reset on new searches, preserved
+  pagination filters, and escaped search retention on invalid page numbers.
+- Add regression tests for cross-mode key collisions, encoding, UTF-8, byte
+  and field budgets, HTML injection, route precedence, HEAD, and rejected framing.
+- Continue to use no third-party dependencies and forbid unsafe code.
+
 ## 0.1.0-alpha.4 — Unreleased
 
 - Add byte-preserving binary responses with fixed MIME types and fallible

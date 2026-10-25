@@ -1,7 +1,8 @@
 # Routing and URLs
 
-Ruvane 0.1.0-alpha.3 adds dynamic routes, typed conversions, bounded query
-parsing, and internal links without third-party dependencies.
+Ruvane provides dynamic routes, typed conversions, bounded query parsing,
+and internal links without third-party dependencies. Alpha.5 adds explicit
+URI/form query modes and native GET forms.
 
 ## Route selection
 
@@ -41,14 +42,20 @@ behavior. Applications validate domain-specific ranges separately.
 
 ## Query parsing
 
-Every request's query is parsed before any handler runs, including fixed
-routes and unknown paths. `Query::parse` exposes the same parser without a
-server. It accepts the raw query data, excluding the structural leading `?`.
+For accepted GET/HEAD requests, raw route selection chooses the query mode
+before semantic decoding. Every query is then parsed before any handler runs,
+including fixed routes and unknown paths. `Query::parse` exposes the original
+URI-mode parser without a server; `Query::parse_with_mode` accepts an explicit
+`QueryMode`. Both take raw query data without the structural leading `?`.
 
 - Split on `&`, then on the first `=` in each field, before decoding.
 - Percent-decode keys and values exactly once, requiring valid UTF-8.
-- `+` is a literal plus. A space is encoded as `%20`; form-style `+` decoding
-  is not implemented by this query API.
+- `QueryMode::Uri` preserves literal `+`. It is the default for `Query::parse`,
+  `Router::get`, embedded assets, and unknown paths. Spaces use `%20`.
+- `QueryMode::Form`, selected by `Router::get_form`, maps raw `+` to spaces
+  before percent decoding. `%2B` remains a plus; `%252B` becomes literal `%2B`.
+  Mode selection never depends on a query field. Path captures always use URI
+  decoding, including on form routes.
 - A bare key and `key=` both have an empty string value.
 - Empty keys, empty fields, controls, and invalid encoding are rejected.
 - Reject duplicate decoded keys, including `a=1&%61=2`, rather than choosing
@@ -56,16 +63,25 @@ server. It accepts the raw query data, excluding the structural leading `?`.
   or case folding is performed.
 - Preserve pair order. `Query::get`, `get_as::<T>`, and `iter` expose decoded
   data; `Request::query_params()` borrows the already parsed query.
+  `Query::mode()` and `Request::query_mode()` expose the selected convention.
 
 For example, `x=a%26b%3Dc&plus=a+b&once=%2526` yields `x = "a&b=c"`,
 `plus = "a+b"`, and `once = "%26"`. Decoded values never become separators
 or undergo a second framework decoding pass. Do not decode them again before
 using them as application values.
 
+In form mode, `a+b=1&a%20b=2` is a duplicate-key error, while
+`a+b=1&a%2Bb=2` has distinct keys `a b` and `a+b`. URI mode reverses those
+outcomes. The framework never preparses a form query under URI semantics.
+Existing `InternalUrl::query` output works in both modes: it encodes literal
+plus signs as `%2B` and spaces as `%20`. Native forms submit spaces as `+`.
+
 Separating structure before decoding and avoiding repeated decoding follows
 [RFC 3986 section 2.4](https://www.rfc-editor.org/rfc/rfc3986.html#section-2.4).
-This parser does not implement nested objects, bracket notation, forms, JSON,
-or an application-specific schema.
+This parser does not implement nested objects, bracket notation, JSON, or an
+application-specific schema. Form mode is a strict profile of URL-encoded
+queries; malformed UTF-8, duplicate keys, and empty fields are rejected rather
+than processed permissively. See [GET forms](get-forms.md).
 
 ## Internal links
 

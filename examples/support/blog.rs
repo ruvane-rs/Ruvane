@@ -1,6 +1,6 @@
 use ruvane::{
-    Attribute, Document, Html, InternalUrl, MediaType, ParamError, Request, Response, Router,
-    StatusCode, Tag, element, fragment, image, link,
+    Attribute, Document, GetForm, Html, InternalUrl, MediaType, ParamError, Request, Response,
+    Router, StatusCode, Tag, element, fragment, image, link,
 };
 
 const PAGE_SIZE: usize = 2;
@@ -117,19 +117,19 @@ fn listing_url(page: usize, search: &str) -> InternalUrl {
 }
 
 fn listing(request: &Request) -> Response {
+    let search = request.query_params().get("search").unwrap_or("");
     let page_number = match request.query_params().get_as::<usize>("page") {
         Ok(value) if value > 0 => value,
         Err(ParamError::Missing) => 1,
-        _ => return error(StatusCode::BadRequest),
+        _ => return invalid_page(search),
     };
-    let search = request.query_params().get("search").unwrap_or("");
     let needle = search.to_lowercase();
     let articles: Vec<_> = ARTICLES
         .iter()
         .filter(|article| article.title.to_lowercase().contains(&needle))
         .collect();
     let Some(start) = (page_number - 1).checked_mul(PAGE_SIZE) else {
-        return error(StatusCode::BadRequest);
+        return invalid_page(search);
     };
     if page_number > 1 && start >= articles.len() {
         return error(StatusCode::NotFound);
@@ -151,7 +151,7 @@ fn listing(request: &Request) -> Response {
             )
             .render()
     }));
-    let mut body = element(Tag::Section);
+    let mut body = element(Tag::Section).child(search_panel(search));
     if !search.is_empty() {
         body = body.child(
             element(Tag::P)
@@ -182,6 +182,38 @@ fn listing(request: &Request) -> Response {
     }
     body = body.child(pagination);
     page("Articles", body)
+}
+
+fn search_panel(value: &str) -> Html {
+    let form = GetForm::new(internal("/articles"))
+        .expect("query-free internal action")
+        .search("search", "Search articles", value)
+        .expect("validated query text")
+        .hidden("page", "1")
+        .expect("unique fixed field")
+        .submit_label("Search")
+        .expect("fixed label");
+    element(Tag::Div)
+        .attr(Attribute::Class, "search-panel")
+        .child(form)
+        .child(
+            element(Tag::P)
+                .attr(Attribute::Class, "clear-search")
+                .child(link(&internal("/articles"), "Clear search")),
+        )
+        .render()
+}
+
+fn invalid_page(search: &str) -> Response {
+    page(
+        "Articles",
+        element(Tag::Section).child(search_panel(search)).child(
+            element(Tag::P)
+                .attr(Attribute::Class, "form-error")
+                .child("That page number is not valid. Try a new search."),
+        ),
+    )
+    .with_status(StatusCode::BadRequest)
 }
 
 /// Builds the read-only example blog, shared with the integration tests.
@@ -246,7 +278,7 @@ pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
                 .child(element(Tag::P).attr(Attribute::Class, "lead").child("Small ideas, shared openly. Follow the links, take your time, and find something worth making.")),
         )
     })?;
-    router.get("/articles", listing)?;
+    router.get_form("/articles", listing)?;
     router.get("/articles/about", |_| page("About this blog", element(Tag::P)
         .attr(Attribute::Class, "lead").child("A small publication about clear ideas and readable software. Every article is an invitation to explore how the web works.")))?;
     router.get("/health", |_| Response::text("ok\n"))?;

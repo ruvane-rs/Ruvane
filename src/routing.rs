@@ -2,7 +2,7 @@ use crate::http::valid_path;
 use crate::url::{decode, valid_segment};
 use crate::{
     AssetError, InternalUrl, MAX_ASSET_BYTES, MAX_ASSETS, MAX_PATH_PARAMS, MAX_TOTAL_ASSET_BYTES,
-    MediaType, Request, Response, StatusCode,
+    MediaType, Query, QueryMode, Request, Response, StatusCode,
 };
 use std::fmt;
 
@@ -55,6 +55,7 @@ struct Route {
     segments: Vec<Segment>,
     dynamic: bool,
     handler: Handler,
+    query_mode: QueryMode,
 }
 
 impl Route {
@@ -184,12 +185,36 @@ impl Router {
     /// at registration. Handlers may inspect the
     /// method through [`Request::method`]. They must not depend on being called
     /// only once: browsers and other clients can retry read requests.
+    /// Queries use `QueryMode::Uri`, preserving literal plus signs. Use
+    /// [`Self::get_form`] to select native form query decoding explicitly.
     pub fn get(
         &mut self,
         path: impl Into<String>,
         handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
     ) -> Result<(), RouteError> {
-        let path = path.into();
+        self.register(path.into(), QueryMode::Uri, handler)
+    }
+
+    /// Registers a read-only GET/HEAD route with native form query decoding.
+    ///
+    /// Raw `+` becomes a space, while `%2B` stays a plus. Route precedence,
+    /// ambiguity checks, and all query budgets are shared with `get()`.
+    /// Invalid queries are rejected before calling the handler. Request data
+    /// cannot switch this mode. Path captures always retain URI semantics.
+    pub fn get_form(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.register(path.into(), QueryMode::Form, handler)
+    }
+
+    fn register(
+        &mut self,
+        path: String,
+        query_mode: QueryMode,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
         let (segments, dynamic) = pattern_segments(&path)?;
         if self.routes.iter().any(|existing| existing.pattern == path) {
             return Err(RouteError::DuplicatePath);
@@ -199,6 +224,7 @@ impl Router {
             segments,
             dynamic,
             handler: Box::new(handler),
+            query_mode,
         };
         if dynamic
             && self
@@ -222,6 +248,11 @@ impl Router {
                     .iter()
                     .find(|route| route.dynamic && route.matches(request.path()))
             });
+        let mode = selected.map_or(QueryMode::Uri, |route| route.query_mode);
+        request.query_params = match Query::parse_with_mode(request.query().unwrap_or(""), mode) {
+            Ok(query) => query,
+            Err(_) => return Response::error(StatusCode::BadRequest),
+        };
         let Some(route) = selected else {
             return Response::error(StatusCode::NotFound);
         };

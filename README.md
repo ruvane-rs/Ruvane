@@ -6,8 +6,9 @@ without third-party dependencies.
 
 The current alpha provides HTML rendering, a bounded loopback HTTP server,
 fixed and dynamic GET/HEAD routes, typed parameter conversion, validated
-internal links, and embedded CSS/image assets. Server actions and browser-side
-reactivity are planned for future versions.
+internal links, embedded CSS/image assets, and typed native GET forms with
+explicit query decoding. Server actions and browser-side reactivity are
+planned for future versions.
 
 ## Principles
 
@@ -81,9 +82,41 @@ encoded path. `Request::param()` returns a decoded string.
 choose their error responses and validate application-specific ranges.
 
 Queries use `&` pairs and the first `=` separator. A bare key has an empty
-value; `+` remains a literal plus. Keys are unique after decoding and are
-case-sensitive. See [routing and URLs](docs/routing-and-urls.md) for the full
-contract, limits, and changes from alpha.2.
+value. `Query::parse` and `Router::get` preserve literal `+` characters;
+`Router::get_form` explicitly selects form decoding. Keys are unique after
+the selected decoding and are case-sensitive. See
+[routing and URLs](docs/routing-and-urls.md) for the full contract and limits.
+
+## Typed GET forms
+
+```rust
+use ruvane::{Document, GetForm, InternalUrl, Response, Router};
+
+let mut router = Router::new();
+router.get_form("/search", |request| {
+    let search = request.query_params().get("q").unwrap_or("");
+    let form = GetForm::new(InternalUrl::new("/search").unwrap()).unwrap()
+        .search("q", "Search articles", search).unwrap()
+        .hidden("page", "1").unwrap()
+        .submit_label("Search").unwrap();
+    Response::html(Document::new("Search", form).render())
+}).unwrap();
+```
+
+`GetForm` renders a native GET form with labeled search inputs, hidden fields,
+and an unnamed submit button. Actions require a query-free `InternalUrl`;
+field names are bounded, unique ASCII identifiers. Labels and values are
+plain text escaped by the renderer. The browser submits the form without
+JavaScript. Query conversions still use `get_as::<T>` and application range
+validation.
+
+On a `get_form` route, `q=Rust+%2B+HTML` decodes to `Rust + HTML`.
+`Query::parse_with_mode(raw, QueryMode::Form)` exposes the same explicit
+decoding without a server. `Query::parse` keeps its existing literal-plus
+behavior. Both modes decode once and reject duplicates, malformed UTF-8,
+controls, and oversized queries before the handler runs. Hidden values are
+untrusted, visible URL data. GET handlers must be read-only. See
+[GET forms](docs/get-forms.md) for limits, compatibility, and security scope.
 
 ## Internal links
 
@@ -111,8 +144,10 @@ Run `cargo run --example blog` and open `http://127.0.0.1:3000`.
 Use `cargo run --example blog -- 3001` to select another port.
 
 The example contains article lists, `/articles/{slug}` pages, UTF-8 slugs,
-pagination with `?page=2`, filtering with `?search=Rust`, reusable Rust layouts,
-responsive CSS, and original PNG illustrations. Styles and images are embedded
+pagination with `?page=2`, a labeled GET search form, reusable Rust layouts,
+responsive CSS, and original PNG illustrations. A new search resets pagination;
+page links preserve its filter, and validation errors retain escaped search
+text. Styles and images are embedded
 at compile time and served locally. No external fonts or scripts are required.
 Article data is stored in the example's source. Its handlers and assets are
 also exercised by the integration tests.
@@ -189,6 +224,7 @@ when composed. Serialized output is available through `as_str()`,
 | `fragment` | Join rendered fragments in order. |
 | `link` | Render an anchor to an `InternalUrl`, escaping its attribute and label. |
 | `image` | Render an image with an internal URL, escaped alternative text, and typed dimensions. |
+| `GetForm` | Render a native GET form with an internal action, labeled search inputs, and hidden fields. |
 | `Document` | Render a complete document with a doctype, language, UTF-8 declaration, title, and body. |
 
 ## HTTP API
@@ -198,6 +234,7 @@ when composed. Serialized output is available through `as_str()`,
 | `Router` | Register fixed and dynamic GET paths, with automatic HEAD handling and ambiguity detection. |
 | `Request` | Inspect raw paths/queries, decoded captures, parsed queries, and validated headers. |
 | `Query` | Look up unique decoded query keys and convert values through `FromStr`. |
+| `QueryMode` | Explicitly select URI or form query decoding without changing path semantics. |
 | `InternalUrl` | Build validated internal paths and encode segment/query data. |
 | `Response` | Return text, rendered HTML, or binary bytes with a typed `StatusCode`. |
 | `MediaType` | Select a fixed MIME type for binary responses and embedded assets. |
@@ -209,7 +246,7 @@ when composed. Serialized output is available through `as_str()`,
 
 The renderer escapes `&`, `<`, `>`, double quotes, and apostrophes, and replaces
 null characters with the Unicode replacement character. Element and attribute
-names come from enums. Links, stylesheets, and images have dedicated typed URL APIs. Script and style
+names come from enums. Links, forms, stylesheets, and images have dedicated typed URL APIs. Script and style
 elements, event-handler and style attributes, arbitrary URL attributes,
 foreign content, and raw HTML are outside the current API.
 
@@ -226,6 +263,10 @@ bodies. Queries and dynamic captures have fixed byte/count limits and are
 decoded exactly once. These controls are not application authorization or
 domain validation. No CORS access is granted. Loopback binding and Host validation do not
 authenticate a local user or application.
+
+Form query decoding is selected by route registration, never inferred from
+request fields. Forms do not add POST, uploads, authentication, sessions,
+CSRF tokens, or state-changing actions. Do not place secrets in GET fields.
 
 Embedded assets are explicitly selected application data, not a filesystem
 mount or an upload service. CSS is trusted code. Type declarations and

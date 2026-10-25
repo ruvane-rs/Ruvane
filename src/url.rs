@@ -1,6 +1,19 @@
 use std::fmt;
 use std::str::FromStr;
 
+/// The explicitly selected convention for decoding a query string.
+///
+/// Route registration chooses this mode; request fields cannot change it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum QueryMode {
+    /// Preserve literal plus signs, as in the original `Query::parse` API.
+    #[default]
+    Uri,
+    /// Decode raw plus signs as spaces, as used by native GET forms.
+    /// Percent-encoded `%2B` remains a literal plus.
+    Form,
+}
+
 /// Maximum UTF-8 bytes in a decoded path parameter, query key, or query value.
 pub const MAX_COMPONENT_BYTES: usize = 1024;
 /// Maximum number of query pairs, including pairs with empty values.
@@ -107,6 +120,10 @@ fn hex(byte: u8) -> Option<u8> {
 }
 
 pub(crate) fn decode(value: &str) -> Result<String, UrlError> {
+    decode_with_mode(value, QueryMode::Uri)
+}
+
+fn decode_with_mode(value: &str, mode: QueryMode) -> Result<String, UrlError> {
     // At most three encoded bytes can contribute to one decoded byte.
     if value.len() > MAX_COMPONENT_BYTES * 3 {
         return Err(UrlError::TooLarge);
@@ -133,8 +150,11 @@ pub(crate) fn decode(value: &str) -> Result<String, UrlError> {
             output.push(high * 16 + low);
             index += 3;
         } else if byte.is_ascii() {
-            // '+' is a literal plus, not the space convention used by forms.
-            output.push(byte);
+            output.push(if mode == QueryMode::Form && byte == b'+' {
+                b' '
+            } else {
+                byte
+            });
             index += 1;
         } else {
             return Err(UrlError::InvalidEncoding);
@@ -164,10 +184,12 @@ fn encode(value: &str) -> String {
 ///
 /// Parsing splits on `&` and the first `=` before decoding UTF-8 exactly once.
 /// A bare key has an empty value. Empty fields/keys and control characters are
-/// rejected. `+` stays a plus. No Unicode normalization or case folding occurs.
+/// rejected. `parse()` preserves plus signs. `parse_with_mode()` can explicitly
+/// select form decoding. No Unicode normalization or case folding occurs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Query {
     pairs: Vec<(String, String)>,
+    mode: QueryMode,
 }
 
 impl Query {
@@ -179,13 +201,32 @@ impl Query {
     /// assert_eq!(query.get("search"), Some("Rust & HTML"));
     /// ```
     pub fn parse(raw: &str) -> Result<Self, UrlError> {
+        Self::parse_with_mode(raw, QueryMode::Uri)
+    }
+
+    /// Parses using a caller-selected mode, never inferring it from input.
+    ///
+    /// Both modes use strict UTF-8, the same budgets, and unique decoded keys.
+    /// This is a strict profile of URL-encoded forms: empty fields/keys,
+    /// controls, malformed escapes, and duplicates are errors.
+    ///
+    /// ```
+    /// use ruvane::{Query, QueryMode};
+    /// let values = Query::parse_with_mode("search=Rust+%2B+HTML", QueryMode::Form).unwrap();
+    /// assert_eq!(values.get("search"), Some("Rust + HTML"));
+    /// assert_eq!(Query::parse("search=a+b").unwrap().get("search"), Some("a+b"));
+    /// ```
+    pub fn parse_with_mode(raw: &str, mode: QueryMode) -> Result<Self, UrlError> {
         if raw.len() > MAX_INTERNAL_URL_BYTES {
             return Err(UrlError::TooLarge);
         }
         if !crate::http::uri_component(raw.as_bytes(), true) {
             return Err(UrlError::InvalidEncoding);
         }
-        let mut query = Self::default();
+        let mut query = Self {
+            pairs: Vec::new(),
+            mode,
+        };
         if raw.is_empty() {
             return Ok(query);
         }
@@ -194,8 +235,8 @@ impl Query {
                 return Err(UrlError::TooManyPairs);
             }
             let (key, value) = field.split_once('=').unwrap_or((field, ""));
-            let key = decode(key)?;
-            let value = decode(value)?;
+            let key = decode_with_mode(key, mode)?;
+            let value = decode_with_mode(value, mode)?;
             if key.is_empty() {
                 return Err(UrlError::InvalidComponent);
             }
@@ -205,6 +246,11 @@ impl Query {
             query.pairs.push((key, value));
         }
         Ok(query)
+    }
+
+    /// Returns the convention used to decode this query.
+    pub fn mode(&self) -> QueryMode {
+        self.mode
     }
 
     /// Looks up a decoded value by its exact decoded key.
