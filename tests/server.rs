@@ -1011,3 +1011,182 @@ fn dynamic_capture_name_and_count_boundaries_are_exact() {
     assert_eq!(status(&invalid_head), 400);
     assert!(parts(&invalid_head).1.is_empty());
 }
+
+#[test]
+fn arbitrary_binary_bodies_keep_wire_bytes_and_head_lengths() {
+    let payload: Vec<u8> = (0..=255).collect();
+    let expected = payload.clone();
+    let mut router = Router::new();
+    router
+        .get("/bytes", move |_| {
+            Response::bytes(payload.clone(), ruvane::MediaType::OctetStream)
+        })
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    let get = server.request("GET", "/bytes");
+    let head = server.request("HEAD", "/bytes");
+    assert_eq!(parts(&get).1, expected);
+    assert_eq!(parts(&get).0, parts(&head).0);
+    assert!(parts(&head).1.is_empty());
+    assert_eq!(content_length(parts(&get).0), 256);
+    assert!(
+        parts(&get)
+            .0
+            .contains("Content-Type: application/octet-stream")
+    );
+    assert!(parts(&get).0.contains("X-Content-Type-Options: nosniff"));
+}
+
+#[test]
+fn embedded_assets_have_explicit_mime_types_and_fixed_route_priority() {
+    let mut router = Router::new();
+    router
+        .get("/assets/{name}", |_| Response::text("dynamic"))
+        .unwrap();
+    router
+        .asset(
+            "/assets/style.png",
+            b"body { color: #123; }",
+            ruvane::MediaType::Css,
+        )
+        .unwrap();
+    router
+        .asset("/assets/empty.css", b"", ruvane::MediaType::Css)
+        .unwrap();
+    router
+        .asset(
+            "/assets/data",
+            b"\0\xff\r\nHTTP/1.1 200 OK\r\nInjected: value",
+            ruvane::MediaType::OctetStream,
+        )
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    let css = server.request("GET", "/assets/style.png?version=1");
+    assert_eq!(parts(&css).1, b"body { color: #123; }");
+    assert!(
+        parts(&css)
+            .0
+            .contains("Content-Type: text/css; charset=utf-8")
+    );
+    assert!(parts(&css).0.contains("Cache-Control: no-store"));
+    assert_eq!(
+        parts(&css).0,
+        parts(&server.request("HEAD", "/assets/style.png")).0
+    );
+    let empty = server.request("GET", "/assets/empty.css");
+    assert_eq!(status(&empty), 200);
+    assert_eq!(content_length(parts(&empty).0), 0);
+    let binary = server.request("GET", "/assets/data");
+    assert_eq!(
+        parts(&binary).1,
+        b"\0\xff\r\nHTTP/1.1 200 OK\r\nInjected: value"
+    );
+    assert!(!parts(&binary).0.contains("Injected:"));
+    assert_eq!(parts(&server.request("GET", "/assets/other")).1, b"dynamic");
+}
+
+#[test]
+fn undeclared_asset_paths_never_map_to_files_or_encoded_aliases() {
+    let mut router = Router::new();
+    router
+        .asset("/assets/site.css", b"body {}", ruvane::MediaType::Css)
+        .unwrap();
+    let server = Running::start(router, ServerConfig::default());
+    for target in [
+        "/assets/unknown",
+        "/Cargo.toml",
+        "/assets/%73ite.css",
+        "/assets/%2e%2e/Cargo.toml",
+        "/assets/site.css/extra",
+    ] {
+        assert_eq!(status(&server.request("GET", target)), 404, "{target}");
+    }
+    for target in ["/assets/../Cargo.toml", "/assets/site.css?v=1&%76=2"] {
+        assert_eq!(status(&server.request("GET", target)), 400, "{target}");
+    }
+    let post = server.request("POST", "/assets/site.css");
+    assert_eq!(status(&post), 405);
+    assert!(parts(&post).0.contains("Allow: GET, HEAD"));
+}
+
+#[test]
+fn response_budget_applies_equally_to_owned_bytes_and_embedded_assets() {
+    let mut router = Router::new();
+    router
+        .get("/owned", |_| {
+            Response::bytes(vec![0xff; 65], ruvane::MediaType::Png)
+        })
+        .unwrap();
+    router
+        .asset("/embedded", &[0xff; 65], ruvane::MediaType::Png)
+        .unwrap();
+    router
+        .asset("/exact", &[0xff; 64], ruvane::MediaType::Png)
+        .unwrap();
+    let server = Running::start(
+        router,
+        ServerConfig {
+            max_response_body_bytes: 64,
+            ..ServerConfig::default()
+        },
+    );
+    for path in ["/owned", "/embedded"] {
+        let output = server.request("GET", path);
+        assert_eq!(status(&output), 500);
+        assert_eq!(parts(&output).1, b"Internal Server Error\n");
+        assert!(
+            parts(&output)
+                .0
+                .contains("Content-Type: text/plain; charset=utf-8")
+        );
+        let head = server.request("HEAD", path);
+        assert_eq!(status(&head), 500);
+        assert!(parts(&head).1.is_empty());
+    }
+    assert_eq!(parts(&server.request("GET", "/exact")).1, &[0xff; 64]);
+}
+
+#[test]
+fn styled_blog_serves_its_css_and_original_png_assets() {
+    let server = Running::start(blog::router().unwrap(), ServerConfig::default());
+    let page = server.request("GET", "/articles?page=2");
+    let html = std::str::from_utf8(parts(&page).1).unwrap();
+    assert!(html.contains("<link rel=\"stylesheet\" href=\"/assets/site.css\">"));
+    assert!(html.contains("<img src=\"/assets/mark.png\" alt=\"\" width=\"96\" height=\"96\">"));
+    assert!(html.contains("class=\"post-grid\""));
+    let css = server.request("GET", "/assets/site.css");
+    assert_eq!(parts(&css).1, include_bytes!("../examples/assets/site.css"));
+    assert!(
+        parts(&css)
+            .0
+            .contains("Content-Type: text/css; charset=utf-8")
+    );
+    assert!(
+        std::str::from_utf8(parts(&css).1)
+            .unwrap()
+            .contains("@media (max-width: 640px)")
+    );
+    for (path, expected) in [
+        (
+            "/assets/mark.png",
+            include_bytes!("../examples/assets/mark.png").as_slice(),
+        ),
+        (
+            "/assets/geometry.png",
+            include_bytes!("../examples/assets/geometry.png").as_slice(),
+        ),
+        (
+            "/assets/landscape.png",
+            include_bytes!("../examples/assets/landscape.png").as_slice(),
+        ),
+    ] {
+        let get = server.request("GET", path);
+        let head = server.request("HEAD", path);
+        assert_eq!(status(&get), 200);
+        assert_eq!(parts(&get).1, expected);
+        assert_eq!(content_length(parts(&get).0), expected.len());
+        assert!(parts(&get).0.contains("Content-Type: image/png"));
+        assert_eq!(parts(&get).0, parts(&head).0);
+        assert!(parts(&head).1.is_empty());
+    }
+}

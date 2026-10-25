@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.3 implements a small development profile based on the
+Ruvane 0.1.0-alpha.4 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -19,7 +19,8 @@ use behind a reverse proxy.
 - ASCII URI characters and valid `%HH` escapes. Paths and queries retain
   escapes without decoding. `/a`, `/A`, `/a/`, and `/%61` are distinct routes.
   A percent-encoded slash or dot is literal route data, never a filesystem
-  operation. No filesystem serving is implemented.
+  operation. Embedded assets use declared exact paths; no filesystem directory
+  serving is implemented.
 - Queries are validated before dispatch, with unique decoded keys, strict
   UTF-8, and explicit budgets. Dynamic captures are decoded only after raw
   route selection. See [routing and URLs](routing-and-urls.md).
@@ -62,7 +63,7 @@ type, and calculated body length, but sends no body. A handler can inspect
 `Request::method()`. Recognizable HEAD requests also suppress error bodies.
 Handlers must be read-only and safe for concurrent calls and retries.
 
-Responses have fixed headers: UTF-8 Content-Type, Content-Length in bytes,
+Responses have fixed headers: explicitly selected Content-Type, Content-Length in bytes,
 Connection: close, X-Content-Type-Options: nosniff, and Cache-Control: no-store.
 405 also includes Allow. Application strings cannot become header names,
 header values, or reason phrases. No custom headers, response compression,
@@ -71,6 +72,11 @@ trailers, or streaming are supported. No CORS permissions are emitted.
 `Response::html` accepts rendered `Html`; `Response::text` is plain text.
 The `link` renderer accepts only an `InternalUrl`, without adding arbitrary
 URL attributes to the element builder.
+`Response::bytes` supports arbitrary body bytes with a fixed `MediaType`;
+`Router::asset` borrows explicitly registered static bytes. `body()` is a byte
+slice, and `body_text()` validates UTF-8. Text types include a UTF-8 charset;
+binary MIME types do not. Stylesheets and images have dedicated typed helpers.
+See [assets and media](assets-and-media.md).
 Error bodies are fixed, without reflected input or panic details. Handler
 panics are converted to 500 when Rust unwinds; the installed panic hook still
 runs. `panic = "abort"` terminates the process instead. A response exceeding

@@ -286,12 +286,7 @@ fn serve(
     let deadline = Instant::now() + config.write_timeout;
     let headers = response.wire_headers();
     if write_until(&mut job.stream, headers.as_bytes(), deadline, stopped).is_ok() && !head {
-        let _ = write_until(
-            &mut job.stream,
-            response.body().as_bytes(),
-            deadline,
-            stopped,
-        );
+        let _ = write_until(&mut job.stream, response.body(), deadline, stopped);
     }
 }
 

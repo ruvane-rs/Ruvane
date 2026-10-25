@@ -93,11 +93,61 @@ pub fn link(destination: &InternalUrl, label: impl Into<Html>) -> Html {
     Html { markup }
 }
 
-/// The normal HTML elements supported by the initial renderer.
+/// Largest supported width or height attribute for the typed image helper.
+///
+/// This bounds declared layout dimensions, not encoded image size or decoding.
+pub const MAX_IMAGE_DIMENSION: u32 = 8192;
+
+/// An invalid numeric width or height for an image element.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ImageError;
+
+impl fmt::Display for ImageError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("image dimensions must be between 1 and 8192")
+    }
+}
+
+impl std::error::Error for ImageError {}
+
+/// Renders a void image element with an internal URL, escaped alternative text,
+/// and positive pixel dimensions no greater than `MAX_IMAGE_DIMENSION`.
+///
+/// An empty alternative is allowed for decorative images. No file decoding,
+/// intrinsic-dimension verification, resizing, or MIME detection is performed.
+///
+/// ```
+/// let source = ruvane::InternalUrl::new("/assets/cover.png").unwrap();
+/// let img = ruvane::image(&source, "Rust & HTML", 960, 480).unwrap();
+/// assert_eq!(img.as_str(), "<img src=\"/assets/cover.png\" alt=\"Rust &amp; HTML\" width=\"960\" height=\"480\">");
+/// ```
+pub fn image(
+    source: &InternalUrl,
+    alternative: impl AsRef<str>,
+    width: u32,
+    height: u32,
+) -> Result<Html, ImageError> {
+    if !(1..=MAX_IMAGE_DIMENSION).contains(&width) || !(1..=MAX_IMAGE_DIMENSION).contains(&height) {
+        return Err(ImageError);
+    }
+    let mut markup = String::from("<img src=\"");
+    escape_into(&mut markup, source.as_str());
+    markup.push_str("\" alt=\"");
+    escape_into(&mut markup, alternative.as_ref());
+    markup.push_str("\" width=\"");
+    markup.push_str(&width.to_string());
+    markup.push_str("\" height=\"");
+    markup.push_str(&height.to_string());
+    markup.push_str("\">");
+    Ok(Html { markup })
+}
+
+/// The normal non-void HTML elements supported by the renderer.
 ///
 /// Element names are selected from this enum, never from untrusted strings.
-/// Script, style, foreign content, and void elements are outside this initial
-/// API. Ruvane does not validate the HTML content model of nested elements.
+/// Script, style, foreign content, and void elements are outside this enum.
+/// Images and stylesheet links use dedicated helpers. Ruvane does not validate
+/// the HTML content model of nested elements.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Tag {
@@ -293,6 +343,7 @@ pub struct Document {
     title: String,
     language: String,
     body: Html,
+    stylesheets: Vec<InternalUrl>,
 }
 
 impl Document {
@@ -302,6 +353,7 @@ impl Document {
             title: title.into(),
             language: String::from("en"),
             body: body.into(),
+            stylesheets: Vec::new(),
         }
     }
 
@@ -311,13 +363,31 @@ impl Document {
         self
     }
 
+    /// Adds a trusted stylesheet at an internal URL, preserving insertion order.
+    ///
+    /// Repeated identical URLs are emitted once. The URL is HTML-escaped in a
+    /// void `link` element. CSS contents and route existence are the application's
+    /// responsibility. Renderer allocation limits remain application-defined.
+    pub fn stylesheet(mut self, source: InternalUrl) -> Self {
+        if !self.stylesheets.contains(&source) {
+            self.stylesheets.push(source);
+        }
+        self
+    }
+
     /// Serializes the document with a doctype and UTF-8 character declaration.
     pub fn render(self) -> Html {
         let mut markup = String::from("<!doctype html><html lang=\"");
         escape_into(&mut markup, &self.language);
         markup.push_str("\"><head><meta charset=\"utf-8\"><title>");
         escape_into(&mut markup, &self.title);
-        markup.push_str("</title></head><body>");
+        markup.push_str("</title>");
+        for source in self.stylesheets {
+            markup.push_str("<link rel=\"stylesheet\" href=\"");
+            escape_into(&mut markup, source.as_str());
+            markup.push_str("\">");
+        }
+        markup.push_str("</head><body>");
         markup.push_str(self.body.as_str());
         markup.push_str("</body></html>");
         Html { markup }

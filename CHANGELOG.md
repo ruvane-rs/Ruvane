@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-alpha.4 — Unreleased
+
+- Add byte-preserving binary responses with fixed MIME types and fallible
+  UTF-8 access. Response::body now returns &[u8]; use body_text for text.
+- Add embedded GET/HEAD assets with exact paths, shared route conflict
+  detection, static body borrowing, and byte/count budgets checked at registration.
+- Add internal stylesheet links and typed void image elements with escaped
+  attributes and bounded numeric layout dimensions.
+- Style the mini-blog with responsive local CSS, system fonts, and original
+  embedded PNG illustrations. Preserve its pagination, filtering, and UTF-8 routes.
+- Add security and regression tests for binary framing, HEAD, MIME declarations,
+  asset limits, route collisions, undeclared paths, and attribute injection.
+- Continue to use no third-party dependencies and forbid unsafe code.
+
 ## 0.1.0-alpha.3 — Unreleased
 
 - Add named single-segment GET/HEAD routes, exact-path precedence, and

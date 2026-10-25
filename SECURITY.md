@@ -18,6 +18,14 @@ route precedence nor URL decoding is an authorization boundary. Applications
 must validate domain values and access to the resources they identify. See
 [routing and URLs](docs/routing-and-urls.md) for the exact contract.
 
+Starting with 0.1.0-alpha.4, embedded assets have fixed registration budgets
+and explicitly declared MIME types. Requests never map a URL to a filesystem
+path. Assets are trusted application source; CSS is code, and declared image
+types are not file validation. Images are not decoded or resized by Ruvane.
+Binary and embedded responses obey the same output and I/O limits as HTML.
+Stylesheet and image attributes use validated internal URLs and HTML escaping.
+See [assets and media](docs/assets-and-media.md) for exact limits and scope.
+
 The framework rejects ambiguous request framing before dispatch and uses
 fixed response headers. HTML strings are escaped by the renderer. Handler
 code remains trusted: response limits apply after construction, socket

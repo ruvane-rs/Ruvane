@@ -1,4 +1,5 @@
-use crate::{Html, ParamError, Query};
+use crate::{Html, MediaType, ParamError, Query};
+use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
 
@@ -147,7 +148,7 @@ impl fmt::Display for StatusCode {
     }
 }
 
-/// An owned UTF-8 response with a fixed, injection-resistant header set.
+/// A text or binary response with a fixed, injection-resistant header set.
 ///
 /// Body lengths are serialized in bytes. HEAD sends the same content length
 /// as GET, but no body. There is no arbitrary header or raw HTML constructor.
@@ -156,7 +157,7 @@ impl fmt::Display for StatusCode {
 pub struct Response {
     status: StatusCode,
     content_type: &'static str,
-    body: String,
+    body: Cow<'static, [u8]>,
 }
 
 impl Response {
@@ -165,7 +166,7 @@ impl Response {
         Self {
             status: StatusCode::Ok,
             content_type: "text/plain; charset=utf-8",
-            body: body.into(),
+            body: Cow::Owned(body.into().into_bytes()),
         }
     }
 
@@ -174,7 +175,34 @@ impl Response {
         Self {
             status: StatusCode::Ok,
             content_type: "text/html; charset=utf-8",
-            body: body.into_string(),
+            body: Cow::Owned(body.into_string().into_bytes()),
+        }
+    }
+
+    /// Creates a successful owned byte response with an explicit MIME type.
+    ///
+    /// Bytes are never converted to text or modified. The MIME declaration
+    /// does not validate file contents. The server's response body budget
+    /// applies after construction, just as it does for text and HTML.
+    ///
+    /// ```
+    /// let response = ruvane::Response::bytes(vec![0, 255, 13, 10], ruvane::MediaType::OctetStream);
+    /// assert_eq!(response.body(), &[0, 255, 13, 10]);
+    /// assert!(response.body_text().is_err());
+    /// ```
+    pub fn bytes(body: impl Into<Vec<u8>>, media_type: MediaType) -> Self {
+        Self {
+            status: StatusCode::Ok,
+            content_type: media_type.as_str(),
+            body: Cow::Owned(body.into()),
+        }
+    }
+
+    pub(crate) fn embedded(body: &'static [u8], media_type: MediaType) -> Self {
+        Self {
+            status: StatusCode::Ok,
+            content_type: media_type.as_str(),
+            body: Cow::Borrowed(body),
         }
     }
 
@@ -189,12 +217,21 @@ impl Response {
         self.status
     }
 
-    /// Borrows the UTF-8 response body, including for a HEAD representation.
-    pub fn body(&self) -> &str {
+    /// Borrows the exact response bytes, including for a HEAD representation.
+    ///
+    /// This returned `&str` before alpha.4. Use `body_text()` when UTF-8 is needed.
+    pub fn body(&self) -> &[u8] {
         &self.body
     }
 
-    /// Returns the fixed MIME type and UTF-8 charset.
+    /// Borrows the body as UTF-8, returning an error for invalid byte sequences.
+    ///
+    /// No replacement, loss, or mutation of binary data occurs.
+    pub fn body_text(&self) -> Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(self.body())
+    }
+
+    /// Returns the fixed MIME type, with a UTF-8 charset for text types.
     pub fn content_type(&self) -> &'static str {
         self.content_type
     }

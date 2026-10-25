@@ -1,6 +1,9 @@
 use crate::http::valid_path;
 use crate::url::{decode, valid_segment};
-use crate::{MAX_PATH_PARAMS, Request, Response, StatusCode};
+use crate::{
+    AssetError, InternalUrl, MAX_ASSET_BYTES, MAX_ASSETS, MAX_PATH_PARAMS, MAX_TOTAL_ASSET_BYTES,
+    MediaType, Request, Response, StatusCode,
+};
 use std::fmt;
 
 type Handler = Box<dyn Fn(&Request) -> Response + Send + Sync>;
@@ -38,6 +41,8 @@ impl std::error::Error for RouteError {}
 #[derive(Default)]
 pub struct Router {
     routes: Vec<Route>,
+    asset_count: usize,
+    asset_bytes: usize,
 }
 
 enum Segment {
@@ -125,6 +130,51 @@ impl Router {
         Self::default()
     }
 
+    /// Registers trusted embedded bytes on one fixed GET/HEAD path.
+    ///
+    /// The path must pass `InternalUrl` validation, without a query or dynamic
+    /// captures. It shares the route namespace with `get()`. Asset responses
+    /// borrow the static slice, with no filesystem access or per-request body
+    /// copy. Query validation and server I/O/body limits still apply.
+    /// Registration is bounded by `MAX_ASSETS`, `MAX_ASSET_BYTES`, and
+    /// `MAX_TOTAL_ASSET_BYTES`; a failure does not consume those budgets.
+    ///
+    /// ```
+    /// let mut router = ruvane::Router::new();
+    /// router.asset("/assets/site.css", b"body { color: #123; }", ruvane::MediaType::Css).unwrap();
+    /// ```
+    pub fn asset(
+        &mut self,
+        path: impl Into<String>,
+        bytes: &'static [u8],
+        media_type: MediaType,
+    ) -> Result<(), AssetError> {
+        let path = path.into();
+        let _ = InternalUrl::new(&path).map_err(|_| AssetError::InvalidPath)?;
+        if self.routes.iter().any(|route| route.pattern == path) {
+            return Err(AssetError::DuplicatePath);
+        }
+        if bytes.len() > MAX_ASSET_BYTES {
+            return Err(AssetError::TooLarge);
+        }
+        if self.asset_count == MAX_ASSETS {
+            return Err(AssetError::TooManyAssets);
+        }
+        let total = self
+            .asset_bytes
+            .checked_add(bytes.len())
+            .filter(|total| *total <= MAX_TOTAL_ASSET_BYTES)
+            .ok_or(AssetError::TotalTooLarge)?;
+        self.get(path, move |_| Response::embedded(bytes, media_type))
+            .map_err(|error| match error {
+                RouteError::DuplicatePath => AssetError::DuplicatePath,
+                _ => AssetError::InvalidPath,
+            })?;
+        self.asset_count += 1;
+        self.asset_bytes = total;
+        Ok(())
+    }
+
     /// Registers a GET handler, also used to produce HEAD response headers.
     ///
     /// A whole segment such as `{slug}` captures one nonempty value. Names are
@@ -199,6 +249,8 @@ impl fmt::Debug for Router {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Router")
+            .field("asset_count", &self.asset_count)
+            .field("asset_bytes", &self.asset_bytes)
             .field(
                 "paths",
                 &self
