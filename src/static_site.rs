@@ -189,7 +189,7 @@ fn valid_segment(value: &str, file: bool) -> bool {
             && stem.as_bytes()[3].is_ascii_digit())
 }
 
-fn valid_suffix(path: &str, kind: MediaType) -> bool {
+pub(crate) fn valid_suffix(path: &str, kind: MediaType) -> bool {
     match kind {
         MediaType::PlainText => path.ends_with(".txt"),
         MediaType::Css => path.ends_with(".css"),

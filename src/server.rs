@@ -277,7 +277,14 @@ fn serve(
             head = request.method() == Method::Head;
             match catch_unwind(AssertUnwindSafe(|| router.dispatch(request))) {
                 Ok(response) if response.body().len() <= config.max_response_body_bytes => response,
-                _ => Response::error(StatusCode::InternalServerError),
+                _ => {
+                    let error = router.error_response(StatusCode::InternalServerError);
+                    if error.body().len() <= config.max_response_body_bytes {
+                        error
+                    } else {
+                        Response::error(StatusCode::InternalServerError)
+                    }
+                }
             }
         }
         Ok(_) => Response::error(StatusCode::BadRequest),

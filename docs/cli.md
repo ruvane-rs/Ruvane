@@ -25,6 +25,11 @@ device/framework names and Rust keywords are refused. The destination must be
 new. Framework paths are escaped as TOML strings; controls are rejected. Files
 are created exclusively, with no overwrite or recursive cleanup on failure.
 
+Alpha.9 declares pages/assets through one `App` in `src/pages.rs` and fragment
+layouts in `src/components.rs`. Named links and explicit export parameter sets
+are shared by dev and build. Cached 404/500 pages apply on the generated server.
+See [pages and layouts](pages-and-layouts.md).
+
 The generated layout contains Cargo.toml, an independent Cargo workspace,
 `Ruvane.project`, README, .gitignore, `src/main.rs`, `src/pages.rs`,
 `src/components.rs`, and `assets/site.css`. Edit pages and shared layout in

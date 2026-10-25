@@ -14,7 +14,7 @@ and restarts the server; refresh the browser manually. Type `q` then Enter
 to stop dev. Compilation errors keep the previous working server available.
 
 Edit `src/pages.rs`, share layout in `src/components.rs`, and place assets in
-`assets/`. Static pages are enumerated explicitly in `pages::site`.
+`assets/`. Static parameters are enumerated in the `pages::application` declaration.
 
 Builds are stored in `dist/build-NNNNNN`. The `dist/current` record selects
 the last completed build. Preview loads its validated files once, with CSP.
@@ -24,3 +24,11 @@ placeholder; use the site's real public origin when building for deployment.
 `--offline` is available on dev/build when dependencies are already cached.
 Project code and Cargo configuration are trusted local executable inputs.
 This CLI does not sandbox arbitrary Rust code or third-party build scripts.
+
+Pages and assets are declared once in `src/pages.rs` through `App`. The same
+callbacks serve development routes and produce static output. Shared and
+nested layout fragments are in `src/components.rs`. Static pages receive
+parameters without an HTTP request; use `PageMode::ServerOnly` explicitly for
+request-dependent pages. Named links are constructed with `PageContext::url`.
+The configured 404/500 pages are server responses; exporting a site does not
+configure error-page routing on a hosting provider.

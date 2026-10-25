@@ -245,6 +245,12 @@ pub struct Metadata {
 }
 
 impl Metadata {
+    pub(crate) fn for_error(mut self) -> Self {
+        self.canonical = None;
+        self.robots = Some(Robots::NoIndexFollow);
+        self
+    }
+
     /// Creates metadata containing only a fixed responsive viewport.
     ///
     /// The viewport permits zoom and has `width=device-width, initial-scale=1`.

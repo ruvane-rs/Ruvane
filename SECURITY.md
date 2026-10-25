@@ -1,5 +1,30 @@
 # Security
 
+Starting with alpha.9, App declares named pages, fragment layouts and assets
+for both server rendering and explicit static planning. Registration validates
+names, ambiguity, concrete export paths and count limits without executing
+callbacks. Failed registrations leave the declaration unchanged. Layout parents
+must already exist; immutable references prevent cycles and depth is bounded.
+
+Named links encode decoded captures once and check concrete route ownership.
+Static-capable pages receive no HTTP Request even on the server; server-only
+pages explicitly select query decoding and are reported as excluded from export.
+Route names, export membership and URL encoding are not access controls.
+
+Page/layout callbacks remain trusted, concurrent, read-only Rust code. Their
+allocations occur before output checks; CPU, side effects, globals and arbitrary
+conversion code are not sandboxed. Body, intermediate layout and final document
+sizes are checked. Page errors and unwinding panics abort static planning before
+export. Recovery is unavailable with panic=abort. No script engine, executable
+wire format, remote function dispatch, POST or cryptography is introduced.
+
+Custom 404/500 responses are rendered once without request data, forced to
+noindex without a canonical, and served with their actual statuses and fixed
+CSP. Malformed protocol/query inputs retain fixed errors. A custom error too
+large for the server budget falls back to the fixed small 500. A bad error
+renderer refuses router construction. Static hosting error mapping remains a
+provider responsibility. See [pages and layouts](docs/pages-and-layouts.md).
+
 Starting with alpha.8, the local CLI compiles and executes an explicitly selected
 trusted Rust project through Cargo. It is not a sandbox for downloaded code,
 Cargo configuration, build scripts, toolchain binaries, or subprocesses started

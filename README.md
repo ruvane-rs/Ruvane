@@ -10,6 +10,8 @@ internal links, embedded CSS/image assets, typed native GET forms, page
 metadata, canonical URLs, a fixed browser Content Security Policy, and bounded
 static export with a local preview. The `ruvane` CLI creates projects, watches
 sources, runs the development server, and manages versioned static builds.
+The application layer declares named pages and assets once for server rendering
+and static builds, with bounded nested layouts and private error pages.
 Server actions and browser-side reactivity are planned for future versions.
 
 ## Principles
@@ -58,6 +60,49 @@ The CLI uses bounded standard-library polling and direct process arguments.
 Local project code, Cargo configuration, and the toolchain are trusted; this
 is not an execution sandbox. See [the CLI contract](docs/cli.md) for limits,
 process lifecycle, project layout, versioned output, and offline operation.
+
+## Pages and layouts
+
+```rust
+use ruvane::{App, Page, PageMode, PageRoute, Tag, element};
+
+let mut app = App::new();
+app.layout("site", None, |_, title, children| {
+    element(Tag::Main)
+        .child(element(Tag::H1).child(title))
+        .child(children)
+        .render()
+}).unwrap();
+app.page(
+    PageRoute::new("home", "/").unwrap(),
+    Some("site"),
+    PageMode::fixed(),
+    |context| {
+        Ok(Page::new("Hello from Ruvane", "One declaration, two render targets.")
+            .metadata(context.metadata("A page built with Ruvane.").unwrap()))
+    },
+).unwrap();
+assert_eq!(app.url("home", &[]).unwrap().as_str(), "/");
+let router = app.router(None).unwrap();
+let origin = ruvane::SiteOrigin::parse("https://site.example").unwrap();
+let site = app.static_site(&origin).unwrap();
+assert_eq!(site.len(), 1);
+```
+
+Layouts wrap typed HTML fragments from the leaf to its registered parents.
+`Page` supplies document properties; `App` renders the outer document once.
+`PageMode::Static` enumerates dynamic export parameters. Static-capable pages
+receive no HTTP request, including on the server. `ServerOnly(QueryMode)`
+explicitly selects request-dependent pages and excludes them from export.
+`App::url` and `PageContext::url` check registered names, complete parameter
+sets, single encoding, and ownership of the constructed path.
+
+`PageError` maps deliberate failures to fixed statuses. Custom 404/500 pages
+are cached at router construction with noindex and no canonical; protocol
+errors keep their fixed responses. Static page errors abort planning before
+export. Limits apply to route/layout counts, nesting, parameters and each
+rendering stage. Existing low-level APIs remain available. See
+[pages and layouts](docs/pages-and-layouts.md) for the full contract and examples.
 
 ## Local server
 
@@ -281,7 +326,9 @@ The static edition exports the home page, five articles, three listing pages,
 About, CSS, images, and metadata: 17 files. Pagination uses paths such as
 `/articles/page/2/`. The explicitly authored static slug `ete-rust` retains
 the article's UTF-8 title and text. GET search belongs to the server edition;
-the static edition uses lists and pagination without a search form.
+the static edition uses lists and pagination without a search form. Alpha.9
+registers those portable pages once for both modes. The original search and
+Unicode article URLs remain explicit server-only pages.
 
 `site.preview_router()` serves a snapshot of the planned bytes through the
 normal loopback server and CSP, with no per-request disk lookup or body copy.
@@ -368,6 +415,9 @@ when composed. Serialized output is available through `as_str()`,
 | `fragment` | Join rendered fragments in order. |
 | `link` | Render an anchor to an `InternalUrl`, escaping its attribute and label. |
 | `image` | Render an image with an internal URL, escaped alternative text, and typed dimensions. |
+| `App` | Declare common pages, layouts and assets, then create a server router or static plan. |
+| `PageRoute` | Validate a named pattern and construct URLs from decoded parameters. |
+| `Page`, `PageContext`, `PageMode` | Compose document content with explicit static/server input policies. |
 | `GetForm` | Render a native GET form with an internal action, labeled search inputs, and hidden fields. |
 | `Document` | Render a complete document with a doctype, language, UTF-8 declaration, title, and body. |
 | `Metadata` | Add bounded descriptions, robots hints, a canonical URL, and a PNG favicon. |

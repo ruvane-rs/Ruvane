@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.0-alpha.9 — Unreleased
+
+- Add App, Page, PageContext and explicit static/server-only page policies,
+  sharing one bounded declaration across server routing and static planning.
+- Add named PageRoute URLs with exact parameter sets, single encoding,
+  registered-name checks and concrete-path ownership validation.
+- Add immutable parent layouts with bounded nesting and per-stage HTML limits;
+  render one outer document around shared typed fragments.
+- Validate concrete static parameters, portable paths, route/file conflicts and
+  entry counts before callbacks; fail planning on page errors, unwinding
+  panics or output-budget violations.
+- Add cached private 404/500 pages, typed page errors and escaped validation
+  pages with status 400. Keep protocol errors and server output budgets intact.
+- Migrate generated projects and the mini-blog to the common application;
+  retain the blog's GET search and original Unicode URLs as server-only pages.
+- Add regression/security tests for named links, shadows, nested layouts,
+  server/export parity, error privacy, atomic registration and bounded output.
+- Continue to use no third-party dependencies and forbid unsafe code.
+
 ## 0.1.0-alpha.8 — Unreleased
 
 - Add a dependency-free ruvane binary with new/dev/build/preview commands,

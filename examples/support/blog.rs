@@ -1,7 +1,7 @@
 use ruvane::{
-    Attribute, Document, ExportError, GetForm, Html, InternalUrl, MediaType, Metadata, ParamError,
-    Request, Response, Robots, Router, SiteOrigin, StaticPath, StaticSite, StatusCode, Tag,
-    element, fragment, image, link,
+    App, AppError, Attribute, GetForm, Html, InternalUrl, MediaType, Metadata, Page, PageContext,
+    PageError, PageMode, PageParams, PageRoute, ParamError, QueryMode, Response, Robots, Router,
+    SiteOrigin, StaticSite, Tag, element, fragment, image, link,
 };
 
 const PAGE_SIZE: usize = 2;
@@ -84,29 +84,53 @@ fn articles_path(edition: Edition) -> &'static str {
     }
 }
 
-fn about_path(edition: Edition) -> &'static str {
-    match edition {
-        Edition::Server => "/articles/about",
-        Edition::Static => "/articles/about/",
-    }
+fn named(name: &str) -> PageRoute {
+    let pattern = match name {
+        "home" => "/",
+        "articles" => "/articles/",
+        "article-page" => "/articles/page/{page}/",
+        "article" => "/articles/{slug}/",
+        "about" => "/articles/about/",
+        "search" => "/articles",
+        "legacy-article" => "/articles/{slug}",
+        "legacy-about" => "/articles/about",
+        _ => unreachable!("fixed route name"),
+    };
+    PageRoute::new(name, pattern).expect("fixed named route")
 }
 
-fn page(title: &str, body: impl Into<Html>, metadata: Metadata) -> Response {
-    Response::html(render_page(title, body, metadata, Edition::Server))
+fn page(title: &str, body: impl Into<Html>, metadata: Metadata) -> Page {
+    Page::new(title, body)
+        .metadata(metadata)
+        .stylesheet(internal("/assets/site.css"))
 }
 
-fn render_page(title: &str, body: impl Into<Html>, metadata: Metadata, edition: Edition) -> Html {
+fn site_layout(context: &PageContext<'_>, title: &str, children: Html) -> Html {
+    let legacy = matches!(
+        context.route_name(),
+        Some("search" | "legacy-article" | "legacy-about")
+    );
     let navigation = element(Tag::Nav)
         .attr(Attribute::Class, "site-nav")
         .child(fragment([
-            link(&internal("/"), "Home"),
-            link(&internal(articles_path(edition)), "Articles"),
-            link(&internal(about_path(edition)), "About"),
+            link(&context.url("home", &[]).expect("registered home"), "Home"),
+            link(
+                &context
+                    .url(if legacy { "search" } else { "articles" }, &[])
+                    .expect("registered list"),
+                "Articles",
+            ),
+            link(
+                &context
+                    .url(if legacy { "legacy-about" } else { "about" }, &[])
+                    .expect("registered about"),
+                "About",
+            ),
         ]));
     let brand = element(Tag::Div)
         .attr(Attribute::Class, "brand")
         .child(link(
-            &internal("/"),
+            &context.url("home", &[]).expect("registered home"),
             fragment([
                 image(&internal("/assets/mark.png"), "", 96, 96).expect("fixed dimensions"),
                 element(Tag::Span).child("Ruvane journal").render(),
@@ -116,25 +140,26 @@ fn render_page(title: &str, body: impl Into<Html>, metadata: Metadata, edition: 
         .attr(Attribute::Class, "site-header")
         .child(brand)
         .child(navigation);
-    let layout = element(Tag::Main)
+    let body = element(Tag::Main)
         .child(
             element(Tag::P)
                 .attr(Attribute::Class, "eyebrow")
                 .child("The Ruvane journal / Notes on the web"),
         )
         .child(element(Tag::H1).child(title))
-        .child(body);
+        .child(children);
     let footer = element(Tag::Footer)
         .attr(Attribute::Class, "site-footer")
         .child(element(Tag::P).child("Ruvane journal"))
         .child(element(Tag::P).child("Thoughtful software. Room to explore."));
-    Document::new(
-        title,
-        fragment([header.render(), layout.render(), footer.render()]),
-    )
-    .metadata(metadata)
-    .stylesheet(internal("/assets/site.css"))
-    .render()
+    fragment([header.render(), body.render(), footer.render()])
+}
+
+fn journal_layout(_: &PageContext<'_>, _: &str, children: Html) -> Html {
+    element(Tag::Section)
+        .attr(Attribute::Class, "journal-layout")
+        .child(children)
+        .render()
 }
 
 fn home_body(edition: Edition) -> Html {
@@ -154,25 +179,12 @@ fn illustration(article: &Article) -> InternalUrl {
     })
 }
 
-fn error(status: StatusCode) -> Response {
-    page(
-        status.reason(),
-        element(Tag::P).child(status.reason()),
-        private_metadata(status.reason()),
-    )
-    .with_status(status)
-}
-
 fn article_url(article: &Article, edition: Edition) -> InternalUrl {
     match edition {
-        Edition::Server => internal("/articles")
-            .segment(article.slug)
-            .expect("fixed source slug"),
-        Edition::Static => StaticPath::new(&format!("/articles/{}/", article.static_slug))
-            .expect("explicit portable source slug")
-            .url()
-            .clone(),
+        Edition::Server => named("legacy-article").url(&[("slug", article.slug)]),
+        Edition::Static => named("article").url(&[("slug", article.static_slug)]),
     }
+    .expect("declared article route and source slug")
 }
 
 fn listing_url(page: usize, search: &str) -> InternalUrl {
@@ -209,12 +221,14 @@ fn article_cards<'a>(articles: impl Iterator<Item = &'a Article>, edition: Editi
     }))
 }
 
-fn listing(request: &Request, origin: Option<&SiteOrigin>) -> Response {
+fn listing(context: &PageContext<'_>) -> Result<Page, PageError> {
+    let request = context.request().ok_or(PageError::InternalServerError)?;
+    let origin = context.origin();
     let search = request.query_params().get("search").unwrap_or("");
     let page_number = match request.query_params().get_as::<usize>("page") {
         Ok(value) if value > 0 => value,
         Err(ParamError::Missing) => 1,
-        _ => return invalid_page(search),
+        _ => return Ok(invalid_page(search)),
     };
     let needle = search.to_lowercase();
     let articles: Vec<_> = ARTICLES
@@ -222,10 +236,10 @@ fn listing(request: &Request, origin: Option<&SiteOrigin>) -> Response {
         .filter(|article| article.title.to_lowercase().contains(&needle))
         .collect();
     let Some(start) = (page_number - 1).checked_mul(PAGE_SIZE) else {
-        return invalid_page(search);
+        return Ok(invalid_page(search));
     };
     if page_number > 1 && start >= articles.len() {
-        return error(StatusCode::NotFound);
+        return Err(PageError::NotFound);
     }
     let items = article_cards(
         articles.iter().copied().skip(start).take(PAGE_SIZE),
@@ -275,7 +289,7 @@ fn listing(request: &Request, origin: Option<&SiteOrigin>) -> Response {
     } else {
         private_metadata("Search the Ruvane journal's articles.")
     };
-    page("Articles", body, metadata)
+    Ok(page("Articles", body, metadata))
 }
 
 fn article_body(article: &Article, edition: Edition) -> Html {
@@ -315,7 +329,7 @@ fn search_panel(value: &str) -> Html {
         .render()
 }
 
-fn invalid_page(search: &str) -> Response {
+fn invalid_page(search: &str) -> Page {
     page(
         "Articles",
         element(Tag::Section).child(search_panel(search)).child(
@@ -325,72 +339,7 @@ fn invalid_page(search: &str) -> Response {
         ),
         private_metadata("The article page number is invalid."),
     )
-    .with_status(StatusCode::BadRequest)
-}
-
-/// Builds the read-only example blog, shared with the integration tests.
-pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
-    build_router(None)
-}
-
-/// Builds the blog with a trusted public origin for canonical metadata.
-pub fn router_with_origin(origin: SiteOrigin) -> Result<Router, Box<dyn std::error::Error>> {
-    build_router(Some(origin))
-}
-
-fn build_router(origin: Option<SiteOrigin>) -> Result<Router, Box<dyn std::error::Error>> {
-    let mut router = Router::new();
-    for (path, bytes, kind) in ASSETS {
-        router.asset(path, bytes, kind)?;
-    }
-    // Register the dynamic route first to exercise exact-path precedence.
-    let article_origin = origin.clone();
-    router.get("/articles/{slug}", move |request| {
-        match ARTICLES
-            .iter()
-            .find(|article| Some(article.slug) == request.param("slug"))
-        {
-            Some(article) => page(
-                article.title,
-                article_body(article, Edition::Server),
-                public_metadata(
-                    article.body,
-                    article_origin.as_ref(),
-                    &article_url(article, Edition::Server),
-                ),
-            ),
-            None => error(StatusCode::NotFound),
-        }
-    })?;
-    let home_origin = origin.clone();
-    router.get("/", move |_| {
-        page(
-            "A small journal. A simpler web.",
-            home_body(Edition::Server),
-            public_metadata(
-                "Notes on Rust, thoughtful interfaces, and the craft of building for the web.",
-                home_origin.as_ref(),
-                &internal("/"),
-            ),
-        )
-    })?;
-    let listing_origin = origin.clone();
-    router.get_form("/articles", move |request| {
-        listing(request, listing_origin.as_ref())
-    })?;
-    router.get("/articles/about", move |_| {
-        page(
-            "About this blog",
-            about_body(),
-            public_metadata(
-                "A small publication about clear ideas and readable software.",
-                origin.as_ref(),
-                &internal("/articles/about"),
-            ),
-        )
-    })?;
-    router.get("/health", |_| Response::text("ok\n"))?;
-    Ok(router)
+    .bad_request()
 }
 
 const ASSETS: [(&str, &[u8], MediaType); 4] = [
@@ -421,110 +370,212 @@ fn about_body() -> Html {
         .child("A small publication about clear ideas and readable software. Every article is an invitation to explore how the web works.").render()
 }
 
-fn static_listing_path(page: usize) -> StaticPath {
-    StaticPath::new(&if page == 1 {
-        String::from("/articles/")
+fn static_listing_url(page: usize) -> InternalUrl {
+    if page == 1 {
+        named("articles").url(&[])
     } else {
-        format!("/articles/page/{page}/")
-    })
-    .expect("bounded fixed page path")
+        named("article-page").url(&[("page", &page.to_string())])
+    }
+    .expect("bounded declared listing route")
 }
 
-/// Builds the explicit static edition from the same source content and layout.
-/// The server edition retains GET search and its original URL conventions.
-pub fn static_site(origin: SiteOrigin) -> Result<StaticSite, ExportError> {
-    let mut site = StaticSite::new();
-    let edition = Edition::Static;
-    let home = StaticPath::new("/")?;
-    site.page(
-        home.clone(),
-        render_page(
+fn static_listing(context: &PageContext<'_>, number: usize) -> Result<Page, PageError> {
+    let count = ARTICLES.len().div_ceil(PAGE_SIZE);
+    if !(1..=count).contains(&number) {
+        return Err(PageError::NotFound);
+    }
+    let mut pagination = element(Tag::Nav).attr(Attribute::Class, "pagination");
+    if number > 1 {
+        pagination = pagination.child(link(&static_listing_url(number - 1), "Previous page"));
+    }
+    if number < count {
+        pagination = pagination.child(link(&static_listing_url(number + 1), "Next page"));
+    }
+    let body = element(Tag::Section)
+        .child(
+            element(Tag::P)
+                .attr(Attribute::Class, "metadata")
+                .child(format!("Page {number}")),
+        )
+        .child(
+            element(Tag::Ul)
+                .attr(Attribute::Class, "post-grid")
+                .child(article_cards(
+                    ARTICLES
+                        .iter()
+                        .skip((number - 1) * PAGE_SIZE)
+                        .take(PAGE_SIZE),
+                    Edition::Static,
+                )),
+        )
+        .child(pagination);
+    Ok(page(
+        "Articles",
+        body,
+        public_metadata(
+            "Notes on Rust, typed interfaces, and building for the web.",
+            context.origin(),
+            context.path(),
+        ),
+    ))
+}
+
+/// Declares common pages/assets once. Legacy Unicode URLs and the GET search
+/// are explicit server-only pages, retained alongside the portable common URLs.
+pub fn application() -> Result<App, AppError> {
+    let mut app = App::new();
+    app.layout("site", None, site_layout)?;
+    app.layout("journal", Some("site"), journal_layout)?;
+    app.page(named("home"), Some("site"), PageMode::fixed(), |context| {
+        Ok(page(
             "A small journal. A simpler web.",
-            home_body(edition),
+            home_body(Edition::Static),
             public_metadata(
                 "Notes on Rust, thoughtful interfaces, and the craft of building for the web.",
-                Some(&origin),
-                home.url(),
+                context.origin(),
+                context.path(),
             ),
-            edition,
-        ),
+        ))
+    })?;
+    app.page(
+        named("articles"),
+        Some("journal"),
+        PageMode::fixed(),
+        |context| static_listing(context, 1),
     )?;
-    let page_count = ARTICLES.len().div_ceil(PAGE_SIZE);
-    for page_number in 1..=page_count {
-        let path = static_listing_path(page_number);
-        let mut pagination = element(Tag::Nav).attr(Attribute::Class, "pagination");
-        if page_number > 1 {
-            pagination = pagination.child(link(
-                static_listing_path(page_number - 1).url(),
-                "Previous page",
-            ));
-        }
-        if page_number < page_count {
-            pagination = pagination.child(link(
-                static_listing_path(page_number + 1).url(),
-                "Next page",
-            ));
-        }
-        let body = element(Tag::Section)
-            .child(
-                element(Tag::P)
-                    .attr(Attribute::Class, "metadata")
-                    .child(format!("Page {page_number}")),
-            )
-            .child(
-                element(Tag::Ul)
-                    .attr(Attribute::Class, "post-grid")
-                    .child(article_cards(
-                        ARTICLES
-                            .iter()
-                            .skip((page_number - 1) * PAGE_SIZE)
-                            .take(PAGE_SIZE),
-                        edition,
-                    )),
-            )
-            .child(pagination);
-        site.page(
-            path.clone(),
-            render_page(
-                "Articles",
-                body,
-                public_metadata(
-                    "Notes on Rust, typed interfaces, and building for the web.",
-                    Some(&origin),
-                    path.url(),
-                ),
-                edition,
-            ),
-        )?;
-    }
-    for article in ARTICLES {
-        let path = StaticPath::new(article_url(article, edition).as_str())?;
-        site.page(
-            path.clone(),
-            render_page(
+    let pages = (2..=ARTICLES.len().div_ceil(PAGE_SIZE))
+        .map(|number| PageParams::new(&[("page", &number.to_string())]))
+        .collect::<Result<Vec<_>, _>>()?;
+    app.page(
+        named("article-page"),
+        Some("journal"),
+        PageMode::Static(pages),
+        |context| {
+            let number = context
+                .param_as::<usize>("page")
+                .map_err(|_| PageError::BadRequest)?;
+            static_listing(context, number)
+        },
+    )?;
+    let articles = ARTICLES
+        .iter()
+        .map(|article| PageParams::new(&[("slug", article.static_slug)]))
+        .collect::<Result<Vec<_>, _>>()?;
+    app.page(
+        named("article"),
+        Some("journal"),
+        PageMode::Static(articles),
+        |context| {
+            let article = ARTICLES
+                .iter()
+                .find(|a| Some(a.static_slug) == context.param("slug"))
+                .ok_or(PageError::NotFound)?;
+            Ok(page(
                 article.title,
-                article_body(article, edition),
-                public_metadata(article.body, Some(&origin), path.url()),
-                edition,
-            ),
-        )?;
-    }
-    let about = StaticPath::new(about_path(edition))?;
-    site.page(
-        about.clone(),
-        render_page(
-            "About this blog",
-            about_body(),
-            public_metadata(
-                "A small publication about clear ideas and readable software.",
-                Some(&origin),
-                about.url(),
-            ),
-            edition,
-        ),
+                article_body(article, Edition::Static),
+                public_metadata(article.body, context.origin(), context.path()),
+            ))
+        },
+    )?;
+    app.page(
+        named("about"),
+        Some("journal"),
+        PageMode::fixed(),
+        |context| {
+            Ok(page(
+                "About this blog",
+                about_body(),
+                public_metadata(
+                    "A small publication about clear ideas and readable software.",
+                    context.origin(),
+                    context.path(),
+                ),
+            ))
+        },
+    )?;
+    app.page(
+        named("search"),
+        Some("journal"),
+        PageMode::ServerOnly(QueryMode::Form),
+        listing,
+    )?;
+    app.page(
+        named("legacy-article"),
+        Some("journal"),
+        PageMode::ServerOnly(QueryMode::Uri),
+        |context| {
+            let article = ARTICLES
+                .iter()
+                .find(|a| Some(a.slug) == context.param("slug"))
+                .ok_or(PageError::NotFound)?;
+            Ok(page(
+                article.title,
+                article_body(article, Edition::Server),
+                public_metadata(
+                    article.body,
+                    context.origin(),
+                    &article_url(article, Edition::Server),
+                ),
+            ))
+        },
+    )?;
+    app.page(
+        named("legacy-about"),
+        Some("journal"),
+        PageMode::ServerOnly(QueryMode::Uri),
+        |context| {
+            Ok(page(
+                "About this blog",
+                about_body(),
+                public_metadata(
+                    "A small publication about clear ideas and readable software.",
+                    context.origin(),
+                    context.path(),
+                ),
+            ))
+        },
     )?;
     for (path, bytes, kind) in ASSETS {
-        site.asset(StaticPath::new(path)?, bytes, kind)?;
+        app.asset(path, bytes, kind)?;
     }
-    Ok(site)
+    app.not_found(Some("site"), || {
+        page(
+            "Not Found",
+            element(Tag::P).child("That page is not available."),
+            private_metadata("Not Found"),
+        )
+    })?;
+    app.internal_error(Some("site"), || {
+        page(
+            "Internal Server Error",
+            element(Tag::P).child("Please try again later."),
+            private_metadata("Internal Server Error"),
+        )
+    })?;
+    Ok(app)
+}
+
+/// Builds the read-only example blog, shared with the integration tests.
+pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
+    build_router(None)
+}
+
+/// Builds the blog with a trusted public origin for canonical metadata.
+pub fn router_with_origin(origin: SiteOrigin) -> Result<Router, Box<dyn std::error::Error>> {
+    build_router(Some(origin))
+}
+
+fn build_router(origin: Option<SiteOrigin>) -> Result<Router, Box<dyn std::error::Error>> {
+    let mut router = application()?.router(origin)?;
+    router.get("/health", |_| Response::text("ok\n"))?;
+    Ok(router)
+}
+
+/// Renders the common pages from the same declaration as the server.
+pub fn static_site(origin: SiteOrigin) -> Result<StaticSite, AppError> {
+    let app = application()?;
+    for name in app.server_only_routes() {
+        println!("Server-only page omitted from static export: {name}");
+    }
+    app.static_site(&origin)
 }

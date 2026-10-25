@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.8 implements a small development profile based on the
+Ruvane 0.1.0-alpha.9 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -151,3 +151,13 @@ overload, output backpressure, handler failures, HEAD, and shutdown. A
 deterministic byte-mutation corpus exercises the parser without external
 test libraries. These checks are regression evidence, not a security audit
 or a claim of exhaustive protocol coverage.
+
+## Application page errors
+
+Alpha.9's `App` layer can configure cached HTML 404/500 responses with private
+metadata. Routing misses and deliberate page failures retain their real HTTP
+statuses. Unwinding handler/layout panics and oversized successful responses
+use the configured 500 if it fits the server body budget, otherwise the small
+fixed 500. Parser, framing, Host and query-validation failures retain the fixed
+protocol responses. HEAD suppresses bodies as before; CSP is unchanged. See
+[pages and layouts](pages-and-layouts.md).

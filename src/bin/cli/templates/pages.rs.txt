@@ -1,58 +1,81 @@
 use crate::components;
-use ruvane::{Html, MediaType, Response, Router, SiteOrigin, StaticPath, StaticSite, Tag, element};
+use ruvane::{
+    App, AppError, MediaType, Page, PageMode, PageParams, PageRoute, Router, SiteOrigin,
+    StaticSite, Tag, element,
+};
 
 const CSS: &[u8] = include_bytes!("../assets/site.css");
 
-fn home(origin: Option<&SiteOrigin>) -> Html {
-    components::page(
-        "A small site. Your next idea.",
-        "/",
-        element(Tag::P).child("Welcome. Make something worth sharing."),
-        origin,
-    )
-}
-
-fn about(origin: Option<&SiteOrigin>) -> Html {
-    components::page(
-        "About",
-        "/about/",
-        element(Tag::P).child("Clear ideas, thoughtful pages, and room to explore."),
-        origin,
-    )
-}
-
-fn greeting(name: &str, path: &str, origin: Option<&SiteOrigin>) -> Html {
-    components::page(
-        "Hello",
-        path,
-        element(Tag::P).child(format!("Hello, {name}!")),
-        origin,
-    )
-}
-
-pub fn router() -> Result<Router, Box<dyn std::error::Error>> {
-    let mut router = Router::new();
-    router.get("/", |_| Response::html(home(None)))?;
-    router.get("/about/", |_| Response::html(about(None)))?;
-    router.get("/hello/{name}/", |request| {
-        Response::html(greeting(
-            request.param("name").unwrap_or("world"),
-            "/",
-            None,
-        ))
+pub fn application() -> Result<App, AppError> {
+    let mut app = App::new();
+    app.layout("site", None, components::site_layout)?;
+    app.layout("greeting", Some("site"), components::greeting_layout)?;
+    app.page(
+        PageRoute::new("home", "/")?,
+        Some("site"),
+        PageMode::fixed(),
+        |context| {
+            Ok(components::page(
+                context,
+                "A small site. Your next idea.",
+                element(Tag::P).child("Welcome. Make something worth sharing."),
+            ))
+        },
+    )?;
+    app.page(
+        PageRoute::new("about", "/about/")?,
+        Some("site"),
+        PageMode::fixed(),
+        |context| {
+            Ok(components::page(
+                context,
+                "About",
+                element(Tag::P).child("Clear ideas, thoughtful pages, and room to explore."),
+            ))
+        },
+    )?;
+    app.page(
+        PageRoute::new("hello", "/hello/{name}/")?,
+        Some("greeting"),
+        PageMode::Static(vec![
+            PageParams::new(&[("name", "rust")])?,
+            PageParams::new(&[("name", "web")])?,
+        ]),
+        |context| {
+            let name = context.param("name").unwrap_or("world");
+            Ok(components::page(
+                context,
+                "Hello",
+                element(Tag::P).child(format!("Hello, {name}!")),
+            ))
+        },
+    )?;
+    app.asset("/assets/site.css", CSS, MediaType::Css)?;
+    app.not_found(Some("site"), || {
+        Page::new(
+            "Page not found",
+            element(Tag::P).child("That page is not available."),
+        )
+        .stylesheet(components::stylesheet())
     })?;
-    router.asset("/assets/site.css", CSS, MediaType::Css)?;
-    Ok(router)
+    app.internal_error(Some("site"), || {
+        Page::new(
+            "Something went wrong",
+            element(Tag::P).child("Please try again later."),
+        )
+        .stylesheet(components::stylesheet())
+    })?;
+    Ok(app)
 }
 
-pub fn site(origin: &SiteOrigin) -> Result<StaticSite, Box<dyn std::error::Error>> {
-    let mut site = StaticSite::new();
-    site.page(StaticPath::new("/")?, home(Some(origin)))?;
-    site.page(StaticPath::new("/about/")?, about(Some(origin)))?;
-    for name in ["rust", "web"] {
-        let path = format!("/hello/{name}/");
-        site.page(StaticPath::new(&path)?, greeting(name, &path, Some(origin)))?;
+pub fn router() -> Result<Router, AppError> {
+    application()?.router(None)
+}
+
+pub fn site(origin: &SiteOrigin) -> Result<StaticSite, AppError> {
+    let app = application()?;
+    for name in app.server_only_routes() {
+        println!("Server-only page omitted from static export: {name}");
     }
-    site.asset(StaticPath::new("/assets/site.css")?, CSS, MediaType::Css)?;
-    Ok(site)
+    app.static_site(origin)
 }

@@ -165,7 +165,7 @@ fn decode_with_mode(value: &str, mode: QueryMode) -> Result<String, UrlError> {
     Ok(output)
 }
 
-fn encode(value: &str) -> String {
+pub(crate) fn encode(value: &str) -> String {
     const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
     let mut output = String::new();
     for byte in value.bytes() {

@@ -1,5 +1,10 @@
 # Static export and local preview
 
+Starting with alpha.9, `App::static_site` can create this plan from the same
+page/layout/asset declaration as `App::router`, with explicit static parameters
+and server-only exclusions. See [pages and layouts](pages-and-layouts.md).
+The lower-level `StaticSite` contract below remains available.
+
 Ruvane 0.1.0-alpha.7 renders an explicitly declared site into HTML and asset
 files. Export and preview use only standard Rust and project code. No request
 router is crawled, dynamic route is guessed, directory is scanned, or remote

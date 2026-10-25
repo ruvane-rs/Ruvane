@@ -169,7 +169,7 @@ impl Drop for Running {
     }
 }
 
-fn get(address: SocketAddr, path: &str) -> String {
+fn request(address: SocketAddr, path: &str) -> String {
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(4)))
@@ -178,8 +178,13 @@ fn get(address: SocketAddr, path: &str) -> String {
     let mut bytes = Vec::new();
     stream.read_to_end(&mut bytes).unwrap();
     let response = String::from_utf8(bytes).unwrap();
-    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(response.contains("Content-Security-Policy: default-src 'none'; script-src 'none'"));
+    response
+}
+
+fn get(address: SocketAddr, path: &str) -> String {
+    let response = request(address, path);
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     response
 }
 
@@ -234,7 +239,7 @@ fn cli_options_require_an_explicit_project_and_valid_arguments() {
     assert!(
         String::from_utf8(cli(&temp.0, &["--version"]).stdout)
             .unwrap()
-            .contains("0.1.0-alpha.8")
+            .contains(env!("CARGO_PKG_VERSION"))
     );
 }
 
@@ -331,10 +336,8 @@ fn generated_project_build_dev_recompile_failure_recovery_and_preview() {
         "build-000002\n"
     );
     fs::write(&pages, &second).unwrap();
-    let failed_export = second.replace(
-        "let mut site = StaticSite::new();",
-        "return Err(\"forced export failure\".into());\n    let mut site = StaticSite::new();",
-    );
+    let failed_export = second.replace("app.static_site(origin)", "Err(AppError::RenderFailed)");
+    assert_ne!(failed_export, second, "the export failure must be injected");
     fs::write(&pages, failed_export).unwrap();
     assert!(!cli(&project, &build).status.success());
     assert_eq!(
@@ -346,6 +349,10 @@ fn generated_project_build_dev_recompile_failure_recovery_and_preview() {
     let mut dev = Running::start(&project, &["dev", "--offline", "--port", "0"]);
     let address = dev.address("Ruvane dev at");
     assert!(get(address, "/").contains("Version two"));
+    let missing = request(address, "/missing/");
+    assert!(missing.starts_with("HTTP/1.1 404 "));
+    assert!(missing.contains("That page is not available."));
+    assert!(missing.contains("noindex, follow"));
     assert!(!cli(&project, &build).status.success());
     let dynamic = get(address, "/hello/%3Cscript%3E/");
     assert!(dynamic.contains("Hello, &lt;script&gt;!"));

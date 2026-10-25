@@ -1,34 +1,43 @@
-use ruvane::{
-    Document, Html, InternalUrl, Metadata, Robots, SiteOrigin, Tag, element, fragment, link,
-};
+use ruvane::{Attribute, Html, InternalUrl, Page, PageContext, Tag, element, fragment, link};
 
-pub fn url(path: &str) -> InternalUrl {
-    InternalUrl::new(path).expect("fixed application path")
+pub fn stylesheet() -> InternalUrl {
+    InternalUrl::new("/assets/site.css").expect("fixed stylesheet path")
 }
 
-pub fn page(title: &str, path: &str, body: impl Into<Html>, origin: Option<&SiteOrigin>) -> Html {
-    let metadata = Metadata::new()
-        .description("A small site built with Ruvane.")
-        .unwrap();
-    let metadata = match origin {
-        Some(origin) => metadata
-            .canonical(origin.canonical(&url(path)))
-            .robots(Robots::IndexFollow),
-        None => metadata.robots(Robots::NoIndexFollow),
-    };
+pub fn site_layout(context: &PageContext<'_>, title: &str, children: Html) -> Html {
     let navigation = element(Tag::Nav).child(fragment([
-        link(&url("/"), "Home"),
-        link(&url("/about/"), "About"),
-        link(&url("/hello/rust/"), "Meet Rust"),
+        link(&context.url("home", &[]).expect("registered home"), "Home"),
+        link(
+            &context.url("about", &[]).expect("registered about"),
+            "About",
+        ),
+        link(
+            &context
+                .url("hello", &[("name", "rust")])
+                .expect("registered greeting"),
+            "Meet Rust",
+        ),
     ]));
-    Document::new(
-        title,
-        element(Tag::Main)
-            .child(navigation)
-            .child(element(Tag::H1).child(title))
-            .child(body),
-    )
-    .metadata(metadata)
-    .stylesheet(url("/assets/site.css"))
-    .render()
+    element(Tag::Main)
+        .child(navigation)
+        .child(element(Tag::H1).child(title))
+        .child(children)
+        .render()
+}
+
+pub fn greeting_layout(_: &PageContext<'_>, _: &str, children: Html) -> Html {
+    element(Tag::Section)
+        .attr(Attribute::Class, "greeting")
+        .child(children)
+        .render()
+}
+
+pub fn page(context: &PageContext<'_>, title: &str, body: impl Into<Html>) -> Page {
+    Page::new(title, body)
+        .metadata(
+            context
+                .metadata("A small site built with Ruvane.")
+                .expect("fixed description"),
+        )
+        .stylesheet(stylesheet())
 }

@@ -43,9 +43,12 @@ pub struct Router {
     routes: Vec<Route>,
     asset_count: usize,
     asset_bytes: usize,
+    not_found: Option<Response>,
+    internal_error: Option<Response>,
 }
 
-enum Segment {
+#[derive(Clone, Debug)]
+pub(crate) enum Segment {
     Literal(String),
     Capture(String),
 }
@@ -91,7 +94,7 @@ impl Route {
     }
 }
 
-fn pattern_segments(pattern: &str) -> Result<(Vec<Segment>, bool), RouteError> {
+pub(crate) fn pattern_segments(pattern: &str) -> Result<(Vec<Segment>, bool), RouteError> {
     if !pattern.starts_with('/') || pattern.contains("//") {
         return Err(RouteError::InvalidPath);
     }
@@ -238,6 +241,20 @@ impl Router {
         Ok(())
     }
 
+    pub(crate) fn page_errors(&mut self, not_found: Option<Response>, internal: Option<Response>) {
+        self.not_found = not_found;
+        self.internal_error = internal;
+    }
+
+    pub(crate) fn error_response(&self, status: StatusCode) -> Response {
+        let custom = match status {
+            StatusCode::NotFound => self.not_found.as_ref(),
+            StatusCode::InternalServerError => self.internal_error.as_ref(),
+            _ => None,
+        };
+        custom.cloned().unwrap_or_else(|| Response::error(status))
+    }
+
     pub(crate) fn dispatch(&self, mut request: Request) -> Response {
         let selected = self
             .routes
@@ -254,7 +271,7 @@ impl Router {
             Err(_) => return Response::error(StatusCode::BadRequest),
         };
         let Some(route) = selected else {
-            return Response::error(StatusCode::NotFound);
+            return self.error_response(StatusCode::NotFound);
         };
         if route.dynamic {
             let mut captures = Vec::new();

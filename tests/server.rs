@@ -1839,3 +1839,38 @@ fn existing_export_preview_uses_disk_snapshot_and_never_serves_extra_files() {
         assert_eq!(status(&server.request("GET", path)), 404);
     }
 }
+
+#[test]
+fn blog_common_application_pages_match_export_and_keep_legacy_server_routes() {
+    let origin = ruvane::SiteOrigin::parse("https://journal.example").unwrap();
+    let app = blog::application().unwrap();
+    assert_eq!(
+        app.server_only_routes().collect::<Vec<_>>(),
+        vec!["search", "legacy-article", "legacy-about"]
+    );
+    let server = Running::start(
+        app.router(Some(origin.clone())).unwrap(),
+        ServerConfig::default(),
+    );
+    let site = app.static_site(&origin).unwrap();
+    let preview = Running::start(site.preview_router().unwrap(), ServerConfig::default());
+    for row in site.manifest().lines().skip(2) {
+        let path = row.split('\t').nth(1).unwrap();
+        let live = server.request("GET", path);
+        let static_page = preview.request("GET", path);
+        assert_eq!(parts(&live), parts(&static_page), "{path}");
+        if row.starts_with("page\t") {
+            let body = std::str::from_utf8(parts(&live).1).unwrap();
+            assert_eq!(body.matches("<!doctype html>").count(), 1);
+            if path.starts_with("/articles/") {
+                assert!(body.contains("class=\"journal-layout\""));
+            }
+        }
+    }
+    assert_eq!(status(&server.request("GET", "/articles?search=Rust")), 200);
+    assert_eq!(
+        status(&server.request("GET", "/articles/%C3%A9t%C3%A9-rust")),
+        200
+    );
+    assert_eq!(status(&preview.request("GET", "/articles")), 404);
+}
