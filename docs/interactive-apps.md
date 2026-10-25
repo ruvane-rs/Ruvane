@@ -24,6 +24,11 @@ limited to 32, and reset when the server restarts. Native controls are available
 before activation or if Wasm fails. `?native=yes` serves the same page with scripts
 blocked. Native mutations redirect to `/tasks`.
 
+Alpha.23 generated projects also attach an explicit native `/stream` route to
+the router. The **Streaming SSR** link loads a script-free document progressively;
+it does not use the client navigator. See [streaming](streaming.md) for the
+producer API, budgets and failure examples.
+
 ## Shared declarations
 
 The root package owns `src/pages.rs`, `src/components.rs`, `src/remote_tasks.rs`

@@ -27,11 +27,14 @@ sanitized uploads. A type declaration is not file inspection or validation.
 Their execution requires an explicitly interactive document response; see
 [browser](browser.md) for the fixed policy and module helper.
 
-Content-Length is calculated from body bytes. HEAD produces the same status,
+Content-Length is calculated from buffered body bytes. HEAD produces the same status,
 type, and length as GET without sending the body. The serializer retains
 Connection: close, Cache-Control: no-store, and X-Content-Type-Options: nosniff.
 No filename or application string becomes an HTTP header value.
 Starting with alpha.6, the fixed CSP also accompanies assets and errors.
+Explicit native HTML streams use chunked framing and expose only their initial
+prefix through `body()`; `buffered_body()` returns `None`. Asset responses remain
+buffered. See [streaming](streaming.md).
 Stylesheets and images from the same origin remain allowed; external resource
 loads are restricted by that policy. See [metadata and CSP](metadata-and-csp.md).
 

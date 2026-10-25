@@ -1,5 +1,8 @@
 use crate::http;
-use crate::{FormData, FormError, MAX_POST_BODY_BYTES, Method, Response, Router, StatusCode};
+use crate::{
+    FormData, FormError, MAX_POST_BODY_BYTES, Method, Response, Router, StatusCode, StreamContext,
+    StreamError,
+};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -32,12 +35,13 @@ pub struct ServerConfig {
     /// Encoded POST body bytes, from 0 to 64 KiB; defaults to 64 KiB.
     pub max_request_body_bytes: usize,
     /// Application response body bytes, from 64 to 64 MiB; defaults to 1 MiB.
-    /// An oversized result is replaced by a small 500 response after it is built.
+    /// Buffered oversize results become 500; streaming bodies stop before exceeding it.
     pub max_response_body_bytes: usize,
     /// Total time from accepting a connection to receiving its headers and body,
     /// including time in the queue. From 1 ms to 60 seconds; defaults to 5 seconds.
     pub request_timeout: Duration,
-    /// Total time to write a response, from 1 ms to 60 seconds; defaults to 5 seconds.
+    /// Total response-write time, including stream factory/production, from 1 ms
+    /// to 60 seconds; defaults to 5 seconds. Callbacks must cooperate with deadlines.
     pub write_timeout: Duration,
 }
 
@@ -254,7 +258,7 @@ fn serve(
     router: &Router,
     config: &ServerConfig,
     address: SocketAddr,
-    stopped: &AtomicBool,
+    stopped: &Arc<AtomicBool>,
 ) {
     if job.stream.set_nonblocking(false).is_err() {
         return;
@@ -269,6 +273,7 @@ fn serve(
     );
     // HEAD omits error bodies too, if its request line was readable.
     let mut head = bytes.starts_with(b"HEAD ");
+    let mut stream_allowed = false;
     let path = std::str::from_utf8(bytes.split(|byte| *byte == b'\n').next().unwrap_or(&[]))
         .ok()
         .and_then(|line| line.split(' ').nth(1))
@@ -277,7 +282,7 @@ fn serve(
         .next()
         .unwrap_or("/")
         .to_owned();
-    let response = match received.and_then(|end| {
+    let mut response = match received.and_then(|end| {
         let mut request = http::parse(
             &bytes[..end],
             config.max_request_line_bytes,
@@ -304,25 +309,78 @@ fn serve(
     }) {
         Ok(request) => {
             head = request.method() == Method::Head;
+            stream_allowed = matches!(request.method(), Method::Get | Method::Head);
             match catch_unwind(AssertUnwindSafe(|| router.dispatch(request))) {
                 Ok(response) if response.body().len() <= config.max_response_body_bytes => response,
-                _ => {
-                    let error = router.error_response(StatusCode::InternalServerError);
-                    if error.body().len() <= config.max_response_body_bytes {
-                        error
-                    } else {
-                        Response::error(StatusCode::InternalServerError)
-                    }
-                }
+                _ => bounded_error(router, config),
             }
         }
         Err(status) => Response::error(status),
     };
-    let deadline = Instant::now() + config.write_timeout;
+    let mut plan = response.stream_plan();
+    let duration = plan.as_ref().map_or(config.write_timeout, |plan| {
+        plan.configured_limits().duration.min(config.write_timeout)
+    });
+    let context = StreamContext::new(duration, Arc::clone(stopped));
+    let deadline = context.deadline();
+    let mut producer = None;
+    let mut cap = 0;
+    if let Some(stream) = &plan {
+        match stream.validate(config.max_response_body_bytes) {
+            Ok(limit) if stream_allowed => {
+                cap = limit;
+                if !head {
+                    match stream.start(&context) {
+                        Ok(value) => producer = Some(value),
+                        Err(_) => response = bounded_error(router, config),
+                    }
+                }
+            }
+            _ => response = bounded_error(router, config),
+        }
+        if !response.is_streaming() {
+            plan = None;
+        }
+    }
     let headers = response.wire_headers(router.allowed(&path));
-    if write_until(&mut job.stream, headers.as_bytes(), deadline, stopped).is_ok() && !head {
+    let written = write_until(&mut job.stream, headers.as_bytes(), deadline, stopped);
+    if let (Some(plan), Some(mut producer)) = (plan, producer) {
+        let outcome = if written.is_ok() && !head {
+            plan.send(producer.as_mut(), &context, cap, |bytes| {
+                write_chunk(&mut job.stream, bytes, deadline, stopped)
+                    .map_err(|_| StreamError::Transport)
+            })
+        } else {
+            Err(StreamError::Transport)
+        };
+        let dropped = catch_unwind(AssertUnwindSafe(|| drop(producer))).is_ok();
+        if outcome.is_ok() && dropped && context.check().is_ok() {
+            let _ = write_until(&mut job.stream, b"0\r\n\r\n", deadline, stopped);
+        }
+    } else if written.is_ok() && !head {
         let _ = write_until(&mut job.stream, response.body(), deadline, stopped);
     }
+}
+
+fn bounded_error(router: &Router, config: &ServerConfig) -> Response {
+    let error = router.error_response(StatusCode::InternalServerError);
+    if !error.is_streaming() && error.body().len() <= config.max_response_body_bytes {
+        error
+    } else {
+        Response::error(StatusCode::InternalServerError)
+    }
+}
+fn write_chunk(
+    stream: &mut TcpStream,
+    bytes: &[u8],
+    deadline: Instant,
+    stopped: &AtomicBool,
+) -> io::Result<()> {
+    debug_assert!(!bytes.is_empty());
+    let header = format!("{:x}\r\n", bytes.len());
+    write_until(stream, header.as_bytes(), deadline, stopped)?;
+    write_until(stream, bytes, deadline, stopped)?;
+    write_until(stream, b"\r\n", deadline, stopped)
 }
 
 fn read_body(

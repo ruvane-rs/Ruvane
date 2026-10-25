@@ -1,5 +1,20 @@
 # Security
 
+Alpha.23 adds explicit native HTML streaming with bounded chunk, total-byte,
+yield and duration limits. The server tightens the body/deadline budgets and
+writes each fragment before pulling another. HEAD executes no factory or
+producer. Invalid setup fails before headers; errors after commitment close
+without a successful terminal chunk. Errors contain no application diagnostics.
+Typed fragments retain HTML escaping, script-blocking CSP and no-store.
+
+Producers, factories and destructors are trusted synchronous code. Checks occur
+around callbacks and socket writes; CPU, allocations and blocking application
+I/O are not preempted or sandboxed. A disconnect is observed on a write, and
+cooperative callbacks must return before shutdown can join their worker.
+Chunked requests remain rejected. The transport remains loopback-only and
+browser navigation still validates complete packets. See
+[streaming](docs/streaming.md) for budgets and incomplete-response semantics.
+
 Alpha.22 adds local loading and typed error scopes. Read-only presentation mounts
 accept an empty seed and reject event bindings and initial actions. The public
 route manifest is bounded presentation metadata; it grants no access and cannot

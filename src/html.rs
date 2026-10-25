@@ -405,6 +405,11 @@ impl Document {
 
     /// Serializes the document with a doctype and UTF-8 character declaration.
     pub fn render(self) -> Html {
+        let mut markup = self.stream_prefix().into_string();
+        markup.push_str("</body></html>");
+        Html { markup }
+    }
+    pub(crate) fn stream_prefix(self) -> Html {
         let mut markup = String::from("<!doctype html><html lang=\"");
         escape_into(&mut markup, &self.language);
         markup.push_str("\"><head><meta charset=\"utf-8\"><title>");
@@ -418,7 +423,6 @@ impl Document {
         }
         markup.push_str("</head><body>");
         markup.push_str(self.body.as_str());
-        markup.push_str("</body></html>");
         Html { markup }
     }
 }

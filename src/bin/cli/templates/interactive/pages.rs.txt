@@ -137,7 +137,12 @@ pub fn shell(children: Html) -> Html {
                 .child(element(Tag::P).child("Shared Rust pages. No third-party dependencies."))
                 .child(application().prefetch_link("home", &[], "Home").unwrap())
                 .child(" · ")
-                .child(application().prefetch_link("tasks", &[], "Tasks").unwrap()),
+                .child(application().prefetch_link("tasks", &[], "Tasks").unwrap())
+                .child(" · ")
+                .child(ruvane::link(
+                    &InternalUrl::new("/stream").unwrap(),
+                    "Streaming SSR",
+                )),
         )
         .child(counter)
         .child(children)

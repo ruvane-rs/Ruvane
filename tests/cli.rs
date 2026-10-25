@@ -624,6 +624,22 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
     let html = application_html(address);
     let version = revision(&html).to_owned();
     let path = module_path(&html).to_owned();
+    assert!(html.contains("<a href=\"/stream\">Streaming SSR</a>"));
+    let streamed = interactive_wire(address, "/stream?q=%3Cscript%3E%26", false);
+    let wire = String::from_utf8(streamed).unwrap();
+    assert!(wire.starts_with("HTTP/1.1 200") && wire.contains("Transfer-Encoding: chunked\r\n"));
+    assert!(!wire.contains("Content-Length:") && !wire.contains("<script>"));
+    assert!(wire.contains("Deferred report") && wire.contains("&lt;script&gt;&amp;"));
+    assert!(wire.ends_with("0\r\n\r\n") && wire.contains("script-src 'none'"));
+    let early = interactive_wire(address, "/stream?fail=early", false);
+    assert!(early.starts_with(b"HTTP/1.1 500"));
+    assert!(
+        !String::from_utf8(early)
+            .unwrap()
+            .contains("Transfer-Encoding:")
+    );
+    let late = interactive_wire(address, "/stream?fail=late", false);
+    assert!(late.starts_with(b"HTTP/1.1 200") && !late.ends_with(b"0\r\n\r\n"));
     for wrong in [None, Some("1")] {
         assert!(application_post(address, "title=Rejected", wrong).starts_with(b"HTTP/1.1 409"));
     }

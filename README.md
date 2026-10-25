@@ -36,6 +36,8 @@ keep matching parent components and state during navigation. See
 and explicit GET retry. See
 [client layouts](docs/client-layouts.md),
 [interactive applications](docs/interactive-apps.md) and [navigation cache](docs/navigation-cache.md).
+Explicit [progressive HTML responses](docs/streaming.md) can send a native
+document header before deferred content, with bounded pull-based production.
 
 Create an interactive project from a local checkout:
 
@@ -142,6 +144,23 @@ checks transitions, history, scroll, malformed replies and owner cleanup.
 The server keeps its loopback-only profile; `/tasks` retains the script-blocking CSP.
 There are no sessions or database. See
 [server POST forms](docs/post-forms.md) for the API, origin policy and limits.
+
+## Progressive HTML
+
+```sh
+cargo run --offline --locked --example streaming -- 3004
+```
+
+`HtmlStream` starts with a typed `Document` and lazily supplies escaped `Html`
+fragments. `Response::stream_html` writes each chunk before requesting the next,
+under per-response and server byte, yield and deadline limits. HEAD never starts
+the producer. Failures before headers select 500; failures after headers close an
+incomplete response. The default script-blocking CSP and no-store policy apply.
+
+Open `/stream` for the report and `/tests` for browser checks. New interactive
+projects include the same native `/stream` route. Client navigation packets still
+commit complete validated branches. See [streaming](docs/streaming.md) for the
+API, cooperative cancellation, limits and protocol scope.
 
 ## Reactive state
 
@@ -566,7 +585,9 @@ An empty alternative is allowed for decorative images.
 For a dynamically constructed binary body, use `Response::bytes(data, media_type)`.
 Starting with alpha.4, **`Response::body()` returns `&[u8]`**. Use the fallible
 `Response::body_text()` accessor for UTF-8. Text and HTML constructors retain
-their existing behavior. See [assets and media](docs/assets-and-media.md).
+their existing behavior. For lazy streams these accessors expose only the initial
+prefix; `buffered_body()` returns `None`. See [assets and media](docs/assets-and-media.md)
+and [streaming](docs/streaming.md).
 
 ## HTML rendering
 

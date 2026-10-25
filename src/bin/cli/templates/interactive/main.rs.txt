@@ -18,6 +18,7 @@ fn application() -> Result<ruvane::App, Box<dyn std::error::Error>> {
 }
 fn router() -> Result<ruvane::Router, Box<dyn std::error::Error>> {
     let mut router = application()?.router(None)?;
+    router.get("/stream", progressive_report)?;
     for (name, kind) in [("list", 1), ("create", 2), ("status", 3), ("remove", 4)] {
         router.post_action(format!("/actions/tasks/{name}"), move |request| {
             store::action(kind, request.form_data().unwrap())
@@ -41,6 +42,55 @@ fn router() -> Result<ruvane::Router, Box<dyn std::error::Error>> {
         })?;
     }
     Ok(router)
+}
+fn progressive_report(request: &ruvane::Request) -> Response {
+    use ruvane::{Document, Html, HtmlStream, StreamContext, StreamError, Tag, element, fragment};
+    use std::time::Duration;
+
+    let label = request
+        .query_params()
+        .get("q")
+        .unwrap_or("Rendered safely in Rust")
+        .to_owned();
+    let failure = request.query_params().get("fail").map(str::to_owned);
+    let document = Document::new(
+        "Streaming report / Ruvane",
+        fragment([
+            element(Tag::H1).child("Streaming report").render(),
+            element(Tag::P)
+                .child("This header is sent before the report is calculated.")
+                .render(),
+            ruvane::link(&InternalUrl::new("/").unwrap(), "Home"),
+        ]),
+    )
+    .stylesheet(InternalUrl::new("/assets/site.css").unwrap());
+    let plan = HtmlStream::new(document, move |_| {
+        if failure.as_deref() == Some("early") {
+            return Err(StreamError::Producer);
+        }
+        let mut sent = false;
+        let label = label.clone();
+        let failure = failure.clone();
+        Ok(
+            move |context: &StreamContext| -> Result<Option<Html>, StreamError> {
+                if sent {
+                    return Ok(None);
+                }
+                sent = true;
+                context.wait(Duration::from_millis(500))?;
+                if failure.as_deref() == Some("late") {
+                    return Err(StreamError::Producer);
+                }
+                Ok(Some(
+                    element(Tag::Section)
+                        .child(element(Tag::H2).child("Deferred report"))
+                        .child(element(Tag::P).child(label.as_str()))
+                        .render(),
+                ))
+            },
+        )
+    });
+    Response::stream_html(plan)
 }
 fn native(kind: u32, fields: ruvane::FormData) -> Response {
     match store::action(kind, &fields) {

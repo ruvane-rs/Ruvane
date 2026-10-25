@@ -17,6 +17,7 @@ mod reactive;
 mod routing;
 mod server;
 mod static_site;
+mod streaming;
 mod url;
 mod view;
 
@@ -72,6 +73,10 @@ pub use static_site::{
     ExportError, ExportReport, MAX_STATIC_ENTRIES, MAX_STATIC_FILE_BYTES, MAX_STATIC_PATH_BYTES,
     MAX_STATIC_SEGMENTS, MAX_STATIC_TOTAL_BYTES, STATIC_COMPLETE_PATH, STATIC_HEADERS_PATH,
     STATIC_MANIFEST_PATH, StaticPath, StaticSite,
+};
+pub use streaming::{
+    HtmlProducer, HtmlStream, MAX_STREAM_BODY_BYTES, MAX_STREAM_CHUNK_BYTES, MAX_STREAM_CHUNKS,
+    StreamContext, StreamError, StreamLimits,
 };
 pub use url::{
     InternalUrl, MAX_COMPONENT_BYTES, MAX_INTERNAL_URL_BYTES, MAX_PATH_PARAMS, MAX_QUERY_PAIRS,

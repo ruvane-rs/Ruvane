@@ -129,5 +129,6 @@ real delayed GETs, typed errors and SSR, injected transport failures, explicit
 retry, late replies, mutation notifications, 100 error/success cycles and cleanup.
 Run it separately from the other generated-app task harnesses.
 
-This edition waits for the complete response. Streaming, parallel outlets and
+Client navigation waits for the complete response. [Native HTML streaming](streaming.md)
+is available separately. Incremental client segments, parallel outlets and
 recovery from a corrupted Wasm instance remain separate work.

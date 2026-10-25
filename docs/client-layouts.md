@@ -135,5 +135,7 @@ DOM/state preservation, parameter changes, history, failed partial preparation,
 100 branch switches, errors and cleanup.
 
 See [segment boundaries](segment-boundaries.md) for local loading, typed errors
-and GET retry. Parallel outlets and streaming remain separate work. Existing server fragment layouts and static export keep their
+and GET retry. Parallel outlets and incremental client segments remain separate
+work. [Native HTML streaming](streaming.md) leaves this complete-branch contract
+unchanged. Existing server fragment layouts and static export keep their
 existing APIs.

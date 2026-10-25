@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.18 implements a small development profile based on the
+Ruvane 0.1.0-alpha.23 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -80,12 +80,14 @@ and separate from body fields. No wildcard routes, middleware or dynamic module
 lookup are introduced. Actions are explicit Rust handlers, not remote function names.
 
 HEAD uses the same handler as GET, preserving its response status, content
-type, and calculated body length, but sends no body. A handler can inspect
+type, and buffered body length, but sends no body. Stream plans preserve chunked
+framing without running their factory or producer. A handler can inspect
 `Request::method()`. Recognizable HEAD requests also suppress error bodies.
 GET/HEAD handlers must be read-only. All handlers must be safe for concurrent
 calls; POST side effects are not deduplicated or automatically rolled back.
 
-Responses have fixed headers: explicitly selected Content-Type, Content-Length in bytes,
+Responses have fixed headers: explicitly selected Content-Type, Content-Length in bytes
+for buffered bodies or Transfer-Encoding: chunked for explicit streams,
 Connection: close, X-Content-Type-Options: nosniff, and Cache-Control: no-store.
 Alpha.6 also sends a fixed Content-Security-Policy on every response, including
 HEAD, assets, framing/Host errors, timeouts, and handler failures. It blocks
@@ -99,15 +101,21 @@ See [browser](browser.md).
 405 also includes Allow. Application strings cannot become header names,
 header values, or reason phrases. `Response::see_other` adds a typed internal
 Location with status 303 and an empty body. Changing its status removes Location.
-No arbitrary custom headers, response compression,
-trailers, or streaming are supported. No CORS permissions are emitted.
+No arbitrary custom headers, response compression or trailers are supported.
+No CORS permissions are emitted. Alpha.23 adds `Response::stream_html` for
+bounded typed native document progress; streams retain no-store and the fixed
+script-blocking CSP. They send a successful terminal chunk only after complete
+production and cleanup. A committed error closes an incomplete response.
+See [streaming](streaming.md) for the API, HEAD and failure behavior.
 
 `Response::html` accepts rendered `Html`; `Response::text` is plain text.
 The `link` renderer accepts only an `InternalUrl`, without adding arbitrary
 URL attributes to the element builder.
 `Response::bytes` supports arbitrary body bytes with a fixed `MediaType`;
 `Router::asset` borrows explicitly registered static bytes. `body()` is a byte
-slice, and `body_text()` validates UTF-8. Text types include a UTF-8 charset;
+slice, and `body_text()` validates UTF-8. For streams they expose only the initial
+prefix without invoking a factory; `buffered_body()` returns `None`.
+Text types include a UTF-8 charset;
 binary MIME types do not. Stylesheets and images have dedicated typed helpers.
 See [assets and media](assets-and-media.md).
 `Document::metadata` adds typed description/robots/canonical/favicon fields.
@@ -117,7 +125,8 @@ Error bodies are fixed, without reflected input or panic details. Handler
 panics are converted to 500 when Rust unwinds; the installed panic hook still
 runs. `panic = "abort"` terminates the process instead. A response exceeding
 the configured body limit is replaced by a small 500 response before writing
-any headers.
+any headers. Streams validate their prefix first and count deferred bytes as
+they are produced; exceeding the remaining budget closes the incomplete stream.
 
 ## Resource budgets
 
@@ -131,13 +140,14 @@ any headers.
 | Encoded POST body | 64 KiB | 0–64 KiB |
 | Application response body | 1 MiB | 64 bytes–64 MiB |
 | Receiving headers and body, including queue wait | 5 seconds | 1 ms–60 seconds |
-| Writing the complete response | 5 seconds | 1 ms–60 seconds |
+| Writing the response, including stream setup/production | 5 seconds | 1 ms–60 seconds |
 
 Budgets are validated before binding. The header reader scans incrementally
 and reads at most the configured byte budget. Request deadlines begin when
 the application accepts the socket, including subsequent queue time, and
 are not renewed by receiving another byte. Write deadlines cover headers
-and body together. An incomplete request returns 400 after EOF or 408 after
+and body together, including stream setup/production after route dispatch.
+An incomplete request returns 400 after EOF or 408 after
 its deadline when a response can still be written. Line limits return 414;
 header byte/count limits return 431.
 

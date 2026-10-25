@@ -25,6 +25,14 @@ and `client_layout_boundary`; the navigator owns the explicit GET retry button.
 `?native=yes` keeps real error statuses and renders the validated parents with
 scripts blocked. Error packets and transport feedback are never cached.
 
+Open **Streaming SSR** for `/stream`, a native progressive report. Its header
+arrives before the deferred content. Edit `progressive_report` in `src/main.rs`;
+typed fragments use `HtmlStream` with the default byte, yield and time budgets.
+`?q=...` demonstrates escaping; `?fail=early` returns 500 before headers and
+`?fail=late` closes an incomplete response after the initial HTML. This page uses
+an ordinary document link and the script-blocking CSP. App client packets still
+wait for complete validated branches.
+
 `ruvane build --offline` creates a versioned server bundle under `dist/`.
 Run the printed executable with `--port 3000`. The executable embeds its matching
 Wasm, browser modules and stylesheet. The copied resources and manifest are useful

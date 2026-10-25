@@ -221,6 +221,7 @@ pub struct Response {
 enum Body {
     Bytes(Cow<'static, [u8]>),
     Shared(Arc<[u8]>),
+    Stream(Arc<crate::HtmlStream>),
 }
 
 impl AsRef<[u8]> for Body {
@@ -228,11 +229,37 @@ impl AsRef<[u8]> for Body {
         match self {
             Self::Bytes(bytes) => bytes,
             Self::Shared(bytes) => bytes,
+            Self::Stream(plan) => plan.prefix().as_str().as_bytes(),
         }
     }
 }
 
 impl Response {
+    /// Creates a script-blocking, no-store progressive HTML response.
+    /// Only GET/HEAD transport supports this plan; HEAD executes no factory or producer.
+    pub fn stream_html(plan: crate::HtmlStream) -> Self {
+        let mut response = Self::html(Html::default());
+        response.body = Body::Stream(Arc::new(plan));
+        response
+    }
+    /// Whether this response contains a lazy HTML stream rather than a complete body.
+    pub fn is_streaming(&self) -> bool {
+        matches!(self.body, Body::Stream(_))
+    }
+    /// The complete buffered body, or None for a lazy stream.
+    pub fn buffered_body(&self) -> Option<&[u8]> {
+        if self.is_streaming() {
+            None
+        } else {
+            Some(self.body())
+        }
+    }
+    pub(crate) fn stream_plan(&self) -> Option<Arc<crate::HtmlStream>> {
+        match &self.body {
+            Body::Stream(plan) => Some(Arc::clone(plan)),
+            _ => None,
+        }
+    }
     /// Serves a typed page with its real HTTP status and fixed RVP1 MIME.
     pub fn navigation(page: &crate::NavigationPage) -> Self {
         Self::navigation_with_cache(page, crate::NavigationCachePolicy::no_store())
@@ -376,7 +403,8 @@ impl Response {
         self.status
     }
 
-    /// Borrows the exact response bytes, including for a HEAD representation.
+    /// Borrows the complete buffered body, or only the initial prefix of a lazy stream.
+    /// Use buffered_body() to distinguish those cases without running application code.
     ///
     /// This returned `&str` before alpha.4. Use `body_text()` when UTF-8 is needed.
     pub fn body(&self) -> &[u8] {
@@ -414,11 +442,16 @@ impl Response {
             .location
             .as_ref()
             .map_or_else(String::new, |url| format!("Location: {}\r\n", url.as_str()));
+        let framing = if self.is_streaming() {
+            "Transfer-Encoding: chunked\r\n".to_owned()
+        } else {
+            format!("Content-Length: {}\r\n", self.body().len())
+        };
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}\r\n",
             self.status,
             self.content_type,
-            self.body().len(),
+            framing,
             self.cache_control(),
             self.csp,
             allow,

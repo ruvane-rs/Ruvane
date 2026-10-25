@@ -163,4 +163,6 @@ Alpha.19 integrates this layer through `App::client_page` and application-owned
 factories. See [interactive applications](interactive-apps.md). Ordinary
 `App::page` handlers, static exports and arbitrary HTML are not automatically
 converted into client pages. See [navigation cache](navigation-cache.md) for prefetch, expiry and invalidation.
-See [persistent client layouts](client-layouts.md) for nested branches. Streaming and richer props remain separate work.
+See [persistent client layouts](client-layouts.md) for nested branches. Incremental
+client segments and richer props remain separate work. [Native HTML streaming](streaming.md)
+does not change this complete-packet navigation contract.

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.23 — Unreleased
+
+- Add explicit HtmlStream plans and typed HtmlProducer fragments, with one pull
+  after each completed socket write and no producer thread or response queue.
+- Add bounded HTTP chunked responses, escaped document prefixes/fragments,
+  no-store and the fixed script-blocking CSP. Keep buffered responses unchanged.
+- Intersect chunk, total-byte, yield and duration budgets with server limits;
+  expose cooperative deadline/shutdown checks and stop on write failures.
+- Keep HEAD lazy. Convert setup failures to buffered 500 responses and leave
+  interrupted committed streams incomplete, including producer cleanup panics.
+- Add a native report, real-browser progressive checks and a generated /stream
+  demo. Cover backpressure, quotas, failures, shutdown and worker recovery.
+- Keep client packets atomic, browser ABI v10 and the two first-party packages;
+  add no third-party Cargo, build, test or npm dependency.
+
 ## 0.1.0-alpha.22 — Unreleased
 
 - Add page/layout loading and error declarations with bounded public manifests,
