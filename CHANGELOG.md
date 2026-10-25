@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0-alpha.2 — Unreleased
+## 0.1.0-alpha.2
 
 - Add a loopback-only HTTP development server using a bounded thread pool
   and connection queue, absolute I/O deadlines, and explicit shutdown.
