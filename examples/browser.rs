@@ -1,41 +1,69 @@
-//! Build the Wasm crate first; see docs/browser.md.
+//! Shared SSR and Wasm components. See docs/browser.md.
 use ruvane::{
     BROWSER_BRIDGE_MODULE, Document, InternalUrl, MediaType, Response, Router, Server, Tag,
     element, fragment, module_script,
 };
+#[path = "support/widgets.rs"]
+mod widgets;
+
 use std::fs;
 use std::io::Read;
 use std::sync::Arc;
 
-fn page(tests: bool) -> ruvane::Html {
-    let script = if tests {
-        "/assets/browser-tests.js"
+fn island(component: u32, state: ruvane::InitialState) -> ruvane::Html {
+    let props = ruvane::ComponentProps::new(component, state).unwrap();
+    widgets::create(props)
+        .unwrap()
+        .view()
+        .unwrap()
+        .hydratable(props)
+        .unwrap()
+}
+
+fn page(tests: bool, scripts: bool) -> ruvane::Html {
+    use ruvane::{Attribute, InitialState};
+    let widgets = element(Tag::Div)
+        .attr(Attribute::Id, if tests { "fixtures" } else { "widgets" })
+        .child(
+            element(Tag::Div)
+                .attr(Attribute::Id, "counter")
+                .child(island(widgets::COUNTER, InitialState::Number(5))),
+        )
+        .child(
+            element(Tag::Div)
+                .attr(Attribute::Id, "toggle")
+                .child(island(widgets::TOGGLE, InitialState::Boolean(true))),
+        )
+        .render();
+    let script = if scripts {
+        module_script(
+            &InternalUrl::new(if tests {
+                "/assets/browser-tests.js"
+            } else {
+                "/assets/demo.js"
+            })
+            .unwrap(),
+        )
     } else {
-        "/assets/demo.js"
+        ruvane::Html::default()
     };
     Document::new(
-        "Ruvane alpha.12 — Rust in the browser",
+        "Ruvane alpha.13 — Shared views and hydration",
         fragment([
             element(Tag::H1)
-                .child("Ruvane / Rust + WebAssembly")
+                .child("Ruvane / Server HTML + Rust/Wasm")
                 .render(),
             element(Tag::P)
-                .child("A reactive engine built from scratch, with no third-party dependencies.")
+                .child("Shared Rust components, with no third-party dependencies.")
                 .render(),
             element(Tag::P)
-                .attr(ruvane::Attribute::Id, "status")
-                .child("Loading module…")
+                .attr(Attribute::Id, "status")
+                .child("Server HTML is ready. Controls activate after hydration.")
                 .render(),
-            element(Tag::Div)
-                .attr(ruvane::Attribute::Id, "counter")
-                .render(),
-            element(Tag::Div)
-                .attr(ruvane::Attribute::Id, "controls")
-                .render(),
-            element(Tag::Pre)
-                .attr(ruvane::Attribute::Id, "report")
-                .render(),
-            module_script(&InternalUrl::new(script).unwrap()),
+            widgets,
+            element(Tag::Div).attr(Attribute::Id, "controls").render(),
+            element(Tag::Pre).attr(Attribute::Id, "report").render(),
+            script,
         ]),
     )
     .stylesheet(InternalUrl::new("/assets/browser.css").unwrap())
@@ -43,7 +71,7 @@ fn page(tests: bool) -> ruvane::Html {
 }
 
 fn wrong_version() -> Vec<u8> {
-    // Test module with memory and ABI version 2.
+    // Test module using the previous ABI version.
     let mut bytes = b"\0asm\x01\0\0\0".to_vec();
     bytes.extend([
         1, 5, 1, 96, 0, 1, 127, 3, 2, 1, 0, 5, 3, 1, 0, 1, 7, 31, 2, 6,
@@ -51,7 +79,7 @@ fn wrong_version() -> Vec<u8> {
     bytes.extend(b"memory");
     bytes.extend([2, 0, 18]);
     bytes.extend(b"ruvane_abi_version");
-    bytes.extend([0, 0, 10, 6, 1, 4, 0, 65, 2, 11]);
+    bytes.extend([0, 0, 10, 6, 1, 4, 0, 65, 1, 11]);
     bytes
 }
 
@@ -74,13 +102,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let bytes: Arc<[u8]> = bytes.into();
     let mut router = Router::new();
-    router.get("/", |_| Response::interactive_html(page(false)))?;
-    router.get("/tests", |_| Response::interactive_html(page(true)))?;
+    router.get("/", |_| Response::interactive_html(page(false, true)))?;
+    router.get("/tests", |_| Response::interactive_html(page(true, true)))?;
+    router.get("/ssr", |_| Response::html(page(false, false)))?;
     router.get("/static", |_| {
         Response::html(Document::new("Static", "Scripts remain blocked here.").render())
     })?;
     router.get("/health", |_| Response::text("ok\n"))?;
-    router.get("/assets/counter.wasm", move |_| {
+    router.get("/assets/app.wasm", move |_| {
         Response::bytes(bytes.to_vec(), MediaType::WebAssembly)
     })?;
     let wrong = wrong_version();
@@ -102,7 +131,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         include_bytes!("../web/browser-tests.mjs"),
         MediaType::JavaScript,
     )?;
-    router.asset("/assets/browser.css", b"body{font:18px system-ui;max-width:760px;margin:48px auto;padding:0 24px;color:#152b25;background:#f4f3ec}section{padding:24px;border:1px solid #a6b5ac;border-radius:16px;background:white}button{font:inherit;padding:10px 16px;margin:6px;border-radius:8px;border:1px solid #768d80;background:#e1eee5}button:disabled{opacity:.45}output{font-weight:700}pre{white-space:pre-wrap;font-size:14px}", MediaType::Css)?;
+    router.asset(
+        "/assets/browser.css",
+        include_bytes!("../web/browser.css"),
+        MediaType::Css,
+    )?;
     let server = Server::bind(format!("127.0.0.1:{port}").parse()?, router)?;
     let stop = server.shutdown_handle();
     std::thread::spawn(move || {

@@ -1,10 +1,10 @@
-//! Numeric exports for browser ABI v1.
+//! Numeric exports for browser ABI v2.
 use super::{BrowserError, BrowserRuntime};
 use std::cell::{Cell, RefCell};
 
 thread_local! {
     // Each Wasm instance has its own state.
-    static STATE: RefCell<BrowserRuntime> = RefCell::new(BrowserRuntime::new());
+    static STATE: RefCell<BrowserRuntime> = RefCell::new(BrowserRuntime::new(super::demo::create));
     static ERROR: Cell<u32> = const { Cell::new(0) };
 }
 
@@ -38,8 +38,14 @@ pub extern "C" fn ruvane_abi_version() -> u32 {
     ruvane::BROWSER_ABI_VERSION
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn ruvane_mount(root: u32) -> u32 {
-    operation(|s| s.mount(root))
+pub extern "C" fn ruvane_mount(root: u32, component: u32, kind: u32, value: u32) -> u32 {
+    operation(|s| {
+        let state =
+            ruvane::InitialState::from_wire(kind, value).map_err(|_| BrowserError::InvalidProps)?;
+        let props = ruvane::ComponentProps::new(component, state)
+            .map_err(|_| BrowserError::InvalidProps)?;
+        s.mount(root, props)
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruvane_dispatch(view: u32, event: u32) -> u32 {
@@ -58,11 +64,11 @@ pub extern "C" fn ruvane_dispose(view: u32) -> u32 {
 // Copy the output before the next mutating ABI call.
 #[unsafe(no_mangle)]
 pub extern "C" fn ruvane_commands_ptr() -> u32 {
-    read(|s| s.buffer.borrow().as_bytes().as_ptr() as usize as u32)
+    read(|s| s.command_bytes().as_ptr() as usize as u32)
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruvane_commands_len() -> u32 {
-    read(|s| s.buffer.borrow().as_bytes().len() as u32)
+    read(|s| s.command_bytes().len() as u32)
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn ruvane_commands_clear() -> u32 {

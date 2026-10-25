@@ -1,5 +1,28 @@
 # Security
 
+Alpha.13 adds shared views and hydration with browser ABI v2. Initial state is
+one u32 or boolean, carried in fixed numeric data attributes. Component IDs
+belong to the application's registry; props and downloaded Wasm are public,
+not authorization or secret storage. No JSON parser or inline script is used.
+
+Views cap node count, nesting, handlers and UTF-8 text. The shared HTML profile
+rejects invalid parents and text controls that do not round-trip through HTML.
+Hydration checks the complete expected tree: version, props, tags, IDs, child
+order, leaf text, event IDs and button attributes before attaching any handler.
+It reuses elements and text nodes, then enables the appropriate buttons.
+
+A mismatch preserves the supplied DOM, releases its root claim and disposes the
+new native component. Other views continue running. A later protocol or DOM
+failure stops the bridge, removes handlers and disables retained hydrated
+controls; server content and unrelated host siblings remain. Client-created
+nodes are removed. Explicit disposal removes either kind of view. Root claims
+also prevent duplicate hydration by runtimes using the same bridge module.
+
+Components and factories are trusted Rust code. Their reported reactive counts
+are capped, but custom CPU, allocation, reference cycles and destructors are not
+sandboxed. Updates may change text and disabled states; structure and event
+bindings must remain fixed. A failed update drops the affected native component.
+
 Starting with alpha.12, the core can encode a bounded RVN1 browser command batch
 and explicitly serve trusted JavaScript/Wasm. Response::interactive_html opts
 one HTML response into the fixed same-origin script/Wasm/connect CSP. It enables
@@ -18,11 +41,12 @@ pointer/length bounds against fresh memory and copies before acknowledging it.
 
 The bridge rejects unsupported versions, oversized/truncated/invalid UTF-8
 frames, unknown tags/opcodes, cross-view references, invalid DOM ownership and
-duplicate events before applying a complete batch. Only explicit empty host
-roots and plain tags are used; textContent never interprets command text as HTML.
+duplicate events before applying a complete batch. Client mounts require empty
+roots; hydration validates existing server nodes. textContent never interprets
+command text as HTML.
 There is no arbitrary selector, attribute, URL, function name, eval or HTML sink.
-Protocol, DOM-application or trap failures stop the bridge and remove its DOM
-resources. Rust cleanup is attempted; after a trap that prevents cleanup, native
+Protocol, DOM-application or trap failures stop the bridge and release its
+handlers and handles. Rust cleanup is attempted; after a trap that prevents cleanup, native
 counts are reported unknown and the instance reference is released, not claimed
 to be zero. Ordinary disposal removes listeners, handles and reactive scopes.
 

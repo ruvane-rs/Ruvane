@@ -16,9 +16,10 @@ Typed local content collections add a bounded Markdown profile and embedded
 articles shared by the server and static export. The independent reactive
 runtime provides owner-scoped signals, derived memo values, explicit effects,
 batching, cleanup and bounded propagation. A first-party Wasm adapter and small
-JavaScript bridge now run a bounded reactive counter in the browser. Interactive
-HTTP pages explicitly opt into a fixed module/Wasm CSP. Shared-view hydration
-and server actions are planned for future versions.
+JavaScript bridge run shared Rust components in the browser. Typed views render
+server HTML and hydrate its existing nodes with versioned initial state.
+Interactive HTTP pages explicitly opt into a fixed module/Wasm CSP. Server
+actions and client-side navigation remain future work.
 
 ## Principles
 
@@ -38,10 +39,16 @@ cargo build --offline --locked -p ruvane-browser --target wasm32-unknown-unknown
 cargo run --offline --locked -p ruvane --example browser
 ```
 
-Open the printed address. The counter, derived value, event handling and cleanup
-are implemented in Rust; our bridge applies bounded typed DOM commands. The
-demo's `/tests` page runs the actual module and DOM lifecycle checks. It is a
-client mount, not hydration of existing server-rendered controls.
+Open the printed address. The server renders a counter at 5 with a doubled
+value of 10, plus a boolean toggle. Wasm hydrates those same DOM nodes and
+connects their events. Both targets compile the components from
+`examples/support/widgets.rs`. The browser registry contains no counter logic.
+
+The `/ssr` page serves the same content with scripts blocked and controls
+disabled. The `/tests` page checks node and text identity, state transfer,
+mismatches, isolation, stale handles and 1,000 mount and hydration cycles each.
+The bridge also supports client mounts with explicit component props.
+See [shared views](docs/views.md) for the component API.
 
 The workspace contains only two explicit first-party packages. The browser crate
 depends locally on Ruvane; no registry, Git, build or test dependency is added.

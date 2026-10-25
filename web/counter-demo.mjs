@@ -1,27 +1,31 @@
 import { createRuntime } from "/assets/ruvane.js";
 
-const root = document.getElementById("counter");
+const root = document.querySelector("#counter > div");
 const status = document.getElementById("status");
-const controls = document.getElementById("controls");
 try {
-  const runtime = await createRuntime("/assets/counter.wasm");
-  let view = runtime.mount(root);
-  status.textContent = "State, derived values and events handled by Rust/Wasm.";
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.textContent = "Unmount component";
-  toggle.addEventListener("click", () => {
+  const runtime = await createRuntime("/assets/app.wasm");
+  let view, failures = 0;
+  try { view = runtime.hydrate(root); } catch { failures++; }
+  try { runtime.hydrate(document.querySelector("#toggle > div")); } catch { failures++; }
+  status.textContent = failures
+    ? "Some components could not hydrate. Their server HTML is still available."
+    : "Server HTML hydrated. State and events run in Rust/Wasm.";
+  const control = document.createElement("button");
+  control.type = "button";
+  control.textContent = "Unmount counter";
+  control.disabled = !view;
+  control.addEventListener("click", () => {
     if (view) {
       view.dispose(); view = null;
-      toggle.textContent = "Mount component";
+      control.textContent = "Mount counter";
     } else {
-      view = runtime.mount(root);
-      toggle.textContent = "Unmount component";
+      view = runtime.mount(root, { component: 1, state: { kind: "number", value: 5 } });
+      control.textContent = "Unmount counter";
     }
     status.textContent = JSON.stringify(runtime.stats());
   });
-  controls.appendChild(toggle);
+  document.getElementById("controls").appendChild(control);
   window.addEventListener("pagehide", () => runtime.dispose(), { once: true });
 } catch {
-  status.textContent = "Module loading failed. Server content is still available.";
+  status.textContent = "Module loading failed. Server HTML is still available.";
 }

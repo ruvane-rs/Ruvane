@@ -16,6 +16,7 @@ mod routing;
 mod server;
 mod static_site;
 mod url;
+mod view;
 
 pub use app::{
     App, AppError, MAX_APP_LAYOUTS, MAX_APP_ROUTES, MAX_LAYOUT_DEPTH, MAX_PAGE_STYLESHEETS, Page,
@@ -61,4 +62,8 @@ pub use static_site::{
 pub use url::{
     InternalUrl, MAX_COMPONENT_BYTES, MAX_INTERNAL_URL_BYTES, MAX_PATH_PARAMS, MAX_QUERY_PAIRS,
     ParamError, Query, QueryMode, UrlError,
+};
+pub use view::{
+    Component, ComponentError, ComponentProps, ComponentStats, InitialState, MAX_VIEW_DEPTH,
+    MAX_VIEW_EVENTS, MAX_VIEW_NODES, View, ViewError,
 };

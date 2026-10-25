@@ -1,8 +1,8 @@
 //! RVN1 browser command encoding.
 use std::fmt;
 
-/// Browser command and export ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 1;
+/// Browser export and hydration ABI version.
+pub const BROWSER_ABI_VERSION: u32 = 2;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.

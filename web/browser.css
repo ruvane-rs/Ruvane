@@ -1,0 +1,7 @@
+body { font: 18px system-ui; max-width: 760px; margin: 32px auto; padding: 0 24px; color: #152b25; background: #f4f3ec; }
+section { padding: 20px 24px; margin: 16px 0; border: 1px solid #a6b5ac; border-radius: 16px; background: white; }
+button { font: inherit; padding: 10px 16px; margin: 6px; border-radius: 8px; border: 1px solid #768d80; background: #e1eee5; }
+button:disabled { opacity: .45; }
+output { font-weight: 700; }
+pre { white-space: pre-wrap; font-size: 14px; }
+#fixtures { display: none; }

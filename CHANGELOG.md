@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.0-alpha.13 — Unreleased
+
+- Add shared View trees, Component, typed initial props and numeric/boolean state.
+  Render HTML and RVN1 command batches from the same view, with fixed IDs and
+  limits on nodes, depth, handlers and UTF-8 text.
+- Make the browser registry use an application factory. Move counter logic to
+  shared example components and add a boolean toggle with a separate event ID.
+- Add browser ABI v2: mount accepts root, component, state kind and initial value.
+  Keep the RVN1 command encoding and the numeric-only, import-free Wasm boundary.
+- Hydrate existing server nodes only after full structure, text, attribute and
+  props validation. Preserve text nodes and focus; enable controls after validation.
+- Roll back failed hydration without replacing HTML or disturbing other views.
+  Share root claims across runtime instances and reject duplicate or nested claims.
+- Serve initial counter state 5/10 and a toggle before Wasm loads. Add a script-free
+  SSR route and tests for identity, mismatch recovery and 1,000 mount/hydration
+  cycles each. Default CSP and static hosting policy remain unchanged.
+- Keep zero third-party dependencies, English project text and short comments.
+
 ## 0.1.0-alpha.12 — Unreleased
 
 - Add a first-party ruvane-browser workspace crate using the existing reactor,

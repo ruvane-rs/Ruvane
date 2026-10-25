@@ -174,5 +174,6 @@ and 1,000 owner mount/unmount cycles with stale handles and captured values.
 
 The reactive engine itself does not attach DOM events or hydrate server HTML.
 Alpha.12 adds the separate [browser adapter](browser.md), an explicit Wasm ABI
-and opt-in interactive responses. Shared-view hydration remains a next step.
+and opt-in interactive responses. Alpha.13 adds shared `View` trees and hydration;
+application components own their reactive scopes and supply their view and events.
 Default server responses and static exports retain the script-blocking CSP.
