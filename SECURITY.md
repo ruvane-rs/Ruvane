@@ -607,3 +607,20 @@ explicit stop retires running refreshes and discards queued work. Cache policy
 is not authorization or a mechanism for revoking data already adopted by a
 request/browser. Call invalidation when committing changes that must not use
 the optional stale window.
+
+Interactive pre-rendering is an explicit assertion that the complete enumerated
+page/layout data, metadata, native fallback and buffered HTML are public and
+safe to embed in an executable and build artifact. Build GET context contains
+only validated URL/captures and configured origin; there are no request headers,
+query or body. Callbacks remain trusted read-only code and are not sandboxed.
+No-store/error/oversized builds fail rather than freeze an error or private page.
+RPR1 is trusted build output with bounded structure and an accidental-corruption
+checksum, not authentication, signing or a safe HTML-upload format. Embed only
+artifacts produced by the same trusted application build; do not accept uploaded
+bytes, leak them to static lifetime or load arbitrary HTML artifacts at runtime.
+The CLI verifies final embedded bytes, revision and source snapshot before
+publishing. Runtime validates exact declarations, ownership, seeds and snapshots.
+Cookie/Authorization and every query variant bypass frozen output; unlisted
+parameters retain dynamic SSR. Frozen output is immutable for its build revision
+and is separate from mutable server caches/invalidation. Existing origin, method,
+body, revision and CSP guards remain in force for dynamic routes and actions.

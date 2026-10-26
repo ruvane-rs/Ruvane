@@ -109,3 +109,8 @@ Open `/tasks/shell?delay=long` and use the shell counter, **Shell draft**,
 state survive completion. Add `&layouts=yes` to activate layouts early too.
 The shell uses `View::shell_island` and an explicit `hydrate_shell(true)`
 document option. Server actions remain gated until final validation.
+
+Use App::client_page_prerender with explicit parameter sets for public build
+snapshots. The Ruvane.prerender capability marker and build/main hooks prepare
+and embed these during production builds. Development stays dynamic. Frozen
+pages cannot use a mutable server cache policy; rebuild to update them.

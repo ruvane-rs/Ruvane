@@ -47,6 +47,17 @@ pub struct Request {
 }
 
 impl Request {
+    pub(crate) fn prerender_get(url: &crate::InternalUrl, params: Vec<(String, String)>) -> Self {
+        Self {
+            method: Method::Get,
+            target: url.as_str().into(),
+            headers: Vec::new(),
+            params,
+            query_params: Query::default(),
+            content_length: None,
+            form: None,
+        }
+    }
     pub(crate) fn background_get(&self) -> Self {
         Self {
             method: Method::Get,

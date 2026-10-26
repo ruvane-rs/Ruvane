@@ -294,6 +294,7 @@ struct PageEntry {
     render: Render,
     client: Option<client::ClientRoute>,
     server_cache: crate::ServerCachePolicy,
+    prerender: Option<Vec<PageParams>>,
 }
 #[derive(Clone)]
 struct Layout {
@@ -340,6 +341,7 @@ pub struct App {
     server_cache: Option<crate::ServerCache>,
     cache_namespace: Option<crate::server_cache::Namespace>,
     cache_owner: std::sync::Weak<App>,
+    client_prerender: Option<Arc<crate::ClientPrerender>>,
 }
 impl App {
     /// Creates an empty application.
@@ -416,6 +418,7 @@ impl App {
             render: Arc::new(render),
             client: None,
             server_cache: crate::ServerCachePolicy::no_store(),
+            prerender: None,
         };
         let mut candidate = self.clone();
         candidate.pages.push(entry);
@@ -569,6 +572,7 @@ impl App {
         self.validate_endpoints(&mut router)?;
         self.validate_client_routes(&mut router)?;
         let mut paths = Vec::new();
+        self.prerender_entries()?;
         let mut outputs: Vec<String> = Vec::new();
         for page in &self.pages {
             if let PageMode::Static(params) = &page.mode {
@@ -624,6 +628,7 @@ impl App {
     /// public origin is optional; never derive it from request headers.
     pub fn router(&self, origin: Option<SiteOrigin>) -> Result<Router, AppError> {
         self.validate()?;
+        self.validate_prerender_artifact()?;
         if self.server_cache.is_none()
             && self
                 .pages

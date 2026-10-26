@@ -11,19 +11,19 @@ use std::time::{Duration, Instant};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 static READING_COMPILER: AtomicBool = AtomicBool::new(false);
-const EXECUTABLE: &str = if cfg!(windows) {
+pub(super) const EXECUTABLE: &str = if cfg!(windows) {
     "ruvane-app.exe"
 } else {
     "ruvane-app"
 };
 
 pub(super) struct Binary {
-    directory: PathBuf,
-    executable: PathBuf,
-    ready_files: Vec<PathBuf>,
-    wasm: Option<PathBuf>,
-    revision: u64,
-    sources: Option<watch::Snapshot>,
+    pub(super) directory: PathBuf,
+    pub(super) executable: PathBuf,
+    pub(super) ready_files: Vec<PathBuf>,
+    pub(super) wasm: Option<PathBuf>,
+    pub(super) revision: u64,
+    pub(super) sources: Option<watch::Snapshot>,
 }
 impl Drop for Binary {
     fn drop(&mut self) {
@@ -38,7 +38,7 @@ impl Drop for Binary {
     }
 }
 
-struct ChildGuard(Child);
+pub(super) struct ChildGuard(pub(super) Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         if self.0.try_wait().ok().flatten().is_none() {
@@ -48,7 +48,7 @@ impl Drop for ChildGuard {
     }
 }
 
-fn wait(child: &mut ChildGuard, quit: &AtomicBool, timeout: Duration) -> Result<()> {
+pub(super) fn wait(child: &mut ChildGuard, quit: &AtomicBool, timeout: Duration) -> Result<()> {
     let start = Instant::now();
     loop {
         if quit.load(Ordering::SeqCst) {
@@ -173,6 +173,9 @@ fn compile_profile(
     command.args(["--bin", "ruvane-app"]);
     if release {
         command.arg("--release");
+        if project.interactive && project.prerender()? {
+            command.env("RUVANE_PRERENDER_BOOTSTRAP", "1");
+        }
     }
     if let Some(path) = &binary.wasm {
         command.arg("--locked");
@@ -211,7 +214,7 @@ fn compile_profile(
     Ok(binary)
 }
 
-fn cargo(project: &project::Project, target: &Path, offline: bool) -> Command {
+pub(super) fn cargo(project: &project::Project, target: &Path, offline: bool) -> Command {
     let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
     command
         .current_dir(&project.root)
@@ -224,6 +227,8 @@ fn cargo(project: &project::Project, target: &Path, offline: bool) -> Command {
         .arg("never")
         .env_remove("RUVANE_DEV_STATUS")
         .env_remove("RUVANE_DEV_SESSION")
+        .env_remove("RUVANE_PRERENDER_FILE")
+        .env_remove("RUVANE_PRERENDER_BOOTSTRAP")
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -259,7 +264,7 @@ pub(super) fn diagnostics(error: &(dyn std::error::Error + 'static)) -> String {
     )
 }
 
-fn run_compiler(mut command: Command, quit: &AtomicBool) -> Result<()> {
+pub(super) fn run_compiler(mut command: Command, quit: &AtomicBool) -> Result<()> {
     if READING_COMPILER.swap(true, Ordering::SeqCst) {
         return Err(
             "previous compiler output is still open; stop its descendants before rebuilding".into(),
@@ -312,7 +317,13 @@ pub(super) fn build_application(
     project::managed(&container, ".ruvane-app-builds", super::APP_BUILDS_MARKER)?;
     let version = project::next_build(&container)?;
     let destination = container.join(&version);
-    let binary = compile_profile(project, offline, &AtomicBool::new(false), true, None)?;
+    let supports_prerender = project.prerender()?;
+    let mut binary = compile_profile(project, offline, &AtomicBool::new(false), true, None)?;
+    let prerender = if supports_prerender {
+        Some(super::prerender::prepare(project, &mut binary, offline)?)
+    } else {
+        None
+    };
     fs::create_dir(&destination)?;
     let resources = destination.join("resources");
     let identity = destination.join("Ruvane.runtime");
@@ -351,13 +362,17 @@ pub(super) fn build_application(
         destination.join(EXECUTABLE),
         fs::metadata(&binary.executable)?.permissions(),
     )?;
-    let manifest = format!(
+    let mut manifest = format!(
         "ruvane-application\t1\nrevision\t{}\nabi\t{}\nfile\t{EXECUTABLE}\t{}\nfile\tRuvane.runtime\t{}\nresources\tresources\n",
         binary.revision,
         ruvane::BROWSER_ABI_VERSION,
         bytes.len(),
         expected.len()
     );
+    if let Some(bytes) = prerender {
+        project::write_new(&destination.join("Ruvane.prerender"), &bytes)?;
+        manifest.push_str(&format!("file\tRuvane.prerender\t{}\n", bytes.len()));
+    }
     if binary.sources.as_ref() != Some(&watch::snapshot(&project.root)?) {
         return Err("sources changed while preparing the application bundle".into());
     }

@@ -17,6 +17,7 @@ mod metadata;
 mod navigation;
 mod navigation_snapshot;
 mod page_route;
+mod prerender;
 mod reactive;
 mod routing;
 mod server;
@@ -79,6 +80,10 @@ pub use navigation::{
 };
 pub use navigation_snapshot::{MAX_NAVIGATION_SNAPSHOT_BYTES, NavigationSnapshot};
 pub use page_route::{MAX_PAGE_NAME_BYTES, MAX_PAGE_SEGMENTS, PageParams, PageRoute};
+pub use prerender::{
+    CLIENT_PRERENDER_MARKER, ClientPrerender, MAX_CLIENT_PRERENDER_BYTES,
+    MAX_CLIENT_PRERENDER_PAGES, PrerenderError,
+};
 pub use reactive::{
     Effect, Memo, ReactiveError, ReactiveLimits, ReactiveRuntime, ReactiveStats, Scope, Signal,
     Source,

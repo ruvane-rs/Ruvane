@@ -106,6 +106,14 @@ pub(super) fn snapshot(root: &Path) -> Result<Snapshot> {
     for name in ["Cargo.toml", "Ruvane.project"] {
         fingerprint(root, &root.join(name), &mut result, &mut bytes)?;
     }
+    if fs::symlink_metadata(root.join("Ruvane.prerender")).is_ok() {
+        fingerprint(
+            root,
+            &root.join("Ruvane.prerender"),
+            &mut result,
+            &mut bytes,
+        )?;
+    }
     refresh_lock(root, &mut result)?;
     Ok(result)
 }

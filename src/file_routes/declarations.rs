@@ -63,6 +63,7 @@ pub struct FilePage {
     boundary: Option<FileRouteBoundary>,
     not_found: Option<FileRouteNotFound>,
     server_cache: crate::ServerCachePolicy,
+    prerender: Option<Vec<crate::PageParams>>,
 }
 enum PageKind {
     Server(PageMode, PageLoader),
@@ -81,6 +82,7 @@ impl FilePage {
             boundary: None,
             not_found: None,
             server_cache: crate::ServerCachePolicy::no_store(),
+            prerender: None,
         }
     }
     /// Declares a shared SSR/Wasm page. The component factory remains application-owned.
@@ -96,7 +98,14 @@ impl FilePage {
             boundary: None,
             not_found: None,
             server_cache: crate::ServerCachePolicy::no_store(),
+            prerender: None,
         }
+    }
+    /// Freezes these explicitly enumerated public client URLs during production build.
+    /// Native-only declarations and enabled server cache policies are rejected.
+    pub fn prerender(mut self, params: Vec<crate::PageParams>) -> Self {
+        self.prerender = Some(params);
+        self
     }
     /// Opts this client page's entire branch into public server data caching.
     /// Native-only FilePage::server declarations reject an enabled policy.
@@ -368,7 +377,8 @@ impl<'a> FileRouteRegistry<'a> {
         if !client
             && (declaration.boundary.is_some()
                 || declaration.not_found.is_some()
-                || declaration.server_cache.max_age_seconds().is_some())
+                || declaration.server_cache.max_age_seconds().is_some()
+                || declaration.prerender.is_some())
         {
             return Err(FileRouteError::at(
                 source,
@@ -409,6 +419,11 @@ impl<'a> FileRouteRegistry<'a> {
         if client {
             self.candidate
                 .client_page_server_cache(&declaration.name, declaration.server_cache)
+                .map_err(|error| FileRouteError::at(source, error))?;
+        }
+        if let Some(params) = declaration.prerender {
+            self.candidate
+                .client_page_prerender(&declaration.name, Some(params))
                 .map_err(|error| FileRouteError::at(source, error))?;
         }
         if let Some(boundary) = declaration.boundary {

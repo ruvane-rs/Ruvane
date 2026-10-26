@@ -10,6 +10,20 @@ pub(super) struct Project {
 }
 
 impl Project {
+    pub fn prerender(&self) -> Result<bool> {
+        let path = self.root.join("Ruvane.prerender");
+        match fs::symlink_metadata(&path) {
+            Ok(_)
+                if self.interactive
+                    && read(&path, 64)? == ruvane::CLIENT_PRERENDER_MARKER.as_bytes() =>
+            {
+                Ok(true)
+            }
+            Ok(_) => Err("unrecognized client pre-render build capability".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
     pub fn open() -> Result<Self> {
         let root = std::env::current_dir()?;
         checked_dir(&root)?;

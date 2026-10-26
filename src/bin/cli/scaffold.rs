@@ -164,11 +164,9 @@ fn create_interactive(name: &str, framework: Option<&Path>, file_routes: bool) -
     let mut manifest = format!(
         "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\npublish = false\n\n[workspace]\nmembers = [\"browser\"]\ndefault-members = [\".\"]\nresolver = \"2\"\n\n[lib]\nname = \"ruvane_application\"\npath = \"src/lib.rs\"\n\n[[bin]]\nname = \"ruvane-app\"\npath = \"src/main.rs\"\n\n[dependencies]\nruvane = {{ path = {core} }}\n"
     );
-    if file_routes {
-        manifest.push_str(&format!(
-            "\n[build-dependencies]\nruvane = {{ path = {core} }}\n"
-        ));
-    }
+    manifest.push_str(&format!(
+        "\n[build-dependencies]\nruvane = {{ path = {core} }}\n"
+    ));
     let browser = format!(
         "[package]\nname = \"ruvane-application-browser\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\npublish = false\n\n[lib]\nname = \"ruvane_application_browser\"\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nruvane-application = {{ package = \"{name}\", path = \"..\" }}\nruvane-browser = {{ path = {adapter}, default-features = false }}\n"
     );
@@ -233,6 +231,16 @@ fn create_interactive(name: &str, framework: Option<&Path>, file_routes: bool) -
         ("assets/site.css", include_str!("../../../web/browser.css")),
     ] {
         project::write_new(&destination.join(path), body.as_bytes())?;
+    }
+    project::write_new(
+        &destination.join("Ruvane.prerender"),
+        ruvane::CLIENT_PRERENDER_MARKER.as_bytes(),
+    )?;
+    if !file_routes {
+        project::write_new(
+            &destination.join("build.rs"),
+            include_bytes!("templates/interactive/build.rs.txt"),
+        )?;
     }
     if file_routes {
         for directory in [

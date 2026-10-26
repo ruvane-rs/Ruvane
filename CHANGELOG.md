@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-alpha.42 — Unreleased
+
+- Add explicit public client-page pre-render declarations with enumerated dynamic
+  parameters and FilePage builders; keep query, credentialed and unlisted URLs dynamic.
+- Prepare bounded immutable HTML, metadata, native fallback and navigation snapshots
+  at build time, then embed them in the final native executable with the same Wasm revision.
+- Add RPR1 artifact bounds, checksum, exact URL coverage, snapshot/revision, ownership
+  and component-seed validation. Runtime delivery executes no page/layout loaders.
+- Add a two-stage production pipeline for capable interactive starters; validate the
+  embedded bytes before publishing and retain previous completed bundles on failure.
+- Keep development dynamic and reject no_store/error builds or combined mutable server
+  cache policies. Pre-rendered output remains frozen for its build revision.
+- Preserve legacy project builds, four runtime assets and ABI v11 without new dependencies.
+
 ## 0.1.0-alpha.41 — Unreleased
 
 - Add opt-in bounded stale-while-revalidate server data policies, with a fixed

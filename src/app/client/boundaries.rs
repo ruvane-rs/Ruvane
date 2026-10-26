@@ -351,9 +351,10 @@ impl App {
             .and_then(|page| page.with_layouts(seeds.clone()))
             .map_err(|_| PageError::InternalServerError)?;
             let mut packet = self.packet_metadata(packet, page.client_metadata)?;
-            let head = if self.pages[index].server_cache.max_age_seconds().is_some()
-                && self.server_cache.is_some()
-                && self.has_not_found(index)
+            let head = if (self.pages[index].prerender.is_some()
+                || (self.pages[index].server_cache.max_age_seconds().is_some()
+                    && self.server_cache.is_some()
+                    && self.has_not_found(index)))
                 && request.header("cookie").is_none()
                 && request.header("authorization").is_none()
             {
@@ -368,7 +369,9 @@ impl App {
             };
             if let Some(head) = &head {
                 let metadata = head.cache_metadata(packet.title())?;
-                if packet.metadata().is_none() && self.pages[index].server_cache.stale_seconds() > 0
+                if packet.metadata().is_none()
+                    && (self.pages[index].server_cache.stale_seconds() > 0
+                        || self.pages[index].prerender.is_some())
                 {
                     packet = self.packet_metadata(packet, Some(metadata))?;
                 }

@@ -10,6 +10,10 @@ files. Export and preview use only standard Rust and project code. No request
 router is crawled, dynamic route is guessed, directory is scanned, or remote
 resource is fetched to discover pages.
 
+Interactive pages use the separate [client pre-render](client-prerender.md)
+server-bundle pipeline. They do not become StaticSite entries or change the
+existing directory/slash URL contract below.
+
 ## Declare the plan
 
 ```rust

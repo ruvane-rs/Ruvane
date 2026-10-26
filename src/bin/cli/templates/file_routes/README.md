@@ -58,3 +58,9 @@ canonical URLs are needed; Host headers never configure it. Without an origin,
 the starter omits canonical URLs and requests no indexing. Navigation replaces
 supported head slots after validation; errors clear canonical/description and
 request no indexing. There are no additional requests for initial hydration.
+
+Public client pages can opt into immutable production snapshots with
+`FilePage::prerender(vec![PageParams::default()])` for a fixed route, or explicit
+parameter sets for a dynamic route. Keep the Ruvane.prerender marker and the
+generated build/main hooks. Development stays dynamic; queries, credentials
+and unlisted URLs use the normal server. Rebuild to update a frozen page.

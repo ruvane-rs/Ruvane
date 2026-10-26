@@ -2,6 +2,9 @@
 use ruvane::{ClientRuntime, InternalUrl, MediaType, Response, Server, StatusCode};
 use ruvane_application::{REVISION, pages, store};
 use std::io::{Read, Write};
+fn prerender_bytes() -> &'static [u8] {
+    include!(concat!(env!("OUT_DIR"), "/ruvane-prerender.rs"))
+}
 fn application() -> Result<ruvane::App, Box<dyn std::error::Error>> {
     let mut app = pages::application();
     app.asset(
@@ -17,6 +20,11 @@ fn application() -> Result<ruvane::App, Box<dyn std::error::Error>> {
             .stylesheet("/assets/site.css", "assets/site.css")?);
     }
     app.client_runtime(runtime)?;
+    if !prerender_bytes().is_empty() { app.client_prerendered(prerender_bytes())?; }
+    if !cfg!(debug_assertions) && app.has_client_prerender() && prerender_bytes().is_empty()
+        && option_env!("RUVANE_PRERENDER_BOOTSTRAP").is_none() {
+        return Err("missing embedded pre-render artifact; enable the Ruvane.prerender build capability".into());
+    }
     Ok(app)
 }
 fn router() -> Result<ruvane::Router, Box<dyn std::error::Error>> {
@@ -134,6 +142,16 @@ fn native(kind: u32, fields: ruvane::FormData) -> Response {
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 2 && args[0] == "--ruvane-prerender" {
+        application()?.client_prerender_plan()?.write_new(&args[1])?;
+        return Ok(());
+    }
+    if args.len() == 2 && args[0] == "--ruvane-prerender-verify" {
+        let _ = application()?;
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&args[1])?
+            .write_all(prerender_bytes())?;
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "--ruvane-client-assets" {
         application()?.client_assets()?.export_to(&args[1])?;
         let mut identity = std::fs::OpenOptions::new()

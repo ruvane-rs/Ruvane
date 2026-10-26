@@ -262,6 +262,14 @@ those policies. Wasm shares the policy declaration without starting workers. Nat
 `FilePage::server` declarations reject an enabled policy. The generated Wasm
 registry accepts the same declaration without using a server cache at runtime.
 
+## Interactive pre-rendering
+
+`FilePage::client(...).prerender(params)` freezes explicitly listed public URLs
+for a production build. Dynamic parameters must be enumerated with PageParams.
+Native-only declarations and enabled server cache policies cannot use this
+option. See [client pre-rendering](client-prerender.md) for the immutable build
+contract, private/query fallbacks and starter migration.
+
 ## Bounds and trust
 
 - Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs`, `route.rs` and route directories are accepted.

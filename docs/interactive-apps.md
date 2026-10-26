@@ -201,3 +201,12 @@ profile. This profile adds no TLS, public hosting, sessions or database. Alpha.2
 [explicit public navigation caching](navigation-cache.md); generated shared demo
 pages opt in for 30 seconds and mark their links for prefetch. Remove those
 declarations for personalized data.
+
+## Immutable public build snapshots
+
+Alpha.42 adds opt-in [client pre-rendering](client-prerender.md). New starters
+include the project capability marker and native build hooks; older projects
+keep their existing pipeline until explicitly migrated. Listed public URLs
+serve embedded HTML/navigation snapshots for the matching revision, without
+loaders. This remains a server bundle with dynamic routes and actions, not a
+StaticSite export or a new ruvane preview mode.

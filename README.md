@@ -74,6 +74,10 @@ and explicit path/tag invalidation keep reuse under application control.
 Opt-in [background regeneration](docs/background-revalidation.md) serves public
 data within a bounded stale window while a fixed worker pool refreshes it.
 
+Opt-in [interactive pre-rendering](docs/client-prerender.md) freezes explicitly
+listed public URLs during production builds, with matching HTML, metadata and
+Wasm hydration snapshots embedded in the native executable.
+
 Create an interactive project from a local checkout:
 
 ```sh

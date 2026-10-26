@@ -79,6 +79,9 @@ impl App {
         if page.client.is_none() {
             return Err(AppError::InvalidPage);
         }
+        if page.prerender.is_some() && policy.max_age_seconds().is_some() {
+            return Err(AppError::InvalidPage);
+        }
         page.server_cache = policy;
         Ok(())
     }
@@ -122,7 +125,7 @@ impl App {
             request.header("accept"),
             Some(crate::NAVIGATION_MEDIA_TYPE | crate::NAVIGATION_STREAM_MEDIA_TYPE)
         ) && request.query_params().get("native") != Some("yes")
-            && self.has_not_found(index)
+            && (self.has_not_found(index) || branch.head.is_some())
         {
             match &branch.head {
                 Some(head) => Some(head.clone()),

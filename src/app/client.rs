@@ -9,6 +9,7 @@ mod document;
 mod layouts;
 mod metadata;
 mod not_found;
+mod prerender;
 mod progressive;
 pub use boundaries::ClientBoundary;
 pub use document::{ClientDocument, ClientDocumentHead};
@@ -508,6 +509,9 @@ impl App {
         context: &PageContext<'_>,
         request: &Request,
     ) -> Response {
+        if let Some(response) = self.prerender_response(index, request) {
+            return response;
+        }
         if request.header("accept") == Some(crate::NAVIGATION_STREAM_MEDIA_TYPE)
             && self.pages[index].client.unwrap().progressive
         {
