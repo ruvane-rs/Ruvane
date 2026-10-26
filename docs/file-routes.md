@@ -269,6 +269,9 @@ for a production build. Dynamic parameters must be enumerated with PageParams.
 Native-only declarations and enabled server cache policies cannot use this
 option. See [client pre-rendering](client-prerender.md) for the immutable build
 contract, private/query fallbacks and starter migration.
+Add `.revalidation(PrerenderRevalidationPolicy::new().tag("articles")?)` to opt
+those listed URLs into [on-demand regeneration](prerender-revalidation.md).
+Attach the shared ServerCache handle before constructing the native router.
 
 ## Bounds and trust
 

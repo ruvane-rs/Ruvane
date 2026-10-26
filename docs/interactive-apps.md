@@ -210,3 +210,8 @@ keep their existing pipeline until explicitly migrated. Listed public URLs
 serve embedded HTML/navigation snapshots for the matching revision, without
 loaders. This remains a server bundle with dynamic routes and actions, not a
 StaticSite export or a new ruvane preview mode.
+
+Alpha.43 adds [on-demand regeneration](prerender-revalidation.md) for explicitly
+listed public URLs. An opt-in policy loads fresh output on the first runtime
+request and retains it until path/tag invalidation or cache eviction, using the
+same build revision and an explicitly attached ServerCache handle.

@@ -10,6 +10,7 @@ use std::sync::{
 use std::time::Duration;
 mod background;
 mod prerender;
+mod revalidation;
 
 struct Model {
     component: u32,

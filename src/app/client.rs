@@ -11,6 +11,7 @@ mod metadata;
 mod not_found;
 mod prerender;
 mod progressive;
+mod revalidation;
 pub use boundaries::ClientBoundary;
 pub use document::{ClientDocument, ClientDocumentHead};
 pub(super) use layouts::ClientLayout;
@@ -509,7 +510,7 @@ impl App {
         context: &PageContext<'_>,
         request: &Request,
     ) -> Response {
-        if let Some(response) = self.prerender_response(index, request) {
+        if let Some(response) = self.prerender_response(index, context, request) {
             return response;
         }
         if request.header("accept") == Some(crate::NAVIGATION_STREAM_MEDIA_TYPE)

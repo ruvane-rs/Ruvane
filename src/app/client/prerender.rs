@@ -26,6 +26,9 @@ impl App {
             return Err(AppError::InvalidPage);
         }
         page.prerender = params;
+        if page.prerender.is_none() {
+            page.revalidation = None;
+        }
         candidate.client_prerender = None;
         candidate.validate()?;
         *self = candidate;
@@ -36,6 +39,9 @@ impl App {
     ) -> Result<Vec<(usize, InternalUrl, PageParams)>, AppError> {
         let mut entries = Vec::new();
         for (index, page) in self.pages.iter().enumerate() {
+            if page.revalidation.is_some() && page.prerender.is_none() {
+                return Err(AppError::InvalidPage);
+            }
             if let Some(params) = &page.prerender {
                 if page.client.is_none()
                     || params.is_empty()
@@ -195,7 +201,12 @@ impl App {
         }
         Ok(())
     }
-    pub(super) fn prerender_response(&self, index: usize, request: &Request) -> Option<Response> {
+    pub(super) fn prerender_response(
+        &self,
+        index: usize,
+        context: &PageContext<'_>,
+        request: &Request,
+    ) -> Option<Response> {
         if self.pages[index].prerender.is_none()
             || request.query().is_some()
             || request.header("cookie").is_some()
@@ -207,6 +218,9 @@ impl App {
         let row = plan.rows.iter().find(|row| {
             row.name == self.pages[index].route.name() && row.url.as_str() == request.path()
         })?;
+        if let Some(policy) = &self.pages[index].revalidation {
+            return Some(self.regenerated_response(index, context, request, policy));
+        }
         Some(
             if matches!(
                 request.header("accept"),

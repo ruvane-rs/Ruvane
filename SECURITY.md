@@ -624,3 +624,15 @@ Cookie/Authorization and every query variant bypass frozen output; unlisted
 parameters retain dynamic SSR. Frozen output is immutable for its build revision
 and is separate from mutable server caches/invalidation. Existing origin, method,
 body, revision and CSP guards remain in force for dynamic routes and actions.
+
+On-demand pre-render regeneration is separately opt-in for those listed public
+URLs. It ignores embedded build data at runtime and loads fresh on first read,
+including after restart or eviction. It reconstructs a headerless, bodyless GET
+with validated captures and trusted origin. Complete HTML, hydration/navigation
+data, metadata and fallback publish together, within the existing cache budgets.
+Path/tag invalidation fences active publication; errors and no_store never revive
+an old snapshot. Regenerated responses are no-store. Storage remains per process;
+applications must invalidate every replica after their committed mutation. There
+is no persistent invalidation journal or push revocation of adopted responses.
+The build artifact still contains public data and retains its existing trust
+requirements. Regeneration does not compile Rust/Wasm at runtime.

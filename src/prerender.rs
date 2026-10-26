@@ -12,6 +12,36 @@ pub const MAX_CLIENT_PRERENDER_BYTES: usize = 16 * 1024 * 1024;
 /// Project capability marker for the first-party two-stage native build.
 pub const CLIENT_PRERENDER_MARKER: &str = "ruvane-prerender\t1\n";
 
+/// Keeps regenerated public output until explicit invalidation or cache eviction.
+/// The first request in each router namespace loads fresh data, including after restart.
+#[derive(Clone, Debug, Default)]
+pub struct PrerenderRevalidationPolicy {
+    pub(crate) tags: Vec<String>,
+}
+impl PrerenderRevalidationPolicy {
+    /// Creates a policy without tags. Exact-path invalidation remains available.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Adds a deduplicated ASCII page-name tag, up to MAX_SERVER_CACHE_TAGS.
+    pub fn tag(mut self, tag: &str) -> Result<Self, PrerenderError> {
+        if !crate::page_route::valid_name(tag) {
+            return Err(PrerenderError::InvalidDeclaration);
+        }
+        if !self.tags.iter().any(|existing| existing == tag) {
+            if self.tags.len() == crate::MAX_SERVER_CACHE_TAGS {
+                return Err(PrerenderError::Limit);
+            }
+            self.tags.push(tag.to_owned());
+        }
+        Ok(self)
+    }
+    /// Lists declared invalidation tags.
+    pub fn tags(&self) -> impl Iterator<Item = &str> {
+        self.tags.iter().map(String::as_str)
+    }
+}
+
 /// A bounded pre-render declaration, artifact or build failure, without reflected data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrerenderError {

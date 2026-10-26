@@ -1,7 +1,7 @@
 use super::*;
 use crate::{ClientPrerender, PageParams, PrerenderError};
 
-fn declared() -> (Arc<AtomicUsize>, Arc<AtomicUsize>, App) {
+pub(super) fn declared() -> (Arc<AtomicUsize>, Arc<AtomicUsize>, App) {
     let (_, loads, value, mut app) = setup();
     app.client_page_server_cache("article", ServerCachePolicy::no_store())
         .unwrap();
@@ -15,7 +15,7 @@ fn declared() -> (Arc<AtomicUsize>, Arc<AtomicUsize>, App) {
     .unwrap();
     (loads, value, app)
 }
-fn attach(app: &mut App, plan: &ClientPrerender) -> Result<(), PrerenderError> {
+pub(super) fn attach(app: &mut App, plan: &ClientPrerender) -> Result<(), PrerenderError> {
     app.client_prerendered(Box::leak(plan.encode().into_boxed_slice()))
 }
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.43 — Unreleased
+
+- Add explicit on-demand regeneration policies for listed public client pre-render
+  URLs, including FilePage declarations; immutable build delivery stays the default.
+- Load fresh on first runtime read and retain complete validated HTML, hydration
+  data, navigation, metadata and native fallback until path/tag invalidation or eviction.
+- Reuse bounded ServerCache storage, LRU, coalesced loaders, absolute wait deadlines
+  and invalidation fencing without TTL, background jobs or embedded-data fallback.
+- Keep private/query/unlisted requests dynamic, regenerate with a sanitized GET,
+  and never store errors, invalid output or page/layout no_store results.
+- Make regenerated responses no-store and reload after restart; keep storage per
+  process with the same build revision, RPR1 format, ABI v11 and four runtime assets.
+- Verify source-free production startup, mutation invalidation, concurrency,
+  metadata, eviction and failure recovery without third-party dependencies.
+
 ## 0.1.0-alpha.42 — Unreleased
 
 - Add explicit public client-page pre-render declarations with enumerated dynamic

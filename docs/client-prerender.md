@@ -10,6 +10,10 @@ retain their normal behavior. It is separate from StaticSite export and its
 trailing-slash filesystem mapping; interactive URLs keep their declared paths.
 There are no new dependencies, browser runtime assets or Wasm exports.
 
+Alpha.43 adds optional [on-demand regeneration](prerender-revalidation.md) for
+these listed URLs. The immutable behavior described here remains the default;
+regenerable mode loads fresh on first runtime read and uses explicit invalidation.
+
 ## Declare public URLs
 
 After registering a client page, enumerate its complete parameter sets:

@@ -8,6 +8,7 @@ mod tests;
 #[derive(Clone)]
 pub(crate) struct CachedBranch {
     pub head: Option<crate::ClientDocument>,
+    pub output: Option<Arc<[u8]>>,
     pub packet: NavigationPage,
     pub fallback: Html,
     pub policy: NavigationCachePolicy,
@@ -16,6 +17,7 @@ pub(crate) struct CachedBranch {
 pub(crate) struct Namespace(u64);
 #[derive(Clone, Eq, PartialEq)]
 struct Key {
+    output: bool,
     namespace: u64,
     page: usize,
     url: String,
@@ -24,8 +26,8 @@ struct Entry {
     key: Key,
     tags: Vec<String>,
     branch: Arc<CachedBranch>,
-    expires: Instant,
-    stale_until: Instant,
+    expires: Option<Instant>,
+    stale_until: Option<Instant>,
     retry_at: Instant,
     bytes: usize,
 }
@@ -38,7 +40,7 @@ struct Flight {
 }
 enum FlightResult {
     Pending,
-    Ready(Arc<CachedBranch>, Instant),
+    Ready(Arc<CachedBranch>, Option<Instant>),
     Retry,
     Invalidated,
 }
@@ -107,8 +109,11 @@ impl ServerCache {
     pub(crate) fn expire_for_test(&self, hard: bool) {
         let mut state = self.0.state.lock().unwrap();
         for entry in &mut state.entries {
-            entry.expires = Instant::now();
-            entry.retry_at = entry.expires;
+            if entry.expires.is_none() {
+                continue;
+            }
+            entry.expires = Some(Instant::now());
+            entry.retry_at = entry.expires.unwrap();
             if hard {
                 entry.stale_until = entry.expires;
             }
@@ -244,7 +249,7 @@ impl ServerCache {
             stale_entries: state
                 .entries
                 .iter()
-                .filter(|entry| entry.expires <= Instant::now())
+                .filter(|entry| entry.expires.is_some_and(|expires| expires <= now))
                 .count(),
             stale_hits: state.stale_hits,
             refresh_attempts: state.refresh_attempts,
@@ -271,7 +276,35 @@ impl ServerCache {
         url: &InternalUrl,
         policy: &ServerCachePolicy,
     ) -> Result<Access, ServerCacheError> {
+        if policy.seconds.is_none() {
+            return Err(ServerCacheError::Unavailable);
+        }
+        self.access_inner(namespace, page, url, policy, false)
+    }
+    pub(crate) fn access_output(
+        &self,
+        namespace: Namespace,
+        page: usize,
+        url: &InternalUrl,
+        tags: &[String],
+    ) -> Result<Access, ServerCacheError> {
+        let policy = ServerCachePolicy {
+            seconds: None,
+            tags: tags.to_vec(),
+            stale_seconds: 0,
+        };
+        self.access_inner(namespace, page, url, &policy, true)
+    }
+    fn access_inner(
+        &self,
+        namespace: Namespace,
+        page: usize,
+        url: &InternalUrl,
+        policy: &ServerCachePolicy,
+        output: bool,
+    ) -> Result<Access, ServerCacheError> {
         let key = Key {
+            output,
             namespace: namespace.0,
             page,
             url: url.as_str().into(),
@@ -285,14 +318,17 @@ impl ServerCache {
         state.sweep(now);
         if let Some(index) = state.entries.iter().position(|entry| entry.key == key) {
             let entry = state.entries.remove(index);
-            if entry.expires > now {
+            if entry.expires.is_none_or(|expires| expires > now) {
                 let access = Access::Hit(Arc::clone(&entry.branch), entry.expires);
                 state.entries.push(entry);
                 state.hits = state.hits.saturating_add(1);
                 return Ok(access);
             }
             state.stale_hits = state.stale_hits.saturating_add(1);
-            let access = (Arc::clone(&entry.branch), entry.expires);
+            let access = (
+                Arc::clone(&entry.branch),
+                entry.expires.ok_or(ServerCacheError::Unavailable)?,
+            );
             let reserve = self.1.is_some()
                 && entry.retry_at <= now
                 && state.flights.len() < self.0.limits.loads
@@ -311,7 +347,7 @@ impl ServerCache {
                 Lease {
                     cache: self.detached(),
                     flight,
-                    seconds: policy.seconds.unwrap(),
+                    seconds: policy.seconds,
                     stale_seconds: policy.stale_seconds,
                     finished: false,
                 }
@@ -341,7 +377,9 @@ impl ServerCache {
                     return Err(ServerCacheError::Unavailable);
                 }
                 match &*result {
-                    FlightResult::Ready(branch, expires) if *expires > Instant::now() => {
+                    FlightResult::Ready(branch, expires)
+                        if expires.is_none_or(|expires| expires > Instant::now()) =>
+                    {
                         let (branch, expires) = (Arc::clone(branch), *expires);
                         drop(result);
                         let state = self
@@ -352,7 +390,7 @@ impl ServerCache {
                         if !state.entries.iter().any(|entry| {
                             entry.key == key
                                 && Arc::ptr_eq(&entry.branch, &branch)
-                                && entry.expires > Instant::now()
+                                && entry.expires.is_none_or(|expires| expires > Instant::now())
                         }) {
                             return Err(ServerCacheError::Unavailable);
                         }
@@ -390,7 +428,7 @@ impl ServerCache {
         Ok(Access::Load(Lease {
             cache: self.clone(),
             flight,
-            seconds: policy.seconds.unwrap(),
+            seconds: policy.seconds,
             stale_seconds: policy.stale_seconds,
             finished: false,
         }))
@@ -398,7 +436,8 @@ impl ServerCache {
 }
 impl State {
     fn sweep(&mut self, now: Instant) {
-        self.entries.retain(|entry| entry.stale_until > now);
+        self.entries
+            .retain(|entry| entry.stale_until.is_none_or(|until| until > now));
         self.bytes = self.entries.iter().map(|entry| entry.bytes).sum();
     }
 }
@@ -411,7 +450,7 @@ impl Drop for Waiting {
     }
 }
 pub(crate) enum Access {
-    Hit(Arc<CachedBranch>, Instant),
+    Hit(Arc<CachedBranch>, Option<Instant>),
     Stale(Arc<CachedBranch>, Instant, Option<Lease>),
     Load(Lease),
     Bypass,
@@ -419,7 +458,7 @@ pub(crate) enum Access {
 pub(crate) struct Lease {
     cache: ServerCache,
     flight: Arc<Flight>,
-    seconds: u32,
+    seconds: Option<u32>,
     stale_seconds: u32,
     finished: bool,
 }
@@ -448,7 +487,8 @@ impl Lease {
         state.entries.retain(|entry| entry.key != self.flight.key);
         state.bytes = state.entries.iter().map(|entry| entry.bytes).sum();
         if let Some(branch) = branch {
-            let bytes = branch.packet.encode().len()
+            let bytes = branch.output.as_ref().map_or(0, |bytes| bytes.len())
+                + branch.packet.encode().len()
                 + branch
                     .head
                     .as_ref()
@@ -473,14 +513,19 @@ impl Lease {
                     }
                 }
                 let branch = Arc::new(branch);
-                let expires = Instant::now() + Duration::from_secs(u64::from(self.seconds));
+                let now = Instant::now();
+                let expires = self
+                    .seconds
+                    .map(|seconds| now + Duration::from_secs(u64::from(seconds)));
                 state.entries.push(Entry {
                     key: self.flight.key.clone(),
                     tags: self.flight.tags.clone(),
                     branch: Arc::clone(&branch),
                     expires,
-                    stale_until: expires + Duration::from_secs(u64::from(self.stale_seconds)),
-                    retry_at: expires,
+                    stale_until: expires.map(|expires| {
+                        expires + Duration::from_secs(u64::from(self.stale_seconds))
+                    }),
+                    retry_at: expires.unwrap_or(now),
                     bytes,
                 });
                 state.bytes += bytes;
@@ -523,8 +568,8 @@ impl Lease {
                             .iter_mut()
                             .find(|entry| entry.key == self.flight.key)
                         {
-                            entry.retry_at =
-                                (Instant::now() + Duration::from_secs(1)).min(entry.stale_until);
+                            let retry = Instant::now() + Duration::from_secs(1);
+                            entry.retry_at = retry.min(entry.stale_until.unwrap_or(retry));
                         }
                         state.bytes = state.entries.iter().map(|entry| entry.bytes).sum();
                     }

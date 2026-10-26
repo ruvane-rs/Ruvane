@@ -20,8 +20,8 @@ impl ClientBoundary {
 pub(super) struct BranchFailure {
     pub error: PageError,
     pub retire: bool,
-    failed: Option<usize>,
-    seeds: Vec<NavigationLayout>,
+    pub(super) failed: Option<usize>,
+    pub(super) seeds: Vec<NavigationLayout>,
 }
 impl App {
     pub(crate) fn validate_file_presentation(
@@ -139,7 +139,7 @@ impl App {
     pub(super) fn guarded<T>(f: impl FnOnce() -> Result<T, PageError>) -> Result<T, PageError> {
         catch_unwind(AssertUnwindSafe(f)).unwrap_or(Err(PageError::InternalServerError))
     }
-    fn boundary_failure(
+    pub(super) fn boundary_failure(
         &self,
         index: usize,
         failed: usize,
@@ -192,7 +192,7 @@ impl App {
         let lease = match self.server_cache_access(index, request) {
             Ok(Access::Hit(branch, expires)) => {
                 return Self::guarded(|| {
-                    self.cached_branch_finish(index, context, request, &branch, Some(expires))
+                    self.cached_branch_finish(index, context, request, &branch, expires)
                 })
                 .unwrap_or_else(|error| self.client_failure(request, error));
             }
@@ -377,6 +377,7 @@ impl App {
                 }
             }
             let branch = crate::server_cache::CachedBranch {
+                output: None,
                 head,
                 packet,
                 fallback: page.body,

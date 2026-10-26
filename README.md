@@ -77,6 +77,8 @@ data within a bounded stale window while a fixed worker pool refreshes it.
 Opt-in [interactive pre-rendering](docs/client-prerender.md) freezes explicitly
 listed public URLs during production builds, with matching HTML, metadata and
 Wasm hydration snapshots embedded in the native executable.
+Listed URLs can opt into [on-demand regeneration](docs/prerender-revalidation.md):
+fresh output on first read, retained until path/tag invalidation or eviction.
 
 Create an interactive project from a local checkout:
 

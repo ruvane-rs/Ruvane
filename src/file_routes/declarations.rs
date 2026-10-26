@@ -64,6 +64,7 @@ pub struct FilePage {
     not_found: Option<FileRouteNotFound>,
     server_cache: crate::ServerCachePolicy,
     prerender: Option<Vec<crate::PageParams>>,
+    revalidation: Option<crate::PrerenderRevalidationPolicy>,
 }
 enum PageKind {
     Server(PageMode, PageLoader),
@@ -83,6 +84,7 @@ impl FilePage {
             not_found: None,
             server_cache: crate::ServerCachePolicy::no_store(),
             prerender: None,
+            revalidation: None,
         }
     }
     /// Declares a shared SSR/Wasm page. The component factory remains application-owned.
@@ -99,12 +101,18 @@ impl FilePage {
             not_found: None,
             server_cache: crate::ServerCachePolicy::no_store(),
             prerender: None,
+            revalidation: None,
         }
     }
     /// Freezes these explicitly enumerated public client URLs during production build.
     /// Native-only declarations and enabled server cache policies are rejected.
     pub fn prerender(mut self, params: Vec<crate::PageParams>) -> Self {
         self.prerender = Some(params);
+        self
+    }
+    /// Regenerates the declared pre-rendered URLs on demand through a ServerCache handle.
+    pub fn revalidation(mut self, policy: crate::PrerenderRevalidationPolicy) -> Self {
+        self.revalidation = Some(policy);
         self
     }
     /// Opts this client page's entire branch into public server data caching.
@@ -378,7 +386,8 @@ impl<'a> FileRouteRegistry<'a> {
             && (declaration.boundary.is_some()
                 || declaration.not_found.is_some()
                 || declaration.server_cache.max_age_seconds().is_some()
-                || declaration.prerender.is_some())
+                || declaration.prerender.is_some()
+                || declaration.revalidation.is_some())
         {
             return Err(FileRouteError::at(
                 source,
@@ -424,6 +433,11 @@ impl<'a> FileRouteRegistry<'a> {
         if let Some(params) = declaration.prerender {
             self.candidate
                 .client_page_prerender(&declaration.name, Some(params))
+                .map_err(|error| FileRouteError::at(source, error))?;
+        }
+        if let Some(policy) = declaration.revalidation {
+            self.candidate
+                .client_page_revalidation(&declaration.name, Some(policy))
                 .map_err(|error| FileRouteError::at(source, error))?;
         }
         if let Some(boundary) = declaration.boundary {

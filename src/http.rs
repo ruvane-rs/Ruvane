@@ -378,6 +378,12 @@ impl Response {
         response
     }
 
+    pub(crate) fn interactive_shared(body: Arc<[u8]>) -> Self {
+        let mut response = Self::shared(body, "text/html; charset=utf-8");
+        response.csp = INTERACTIVE_CONTENT_SECURITY_POLICY;
+        response
+    }
+
     /// Creates a successful owned byte response with an explicit MIME type.
     ///
     /// Bytes are never converted to text or modified. The MIME declaration

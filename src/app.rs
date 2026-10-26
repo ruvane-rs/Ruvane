@@ -295,6 +295,7 @@ struct PageEntry {
     client: Option<client::ClientRoute>,
     server_cache: crate::ServerCachePolicy,
     prerender: Option<Vec<PageParams>>,
+    revalidation: Option<crate::PrerenderRevalidationPolicy>,
 }
 #[derive(Clone)]
 struct Layout {
@@ -419,6 +420,7 @@ impl App {
             client: None,
             server_cache: crate::ServerCachePolicy::no_store(),
             prerender: None,
+            revalidation: None,
         };
         let mut candidate = self.clone();
         candidate.pages.push(entry);
@@ -630,10 +632,9 @@ impl App {
         self.validate()?;
         self.validate_prerender_artifact()?;
         if self.server_cache.is_none()
-            && self
-                .pages
-                .iter()
-                .any(|page| page.server_cache.max_age_seconds().is_some())
+            && self.pages.iter().any(|page| {
+                page.server_cache.max_age_seconds().is_some() || page.revalidation.is_some()
+            })
         {
             return Err(AppError::InvalidPage);
         }

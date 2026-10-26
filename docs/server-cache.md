@@ -6,6 +6,10 @@ typed navigation share validated layout/page seeds, title, metadata and fallback
 data. Buffered custom document heads are retained with the validated branch. Complete HTML documents and live components are constructed separately
 for each response; the native fallback fragment is retained with its data.
 
+Listed pre-rendered URLs can instead opt into
+[on-demand output regeneration](prerender-revalidation.md). That separate policy
+shares this handle's budgets and invalidation while retaining the complete HTML.
+
 ## Opt in
 
 Attach a handle before building the native router and declare public routes:
