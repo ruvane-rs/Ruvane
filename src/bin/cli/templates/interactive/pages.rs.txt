@@ -135,6 +135,7 @@ pub fn application() -> App {
     app.client_page_streaming("project", true).unwrap();
     app
 }
+static RECOVERY_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn project_page(context: &PageContext<'_>) -> Result<ClientPageData, PageError> {
     let query = context.request().unwrap().query_params();
     if query.get("delay") == Some("yes") {
@@ -152,6 +153,12 @@ fn project_page(context: &PageContext<'_>) -> Result<ClientPageData, PageError> 
     }
     if query.get("missing") == Some("yes") {
         return Err(PageError::NotFound);
+    }
+    if context.request().unwrap().path() == "/tasks/live"
+        && query.get("recover") == Some("yes")
+        && !RECOVERY_READY.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        return Err(PageError::InternalServerError);
     }
     Ok(ClientPageData::new("Project / Ruvane", store::snapshot()?))
 }
@@ -185,6 +192,11 @@ pub fn shell(children: Html) -> Html {
                 .child(ruvane::link(
                     &InternalUrl::new("/tasks/live").unwrap().query("delay", "yes").unwrap(),
                     "Interactive streamed layouts",
+                ))
+                .child(" · ")
+                .child(ruvane::link(
+                    &InternalUrl::new("/tasks/live").unwrap().query("recover", "yes").unwrap().query("delay", "yes").unwrap(),
+                    "Recover a failed page",
                 )),
         )
         .child(counter)

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.28 — Unreleased
+
+- Recover eligible streamed leaf failures through existing ClientBoundary, RVP3
+  and RVI1 records while retaining the full validated layout chain.
+- Adopt healthy early parents on typed 400/404/500 errors without resetting DOM,
+  drafts, counters, focus or selection, and expose explicit fresh-GET retry.
+- Preserve compatible parent focus and current scroll on same-URL retry; retain
+  the current branch when history fails before DOM replacement.
+- Keep error packets no-store and reject stale, duplicate, invalidated or
+  disposed retries without replaying POST actions.
+- Keep generic fallback for failed layouts, invalid error views and boundaries
+  which would remove emitted descendants; enforce existing transport budgets.
+- Add a recoverable demo, native/Wasm/browser coverage and zero new dependencies.
+  ABI v11, 22 exports, four runtime assets and two first-party crates remain.
+
 ## 0.1.0-alpha.27 — Unreleased
 
 - Add opt-in layout hydration during the initial document stream, with bounded

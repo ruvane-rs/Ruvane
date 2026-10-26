@@ -375,11 +375,11 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     }
     showFeedback(operation.url,"loading",true,slot);
   }
-  function run(url,mode,point={x:0,y:0},accept,fresh=false,resetLayouts=false) {
+  function run(url,mode,point={x:0,y:0},accept,fresh=false,resetLayouts=false,preserveLayoutFocus=false) {
     if (disposed) return Promise.reject(new Error("Ruvane navigator disposed")); safeURL(url);
     if (mode !== "start" && !started) return Promise.reject(failure());
     cancelNavigation("superseded"); cancelJobs("superseded");clearFeedback();lastFailure=null;
-    const operation = { url, mode, abort:new AbortController(), expired:false, updated:false, reason:null, committing:false }; pending = operation;
+    const operation = { url, mode, abort:new AbortController(), expired:false, updated:false, reason:null, committing:false, changed:false }; pending = operation;
     const version = generation, epoch = runtime.actionState().epoch;
     status.textContent = "Loading…"; outlet.setAttribute("aria-busy","true");
     showFeedback(url,"loading");
@@ -416,15 +416,17 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         }
         const host = document.createElement("div"); host.tabIndex = -1; prepared = runtime.mountPage(host,bytes);slot.append(host);
         if (mode === "start" && accept && !accept()) { prepared.dispose(); prepared = null; releaseBranch(preparedLayouts);preparedLayouts=[]; status.textContent = "Native forms are ready."; return "native"; }
+        const keepFocus=preserveLayoutFocus&&source.slice(0,shared).some(item=>item.own.contains(document.activeElement));
+        if(keepFocus)point={x:scrollX,y:scrollY};
         operation.committing = true;
         if (mode === "push") { save(); history.pushState({ [KEY]:entry(url,0,0) },"",url); }
         else if (mode === "start" || mode === "replace") history.replaceState({ ...stateObject(history.state), [KEY]:entry(mode === "start" ? url+location.hash : url,point.x,point.y) },"",mode === "start" ? location.href : url);
         const retained=new Set(source.slice(0,shared).map(item=>item.controller)),retired=new Set();
-        current?.dispose();
+        operation.changed=true;current?.dispose();
         for(const item of [...previousBranch,...source].reverse())if(!retained.has(item.controller)&&!retired.has(item.controller)){item.controller.dispose();retired.add(item.controller);}
         mountPoint.replaceChildren(fragment); branch=source.slice(0,shared).concat(preparedLayouts);preparedLayouts=[];current=prepared;prepared=null;operation.preview=null;pageHost=host; activeURL = url; started = true; history.scrollRestoration = "manual";
         document.title = page.title; status.textContent = page.status === 200 ? "Ready." : `Page ${page.status}.`;
-        if (mode !== "start") host.focus({ preventScroll:true }); restore(point);
+        if (mode !== "start"&&!keepFocus) host.focus({ preventScroll:true }); restore(point);
         if (!cached) store(url,bytes,expires,version,epoch);
         if(page.failed!==null){lastFailure={url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(url,"error",false);}
         return "success";
@@ -434,6 +436,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         if (disposed || pending !== operation) return disposed ? "disposed" : "superseded";
         if (operation.reason && !operation.updated && runtime.actionState().state === "active") { status.textContent = "Data changed. Try the link again."; if (mode === "pop") fallback(url); return operation.reason; }
         status.textContent = operation.updated ? "Application updated. Reload to continue." : operation.expired ? "Navigation timed out. Try the link again." : "Navigation failed. Try the link again or reload.";
+        if(preserveLayoutFocus&&!operation.changed&&activeURL===target())operation.committing=false;
         if (operation.committing || mode === "pop" || runtime.stats().state !== "active" || activeURL !== target()) fallback(url);
         else if(!operation.updated){lastFailure={url,mode,point,kind:operation.expired?"timeout":"network",accept};showFeedback(url,lastFailure.kind);}
         return "failed";
@@ -459,7 +462,8 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   }
   function retry(){
     if(disposed||pending||!lastFailure||blocked||runtime.actionState().state!=="active")return Promise.resolve("skipped");
-    const attempt=lastFailure;invalidate(attempt.url);return run(attempt.url,attempt.mode,attempt.point,attempt.accept,true,false);
+    const attempt=lastFailure,preserve=started&&attempt.mode==="replace"&&attempt.url===activeURL&&activeURL===target();
+    invalidate(attempt.url);return run(attempt.url,attempt.mode,preserve?{x:scrollX,y:scrollY}:attempt.point,attempt.accept,true,false,preserve);
   }
   function initialDOM(page){
     if(!outlet.isConnected||!scope.contains(outlet))throw failure();

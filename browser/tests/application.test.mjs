@@ -66,6 +66,15 @@ await test("a generated application ships an independent, revision-matched Wasm 
       const page=stage(bytes);assert.ok(page);assert.ok(drain().some(c=>c.op===2&&c.text==="Page unavailable"));assert.equal(e.ruvane_dispose(page),1);drain();
       bytes[5]=0;assert.equal(stage(bytes),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),0);
     });
+    await t.test("streamed document errors validate the leaf boundary and keep owned parents",()=>{
+      const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
+      const leaf=packet("/tasks/live",16,500,500,true),empty=[82,86,65,49,0,0,0];
+      const bytes=new Uint8Array([82,86,80,51,0,1,...leaf.slice(4),1,...text("workspace"),...text("/tasks"),...word(12),...word(1),...word(0),...word(empty.length),...empty]);
+      for(let n=0;n<100;n++){assert.equal(stage(bytes,true),1);assert.equal(e.ruvane_live_instances(),0);assert.deepEqual(drain(),[]);}
+      const error=stage(bytes);assert.ok(error);const commands=drain();assert.ok(commands.some(c=>c.op===2&&c.text==="Page unavailable"));assert.ok(!commands.some(c=>c.op===3||c.op===11));assert.equal(e.ruvane_dispose(error),1);drain();
+      bytes[4]=1;const parent=stage(bytes);assert.ok(parent);assert.ok(drain().some(c=>c.op===2&&c.text==="Tasks workspace"));assert.equal(e.ruvane_dispose(parent),1);drain();
+      bytes[4]=0;bytes[5]=0;assert.equal(stage(bytes,true),0);assert.equal(e.ruvane_live_instances(),0);drain();
+    });
     await t.test("the generated Cargo graph has only project and framework packages", () => {
       const metadata=JSON.parse(run(process.env.CARGO || "cargo",["metadata","--offline","--locked","--format-version","1"],project));
       assert.deepEqual(metadata.packages.map(p=>p.name).sort(),["application-fixture","ruvane","ruvane-application-browser","ruvane-browser"]);

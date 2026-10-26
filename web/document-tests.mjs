@@ -7,7 +7,7 @@ async function test(name,fn){try{await fn();results.push({name,passed:true});}ca
 const nativeFetch=window.fetch,control=path=>nativeFetch(path,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:""});
 const source=async url=>new DOMParser().parseFromString(await(await nativeFetch(url)).text(),"text/html").getElementById("ruvane-application");
 const configuration=await source("/tasks/document"),moduleURL=configuration.getAttribute("data-ruvane-module"),revision=configuration.getAttribute("data-ruvane-revision");
-const {createRuntime}=await import(new URL("./bridge.mjs",new URL(moduleURL,location.href)));
+const {createRuntime,decodeNavigationSnapshot}=await import(new URL("./bridge.mjs",new URL(moduleURL,location.href)));
 const {createNavigator,readBoundaries,readInitialSnapshot}=await import(new URL("./navigation.mjs",new URL(moduleURL,location.href)));
 const own=layout=>layout.querySelector(":scope > [data-ruvane-layout-view]");
 function references(root){const nodes=[];function visit(node){nodes.push(node);for(const child of node.childNodes)visit(child);}visit(root);return nodes;}
@@ -75,8 +75,10 @@ run.addEventListener("click",async()=>{
   await test("HEAD sends framing without a document body",async()=>{
     const response=await nativeFetch("/tasks/document",{method:"HEAD"});assert(response.status===200&&response.headers.get("transfer-encoding")==="chunked","stream HEAD");equal((await response.arrayBuffer()).byteLength,0,"no body");
   });
-  await test("late loader failures cannot complete a successful document fetch",async()=>{
-    const response=await nativeFetch("/tasks/document?unavailable=yes");equal(response.status,200,"already committed status");let failed=false;try{await response.text();}catch{failed=true;}assert(failed,"incomplete transport");assert((await nativeFetch("/tasks/document")).ok,"server recovered");
+  await test("a configured leaf failure completes with a typed error snapshot",async()=>{
+    const response=await nativeFetch("/tasks/document?unavailable=yes"),html=await response.text(),root=new DOMParser().parseFromString(html,"text/html").getElementById("ruvane-application");equal(response.status,200,"already committed status");
+    const text=root.querySelector("#ruvane-initial").textContent,bytes=Uint8Array.from(text.match(/../g),pair=>parseInt(pair,16)),page=decodeNavigationSnapshot(bytes).page;
+    equal([page.status,page.failed,page.layouts.length],[500,1,1],"typed leaf failure");assert(root.querySelector("#ruvane-complete")&&!root.querySelector("[data-ruvane-stream-error]"),"complete bounded error branch");
   });
   await test("one hundred streamed snapshot activations release all temporary resources",async()=>{
     const url="/tasks/document",template=await source(url),runtime=await createRuntime(moduleURL,{applicationRevision:revision}),baseline=runtime.stats();window.fetch=()=>{throw new Error("Unexpected data GET");};

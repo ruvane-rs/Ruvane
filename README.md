@@ -47,6 +47,8 @@ Opted-in pages can also [stream their initial App document](docs/document-stream
 the shell and layouts arrive first, followed by the leaf and final snapshot.
 Pages can also opt into [early layout hydration](docs/layout-hydration.md):
 local layout events work while the leaf loads, and final activation keeps their state.
+[Streamed leaf errors](docs/streamed-leaf-errors.md) can retain healthy parents
+and expose an explicit GET retry without reloading the document.
 
 Create an interactive project from a local checkout:
 

@@ -81,6 +81,10 @@ Counters, drafts, focus, selection, node identities and listeners survive the
 handoff. Subsequent navigation retains matching parents and retires departing
 ones through the normal navigator.
 
+Alpha.28 adds [typed leaf recovery](streamed-leaf-errors.md) when a boundary can
+retain all emitted layouts. Healthy parents stay active on the completed error
+branch and can survive an explicit GET retry. Other failures follow the rules below.
+
 ## Cancellation and failure
 
 Missing, duplicate, oversized, stale, out-of-order or malformed records cannot
@@ -96,7 +100,7 @@ cannot restart it. Timers, observers and lifecycle listeners are disconnected.
 Persisted-page restoration retains the existing reload policy. Application
 callbacks are trusted; there is no side-effect or execution sandbox.
 
-For this mode, a caught loader/schema/title failure finishes with fixed generic
+For an unrecovered application failure, this mode finishes with fixed generic
 HTML and a `data-ruvane-stream-error` marker while the transport budgets permit.
 It closes the already emitted wrappers without an RVI1 page snapshot. The usual
 completion suffix still marks the end of generation; the failure marker and

@@ -74,6 +74,10 @@ ordinary document scripts cannot inspect that transport framing. Fetch consumers
 must still await successful EOF. A network failure after the full marker and
 bootstrap arrived cannot be distinguished through that marker alone.
 
+Alpha.28 adds [typed leaf recovery](streamed-leaf-errors.md) for an eligible
+page or innermost layout boundary. It completes a validated logical error without
+changing the committed HTTP status. Other failures retain the behavior below.
+
 ## Bounds and failures
 
 The default budgets remain 16 KiB per HTTP chunk, 1 MiB total decoded HTML,

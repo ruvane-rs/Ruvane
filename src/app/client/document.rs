@@ -8,7 +8,7 @@ use crate::{
 pub type ClientDocumentHead = fn(&PageContext<'_>) -> Result<ClientDocument, PageError>;
 
 /// Head and budgets known before an initial App document starts streaming.
-/// The page loader must return the same title. Late failures close the stream.
+/// The page loader must return the same title. A leaf boundary can recover late errors.
 pub struct ClientDocument {
     title: String,
     language: String,
@@ -271,23 +271,58 @@ impl DocumentProducer {
             )
             .and_then(|p| p.with_layouts(self.seeds.clone()))
             .map_err(|_| PageError::InternalServerError)?;
-            if !self.app.validate_navigation(&packet) {
-                return Err(PageError::InternalServerError);
-            }
-            let snapshot =
-                NavigationSnapshot::new(self.app.client_runtime.as_ref().unwrap().revision, packet)
-                    .map_err(|_| PageError::InternalServerError)?;
-            let output = format!(
-                "<div data-ruvane-page=\"\" tabindex=\"-1\">{}</div>{}<div id=\"ruvane-fallback\">{}</div></div>{}{}",
-                own.as_str(),
-                LAYOUT_END.repeat(self.seeds.len()),
-                page.body.as_str(),
-                self.tail,
-                snapshot.html().as_str(),
-            );
-            self.done = true;
-            Ok(output.into_bytes())
+            self.finish(packet, own, page.body)
         }
+    }
+    fn failure(&mut self, error: PageError) -> Result<Vec<u8>, PageError> {
+        if self.opened != self.inputs.len() || self.seeds.len() != self.opened {
+            return Err(PageError::InternalServerError);
+        }
+        let (depth, boundary) = self
+            .app
+            .error_boundary(self.index, self.opened)
+            .ok_or(PageError::InternalServerError)?;
+        if depth != self.opened {
+            return Err(PageError::InternalServerError);
+        }
+        let status = error.status();
+        let props =
+            ComponentProps::new(boundary.error, InitialState::Number(status.as_u16() as u32))
+                .map_err(|_| PageError::InternalServerError)?;
+        let packet = NavigationPage::new(
+            self.url.clone(),
+            &self.title,
+            props,
+            ActionData::default(),
+            status,
+        )
+        .and_then(|page| page.with_failure(self.opened, self.seeds.clone()))
+        .map_err(|_| PageError::InternalServerError)?;
+        let own = App::client_view(self.app.client_factory.unwrap(), props, packet.data(), true)?;
+        self.finish(packet, own, Html::default())
+    }
+    fn finish(
+        &mut self,
+        packet: NavigationPage,
+        own: Html,
+        fallback: Html,
+    ) -> Result<Vec<u8>, PageError> {
+        if !self.app.validate_navigation(&packet) {
+            return Err(PageError::InternalServerError);
+        }
+        let snapshot =
+            NavigationSnapshot::new(self.app.client_runtime.as_ref().unwrap().revision, packet)
+                .map_err(|_| PageError::InternalServerError)?;
+        let output = format!(
+            "<div data-ruvane-page=\"\" tabindex=\"-1\">{}</div>{}<div id=\"ruvane-fallback\">{}</div></div>{}{}",
+            own.as_str(),
+            LAYOUT_END.repeat(self.opened),
+            fallback.as_str(),
+            self.tail,
+            snapshot.html().as_str(),
+        );
+        self.done = true;
+        Ok(output.into_bytes())
     }
 }
 impl ByteProducer for DocumentProducer {
@@ -299,16 +334,28 @@ impl ByteProducer for DocumentProducer {
             }
             self.pending.clear();
             self.offset = 0;
+            let leaf = self.opened == self.inputs.len();
             self.pending = match App::guarded(|| self.pull(context)) {
                 Ok(bytes) => bytes,
-                Err(_) if self.hydrate_layouts => {
-                    self.done = true;
-                    format!(
-                        "<p data-ruvane-stream-error=\"\" role=\"alert\">This page could not be loaded. Native links remain available.</p>{}<div id=\"ruvane-fallback\"></div></div>{}",
-                        LAYOUT_END.repeat(self.opened), self.tail,
-                    ).into_bytes()
+                Err(error) => {
+                    context.check()?;
+                    let recovered = if leaf {
+                        App::guarded(|| self.failure(error)).ok()
+                    } else {
+                        None
+                    };
+                    match recovered {
+                        Some(bytes) => bytes,
+                        None if self.hydrate_layouts => {
+                            self.done = true;
+                            format!(
+                                "<p data-ruvane-stream-error=\"\" role=\"alert\">This page could not be loaded. Native links remain available.</p>{}<div id=\"ruvane-fallback\"></div></div>{}",
+                                LAYOUT_END.repeat(self.opened), self.tail,
+                            ).into_bytes()
+                        }
+                        None => return Err(StreamError::Producer),
+                    }
                 }
-                Err(_) => return Err(StreamError::Producer),
             };
             if self.pending.len() > self.limits.body_bytes {
                 return Err(StreamError::Limit);

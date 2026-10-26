@@ -51,6 +51,12 @@ enables this explicitly. The final branch keeps that live layout and its state;
 prepared layout actions are blocked until commitment. No additional page GET is
 sent. Invalid or incomplete documents retire early owners and preserve their HTML.
 
+Open **Recover a failed page** for `/tasks/live?recover=yes&delay=yes`. The demo
+reports one failure, then becomes ready until server restart. Its typed error
+keeps the workspace interactive. Change the counter and choose **Try again**:
+a fresh GET replaces the leaf and retains compatible layout state. No POST is
+replayed. The committed HTTP status stays 200; the initial logical error is 500.
+
 Open **Streaming SSR** for `/stream`, a native progressive report. Its header
 arrives before the deferred content. Edit `progressive_report` in `src/main.rs`;
 typed fragments use `HtmlStream` with the default byte, yield and time budgets.

@@ -133,3 +133,7 @@ Run it separately from the other generated-app task harnesses.
 while ordered layouts arrive and for typed final errors. Native HTML streaming
 remains separate. Parallel outlets and recovery from a corrupted Wasm instance
 remain separate work.
+
+Initial document streams can also [recover leaf errors](streamed-leaf-errors.md)
+when their boundary retains the full emitted chain. Recovery of a failed layout
+or removal of already emitted descendants remains separate work.

@@ -1,5 +1,14 @@
 # Security
 
+Alpha.28 recovers only leaf failures whose configured boundary retains every
+validated emitted layout. Typed RVP3/RVI1 errors undergo the full revision, URL,
+ownership, schema, read-only view and initial-action checks before adoption.
+Logical status does not rewrite committed HTTP headers. Error records are
+no-store; retries are explicit fresh GETs. Layout failures, invalid error views
+and unsupported outer scopes retain generic fallback and existing bounds.
+Stale and invalidated replies cannot commit, and no POST is replayed.
+See [streamed leaf recovery](docs/streamed-leaf-errors.md).
+
 Alpha.27 adds explicit layout hydration during initial document loading. Bounded
 inert RVH1 records bind the revision, URL, order and layout seeds. Rust/Wasm
 validates ownership and schemas before events activate. Prepared layout actions

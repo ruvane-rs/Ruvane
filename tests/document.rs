@@ -30,6 +30,9 @@ impl Component for Model {
     }
 }
 fn factory(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
+    if (4..=6).contains(&props.component()) {
+        return Ok(Box::new(BadBoundary(props.component())));
+    }
     Ok(Box::new(Model(if props.component() == 3 {
         "Error".into()
     } else {
@@ -92,6 +95,7 @@ fn app(loads: Arc<AtomicUsize>, gate: Arc<AtomicBool>) -> App {
             }
             match q.get("fail") {
                 Some("page") => return Err(PageError::NotFound),
+                Some("bad") => return Err(PageError::BadRequest),
                 Some("panic") => panic!("private loader diagnostic"),
                 _ => {}
             }
@@ -626,4 +630,185 @@ fn known_early_hydration_load_errors_finish_with_abort_html() {
                 && !body.contains("private")
         );
     }
+}
+
+struct BadBoundary(u32);
+impl Component for BadBoundary {
+    fn page_data(&mut self, _: ActionData) -> Result<(), ComponentError> {
+        Ok(())
+    }
+    fn view(&self) -> Result<View, ComponentError> {
+        if self.0 == 5 {
+            panic!("private boundary diagnostic");
+        }
+        let mut view = View::new();
+        if self.0 == 4 {
+            view.button(0, "Unsafe boundary event", 1, false)?;
+        } else {
+            view.leaf(0, BrowserTag::Heading, "Invalid boundary")?;
+        }
+        Ok(view)
+    }
+    fn dispatch(&mut self, _: u32) -> Result<(), ComponentError> {
+        Ok(())
+    }
+    fn take_action(&mut self) -> Option<ActionRequest> {
+        (self.0 == 6).then(|| {
+            ActionRequest::new(
+                1,
+                InternalUrl::new("/actions/private").unwrap(),
+                FormData::default(),
+            )
+            .unwrap()
+        })
+    }
+}
+fn page_boundary(app: &mut App) {
+    app.client_page_boundary("page", Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+}
+#[test]
+fn streamed_leaf_boundaries_keep_all_validated_parents_and_logical_statuses() {
+    let (mut app, loads, _) = fixture();
+    page_boundary(&mut app);
+    let server = Running::new(&app, ServerConfig::default());
+    for mode in ["", "&hydrate=yes"] {
+        for (fail, status) in [
+            ("page", 404),
+            ("bad", 400),
+            ("panic", 500),
+            ("schema", 500),
+            ("title", 500),
+        ] {
+            let before = loads.load(Ordering::SeqCst);
+            let target = format!("/work/page?fail={fail}{mode}");
+            let (h, body, complete) = server.get(&target);
+            assert!(
+                h.starts_with("HTTP/1.1 200") && h.contains("Cache-Control: no-store") && complete
+            );
+            let packet = snapshot(&body);
+            let packet = packet.page();
+            assert_eq!(packet.status().as_u16(), status);
+            assert_eq!(packet.failed_segment(), Some(2));
+            assert_eq!(packet.layouts().len(), 2);
+            assert_eq!(packet.props().component(), 3);
+            assert_eq!(packet.props().state(), InitialState::Number(status as u32));
+            assert!(packet.data().is_empty());
+            assert_eq!(packet.title(), "Report <&🦀");
+            assert_eq!(packet.url().as_str(), target);
+            assert_eq!(loads.load(Ordering::SeqCst) - before, 3);
+            assert!(
+                body.contains("data-ruvane-page")
+                    && body.contains("ruvane-complete")
+                    && !body.contains("data-ruvane-stream-error")
+                    && !body.contains("private")
+            );
+        }
+    }
+}
+#[test]
+fn a_typed_error_finishes_the_same_document_after_the_blocked_leaf_fails() {
+    let (mut app, loads, gate) = fixture();
+    page_boundary(&mut app);
+    let server = Running::new(&app, ServerConfig::default());
+    let mut reader = server.connect(
+        "GET",
+        "/work/page?hydrate=yes&pause=yes&fail=page",
+        "text/html",
+    );
+    headers(&mut reader);
+    let prefix = chunk(&mut reader).unwrap();
+    let root = String::from_utf8(chunk(&mut reader).unwrap()).unwrap();
+    let inner = String::from_utf8(chunk(&mut reader).unwrap()).unwrap();
+    assert!(String::from_utf8(prefix).unwrap().contains("async src="));
+    assert_eq!(layout_snapshot(&root).page().layouts().len(), 1);
+    assert_eq!(layout_snapshot(&inner).page().layouts().len(), 2);
+    gate.store(true, Ordering::Release);
+    let (rest, complete) = chunks(&mut reader);
+    assert!(complete);
+    let rest = String::from_utf8(rest).unwrap();
+    let final_page = snapshot(&rest);
+    assert_eq!(final_page.page().status(), StatusCode::NotFound);
+    assert_eq!(final_page.page().layouts()[1].name(), "inner");
+    assert_eq!(loads.load(Ordering::SeqCst), 3);
+}
+#[test]
+fn the_innermost_layout_child_boundary_can_recover_a_leaf_error() {
+    let (mut app, _, _) = fixture();
+    app.client_layout_boundary("inner", Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    let server = Running::new(&app, ServerConfig::default());
+    let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=page");
+    assert!(complete);
+    assert_eq!(snapshot(&body).page().failed_segment(), Some(2));
+}
+#[test]
+fn an_outer_boundary_does_not_remove_already_emitted_descendants() {
+    let (mut app, _, _) = fixture();
+    app.client_layout_boundary("root", Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    let server = Running::new(&app, ServerConfig::default());
+    let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=page");
+    assert!(
+        complete && body.contains("data-ruvane-stream-error") && !body.contains("ruvane-initial")
+    );
+}
+#[test]
+fn layout_loader_errors_cannot_be_relabelled_as_leaf_errors() {
+    let (mut app, _, _) = fixture();
+    page_boundary(&mut app);
+    let server = Running::new(&app, ServerConfig::default());
+    for fail in ["root", "inner"] {
+        let (_, body, complete) = server.get(&format!("/work/page?hydrate=yes&fail={fail}"));
+        assert!(
+            complete
+                && body.contains("data-ruvane-stream-error")
+                && !body.contains("ruvane-initial")
+        );
+    }
+}
+#[test]
+fn invalid_error_components_fall_back_without_diagnostics_or_initial_actions() {
+    for component in 4..=6 {
+        let (mut app, _, _) = fixture();
+        app.client_page_boundary("page", Some(ClientBoundary::new(3, component).unwrap()))
+            .unwrap();
+        let server = Running::new(&app, ServerConfig::default());
+        let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=page");
+        assert!(
+            complete
+                && body.contains("data-ruvane-stream-error")
+                && !body.contains("ruvane-initial")
+                && !body.contains("private")
+        );
+        assert!(server.get("/work/page").2);
+    }
+}
+#[test]
+fn a_page_boundary_recovers_without_any_layouts() {
+    let (mut app, _, _) = fixture();
+    page_boundary(&mut app);
+    app.client_page_layout("page", None).unwrap();
+    let server = Running::new(&app, ServerConfig::default());
+    let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=bad");
+    assert!(complete);
+    let packet = snapshot(&body);
+    assert_eq!(packet.page().failed_segment(), Some(0));
+    assert!(packet.page().layouts().is_empty());
+    assert_eq!(packet.page().status(), StatusCode::BadRequest);
+}
+#[test]
+fn leaf_boundaries_do_not_bypass_deadlines_or_transport_limits() {
+    let (mut app, _, _) = fixture();
+    page_boundary(&mut app);
+    let server = Running::new(&app, ServerConfig::default());
+    for query in [
+        "limit=deadline&pause=yes&hydrate=yes",
+        "limit=chunks&fail=page&hydrate=yes",
+        "limit=bytes&fail=page",
+    ] {
+        let (_, body, complete) = server.get(&format!("/work/page?{query}"));
+        assert!(!complete && !body.contains("ruvane-complete"));
+    }
+    assert!(server.get("/work/page").2);
 }

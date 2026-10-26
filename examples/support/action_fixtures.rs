@@ -8,7 +8,7 @@ pub fn register(router: &mut Router) -> Result<(), Box<dyn std::error::Error>> {
     router.get("/action-tests", |_| {
         Response::interactive_html(
             Document::new(
-                "Ruvane alpha.27 — Action tests",
+                "Ruvane alpha.28 — Action tests",
                 element(Tag::Main)
                     .child(element(Tag::H1).child("Ruvane / Action tests"))
                     .child(
