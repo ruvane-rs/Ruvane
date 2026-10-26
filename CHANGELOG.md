@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-alpha.30 — Unreleased
+
+- Recover through an ancestor child boundary after descendants have been emitted,
+  retaining compatible ancestor state and retiring the affected subtree at commit.
+- Pair the final RVP3 error with a bounded inert RVH1 prefix of the emitted branch;
+  validate both packets, DOM and owners before changing the visible branch.
+- Support default and early-hydrated documents, explicit fresh-GET retry, focus
+  inside surviving parents and cleanup of departed Wasm owners and listeners.
+- Keep root failures on the existing fallback path, reject malformed retirement
+  metadata and preserve deadlines, quotas and POST replay protections.
+- Add a parent-boundary demo and native/Wasm/browser coverage with no new dependencies.
+  ABI v11, 22 exports, four runtime assets and two first-party crates remain.
+
 ## 0.1.0-alpha.29 — Unreleased
 
 - Recover a nested layout failure before its HTML is emitted through the nearest

@@ -144,7 +144,21 @@ export function readInitialSnapshot(root){
   const bytes=new Uint8Array(text.length/2);for(let n=0;n<bytes.length;n++)bytes[n]=parseInt(text.slice(n*2,n*2+2),16);
   const snapshot=decodeNavigationSnapshot(bytes);
   if(snapshot.revision!==root.getAttribute("data-ruvane-revision")||snapshot.page.url!==target())throw failure();
+  readRetiredBranch(root,snapshot.page);
   return bytes;
+}
+
+function readRetiredBranch(root,page){
+  const items=root.querySelectorAll("#ruvane-retired"),profile=root.getAttribute?.("data-ruvane-document"),short=page.failed!==null&&page.failed>page.layouts.length;
+  if(!items.length){if(short&&["stream","segments"].includes(profile))throw failure();return null;}
+  const node=items[0],initial=root.querySelector("#ruvane-initial");
+  if(!short||!page.layouts.length||!["stream","segments"].includes(profile)||items.length!==1||document.querySelectorAll("#ruvane-retired").length!==1||node.parentNode!==root||node.nextElementSibling!==initial||node.localName!=="div"||node.attributes.length!==2||!node.hasAttribute("hidden")||node.childNodes.length!==1||node.firstChild.nodeType!==3)throw failure();
+  const text=node.textContent;
+  if(text.length>131104||text.length%2||!/^[0-9a-f]+$/.test(text))throw failure();
+  const raw=new Uint8Array(text.length/2);for(let n=0;n<raw.length;n++)raw[n]=parseInt(text.slice(n*2,n*2+2),16);
+  const prefix=decodeLayoutSnapshot(raw);
+  if(prefix.revision!==root.getAttribute("data-ruvane-revision")||prefix.page.url!==page.url||prefix.page.title!==page.title||prefix.page.layouts.length!==page.failed||!page.layouts.every((item,n)=>sameDescriptor(item,prefix.page.layouts[n])))throw failure();
+  return{node,text,bytes:prefix.bytes,page:prefix.page};
 }
 
 const DOCUMENT_OWNERS=new WeakSet();
@@ -204,8 +218,12 @@ export function createDocumentHydration(runtime,root,{timeoutMs}={}){
       if(added)status.textContent="Layouts ready. Loading page…";
       if(document.readyState!=="loading"){
         const snapshot=readInitialSnapshot(root),page=decodeNavigationSnapshot(snapshot).page;
-        const shorter=rows.length>0&&rows.length<expected&&page.failed===rows.length;
-        if((rows.length!==expected&&!shorter)||page.layouts.length!==rows.length||title!==null&&title!==page.title||!page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor))||root.querySelector("[data-ruvane-segment]"))throw failure();
+        const retired=readRetiredBranch(root,page),shorter=rows.length>0&&rows.length<expected&&page.failed===rows.length;
+        if((rows.length!==expected&&!shorter)||title!==null&&title!==page.title||root.querySelector("[data-ruvane-segment]"))throw failure();
+        if(retired){
+          if(retired.page.pending!==expected||rows.length!==page.failed||!retired.page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor)))throw failure();
+          runtime.validatePage(retired.bytes);
+        }else if(page.layouts.length!==rows.length||!page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor)))throw failure();
         runtime.validatePage(decodeNavigationSnapshot(snapshot).bytes);
         state="ready";resolve(Object.freeze({snapshot,parents:Object.freeze(rows.map(row=>row.controller))}));
       }
@@ -466,19 +484,35 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     const attempt=lastFailure,preserve=started&&attempt.mode==="replace"&&attempt.url===activeURL&&activeURL===target();
     invalidate(attempt.url);return run(attempt.url,attempt.mode,preserve?{x:scrollX,y:scrollY}:attempt.point,attempt.accept,true,false,preserve);
   }
-  function initialDOM(page){
+  function initialDOM(page,retired=null){
     if(!outlet.isConnected||!scope.contains(outlet))throw failure();
-    const fallback=outlet.lastChild,layouts=[],roots=[];
+    const fallback=outlet.lastChild,layouts=[],roots=[],retiringRoots=[];
     if(outlet.childNodes.length!==2||fallback.nodeType!==1||fallback.localName!=="div"||fallback.id!=="ruvane-fallback"||fallback.attributes.length!==1||outlet.querySelectorAll("#ruvane-fallback").length!==1)throw failure();
+    function layout(host,descriptor){
+      const own=host?.firstChild,child=host?.lastChild;
+      if(host?.nodeType!==1||host.localName!=="section"||host.attributes.length!==1||host.getAttribute("data-ruvane-layout")!==descriptor.name||host.childNodes.length!==2||own.localName!=="div"||own.attributes.length!==1||!own.hasAttribute("data-ruvane-layout-view")||own.childNodes.length!==1||child.localName!=="div"||child.attributes.length!==1||!child.hasAttribute("data-ruvane-child-outlet"))throw failure();
+      return{descriptor,host,own,outlet:child};
+    }
     let slot=outlet;
     for(const descriptor of page.layouts){
-      const host=slot.firstChild,own=host?.firstChild,child=host?.lastChild;
-      if(slot.childNodes.length!==(slot===outlet?2:1)||host?.nodeType!==1||host.localName!=="section"||host.attributes.length!==1||host.getAttribute("data-ruvane-layout")!==descriptor.name||host.childNodes.length!==2||own.localName!=="div"||own.attributes.length!==1||!own.hasAttribute("data-ruvane-layout-view")||own.childNodes.length!==1||child.localName!=="div"||child.attributes.length!==1||!child.hasAttribute("data-ruvane-child-outlet"))throw failure();
-      layouts.push({descriptor,host,own,outlet:child});roots.push(own.firstChild);slot=child;
+      if(slot.childNodes.length!==(slot===outlet?2:1))throw failure();
+      const row=layout(slot.firstChild,descriptor);layouts.push(row);roots.push(row.own.firstChild);slot=row.outlet;
     }
-    const host=slot.firstChild;
-    if(slot.childNodes.length!==(slot===outlet?2:1)||host?.nodeType!==1||host.localName!=="div"||host.attributes.length!==2||!host.hasAttribute("data-ruvane-page")||host.getAttribute("tabindex")!=="-1"||host.childNodes.length!==1)throw failure();
-    roots.push(host.firstChild);return{layouts,roots,host,fallback};
+    let departing=null,host=slot.firstChild;
+    if(retired){
+      if(slot===outlet||slot.childNodes.length!==2)throw failure();
+      departing=host;host=departing.nextSibling;let child=departing;
+      for(const descriptor of retired.page.layouts.slice(page.layouts.length)){
+        const row=layout(child,descriptor);retiringRoots.push(row.own.firstChild);
+        const last=retiringRoots.length===retired.page.layouts.length-page.layouts.length;
+        if(row.outlet.childNodes.length!==(last?0:1))throw failure();child=row.outlet.firstChild;
+      }
+    }else if(slot.childNodes.length!==(slot===outlet?2:1))throw failure();
+    if(host?.nodeType!==1||host.localName!=="div"||host.attributes.length!==2||!host.hasAttribute("data-ruvane-page")||host.getAttribute("tabindex")!=="-1"||host.childNodes.length!==1)throw failure();
+    roots.push(host.firstChild);return{layouts,roots,host,fallback,departing,retiringRoots};
+  }
+  function sameInitialDOM(a,b){
+    return a.host===b.host&&a.fallback===b.fallback&&a.departing===b.departing&&a.roots.length===b.roots.length&&a.roots.every((root,n)=>root===b.roots[n])&&a.layouts.every((row,n)=>row.host===b.layouts[n]?.host&&row.own===b.layouts[n].own&&row.outlet===b.layouts[n].outlet)&&a.retiringRoots.length===b.retiringRoots.length&&a.retiringRoots.every((root,n)=>root===b.retiringRoots[n]);
   }
   function initialize(snapshotBytes,accept,parents=[]){
     let transaction=null;
@@ -488,12 +522,18 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
       runtime.validatePage(bytes);
       if(accept&&!accept()){status.textContent="Native forms are ready.";return "native";}
       if(disposed||pending||started)throw failure();
-      const server=initialDOM(page);transaction=runtime.preparePageHydration(server.roots,bytes,parents);
-      const controllers=transaction.activate(),after=initialDOM(page);
-      if(after.host!==server.host||after.fallback!==server.fallback||!after.roots.every((root,n)=>root===server.roots[n])||page.url!==target()||runtime.actionState().epoch!==epoch||accept&&!accept()||disposed||pending||started)throw failure();
+      const root=outlet.closest("#ruvane-application")??scope,retired=readRetiredBranch(root,page);
+      if(retired)runtime.validatePage(retired.bytes);
+      const server=initialDOM(page,retired);transaction=runtime.preparePageHydration(server.roots,bytes,parents,retired?{bytes:retired.bytes,roots:server.retiringRoots}:null);
+      const controllers=transaction.activate(),afterRetired=readRetiredBranch(root,page),after=initialDOM(page,afterRetired);
+      if(retired&&(afterRetired?.node!==retired.node||afterRetired.text!==retired.text)||!sameInitialDOM(server,after)||page.url!==target()||runtime.actionState().epoch!==epoch||accept&&!accept()||disposed||pending||started)throw failure();
       history.replaceState({...stateObject(history.state),[KEY]:entry(target()+location.hash,scrollX,scrollY)},"",location.href);
-      if(disposed||pending||started||page.url!==target())throw failure();
-      transaction.commit();transaction=null;server.fallback.remove();
+      if(disposed||pending||started||page.url!==target()||runtime.actionState().epoch!==epoch||runtime.actionState().pending||runtime.actionState().uncertain)throw failure();
+      const finalRetired=readRetiredBranch(root,page);
+      if(retired&&(finalRetired?.node!==retired.node||finalRetired.text!==retired.text)||!sameInitialDOM(server,initialDOM(page,finalRetired)))throw failure();
+      const focusRemoved=server.departing?.contains(document.activeElement);
+      transaction.commit();transaction=null;server.departing?.remove();server.fallback.remove();retired?.node.remove();
+      if(focusRemoved)server.host.focus({preventScroll:true});
       branch=server.layouts.map((item,n)=>({...item,controller:controllers[n]}));current=controllers.at(-1);pageHost=server.host;activeURL=page.url;started=true;history.scrollRestoration="manual";
       status.textContent=page.status===200?"Ready.":`Page ${page.status}.`;
       if(page.failed!==null){lastFailure={url:page.url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(page.url,"error",false);}

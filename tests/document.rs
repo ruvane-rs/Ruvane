@@ -764,16 +764,109 @@ fn the_innermost_layout_child_boundary_can_recover_a_leaf_error() {
     assert!(complete);
     assert_eq!(snapshot(&body).page().failed_segment(), Some(2));
 }
+fn retired_snapshot(body: &str) -> LayoutSnapshot {
+    let hex = body
+        .split("<div hidden id=\"ruvane-retired\">")
+        .nth(1)
+        .unwrap()
+        .split("</div>")
+        .next()
+        .unwrap();
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|n| u8::from_str_radix(&hex[n..n + 2], 16).unwrap())
+        .collect::<Vec<_>>();
+    LayoutSnapshot::decode(&bytes).unwrap()
+}
 #[test]
-fn an_outer_boundary_does_not_remove_already_emitted_descendants() {
-    let (mut app, _, _) = fixture();
+fn an_outer_boundary_closes_emitted_descendants_before_the_error_host() {
+    let (mut app, loads, _) = fixture();
     app.client_layout_boundary("root", Some(ClientBoundary::new(3, 3).unwrap()))
         .unwrap();
     let server = Running::new(&app, ServerConfig::default());
+    for mode in ["", "&hydrate=yes"] {
+        for (fail, status) in [
+            ("page", 404),
+            ("bad", 400),
+            ("panic", 500),
+            ("schema", 500),
+            ("title", 500),
+        ] {
+            let before = loads.load(Ordering::SeqCst);
+            let (_, body, complete) = server.get(&format!("/work/page?fail={fail}{mode}"));
+            assert!(
+                complete && !body.contains("data-ruvane-stream-error") && !body.contains("private")
+            );
+            let final_page = snapshot(&body);
+            let prefix = retired_snapshot(&body);
+            assert_eq!(final_page.page().failed_segment(), Some(2));
+            assert_eq!(final_page.page().layouts().len(), 1);
+            assert_eq!(final_page.page().status().as_u16(), status);
+            assert_eq!(prefix.page().layouts().len(), 2);
+            assert_eq!(prefix.page().pending_layouts(), Some(2));
+            assert_eq!(prefix.page().layouts()[1].name(), "inner");
+            assert_eq!(
+                prefix.page().layouts()[0].name(),
+                final_page.page().layouts()[0].name()
+            );
+            assert_eq!(prefix.page().title(), final_page.page().title());
+            assert_eq!(prefix.page().url(), final_page.page().url());
+            assert_eq!(loads.load(Ordering::SeqCst) - before, 3);
+            assert!(body.contains(
+                "data-ruvane-child-outlet=\"\"></div></section><div data-ruvane-page=\"\""
+            ));
+            assert!(body.find("ruvane-retired").unwrap() < body.find("ruvane-initial").unwrap());
+        }
+    }
+}
+#[test]
+fn an_outer_boundary_can_retire_a_prefix_before_a_deeper_layout_fails() {
+    let (mut app, loads, _) = fixture();
+    app.client_layout(
+        PageRoute::new("third", "/work").unwrap(),
+        Some("inner"),
+        1,
+        state,
+        |_| Err(PageError::NotFound),
+    )
+    .unwrap();
+    app.client_page_layout("page", Some("third")).unwrap();
+    app.client_layout_boundary("root", Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    let server = Running::new(&app, ServerConfig::default());
+    let (_, body, complete) = server.get("/work/page?hydrate=yes");
+    assert!(complete);
+    let final_page = snapshot(&body);
+    let prefix = retired_snapshot(&body);
+    assert_eq!(final_page.page().failed_segment(), Some(2));
+    assert_eq!(final_page.page().layouts().len(), 1);
+    assert_eq!(prefix.page().layouts().len(), 2);
+    assert_eq!(prefix.page().pending_layouts(), Some(3));
+    assert_eq!(loads.load(Ordering::SeqCst), 2);
+    assert!(!body.contains("data-ruvane-layout=\"third\""));
+}
+#[test]
+fn the_nearest_parent_boundary_keeps_its_own_emitted_ancestors() {
+    let (mut app, _, _) = fixture();
+    app.client_layout(
+        PageRoute::new("third", "/work").unwrap(),
+        Some("inner"),
+        1,
+        state,
+        |_| Ok(ClientLayoutData::new(data("Third"))),
+    )
+    .unwrap();
+    app.client_page_layout("page", Some("third")).unwrap();
+    for name in ["root", "inner"] {
+        app.client_layout_boundary(name, Some(ClientBoundary::new(3, 3).unwrap()))
+            .unwrap();
+    }
+    let server = Running::new(&app, ServerConfig::default());
     let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=page");
-    assert!(
-        complete && body.contains("data-ruvane-stream-error") && !body.contains("ruvane-initial")
-    );
+    assert!(complete);
+    assert_eq!(snapshot(&body).page().layouts().len(), 2);
+    assert_eq!(snapshot(&body).page().failed_segment(), Some(3));
+    assert_eq!(retired_snapshot(&body).page().layouts().len(), 3);
 }
 #[test]
 fn layout_loader_errors_cannot_be_relabelled_as_leaf_errors() {

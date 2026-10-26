@@ -795,10 +795,17 @@ export async function createRuntime(url, options = {}) {
     } catch (error) { stop(true); throw error; }
     finally { busy = false; }
   }
-  function prepareHydration(roots,bytes,parents=[],layoutIndex=0) {
+  function prepareHydration(roots,bytes,parents=[],layoutIndex=0,retirement=null) {
     live();const page=decodePage(bytes),layoutOnly=layoutIndex!==0;
     if(!Array.isArray(parents)||!Array.isArray(roots)||page.selected!==0)throw new MountRejected();
-    parents=parents.slice();
+    parents=parents.slice();let prefix=null;const departing=[];
+    if(retirement){
+      if(layoutOnly||!Array.isArray(retirement.roots))throw new MountRejected();
+      prefix=decodePage(retirement.bytes);
+      if(prefix.pending===null||prefix.selected!==0||prefix.url!==page.url||prefix.title!==page.title||prefix.layouts.length!==page.failed||!page.layouts.length||page.layouts.length>=prefix.layouts.length||retirement.roots.length!==prefix.layouts.length-page.layouts.length||parents.length&&parents.length!==prefix.layouts.length||!page.layouts.every((item,n)=>sameLayoutSeed(item,prefix.layouts[n])))throw new MountRejected();
+      validatePage(retirement.bytes);
+      departing.push(...parents.slice(page.layouts.length));parents=parents.slice(0,page.layouts.length);
+    }
     if(layoutOnly?(page.pending===null||!Number.isInteger(layoutIndex)||layoutIndex<1||layoutIndex>page.layouts.length||roots.length!==1||parents.length):(page.pending!==null||roots.length!==page.layouts.length+1||parents.length>page.layouts.length))throw new MountRejected();
     if(views.size+roots.length-parents.length>LIMITS.views)throw new MountRejected();
     validatePage(bytes);
@@ -825,15 +832,28 @@ export async function createRuntime(url, options = {}) {
       if(focused?.isConnected){focused.focus({preventScroll:true});restoreSelection(focused,savedSelection);}
       window.scrollTo(point.x,point.y);undo.length=0;controllers.length=0;return true;
     }
+    function attest(controller,root,index,expected){
+      const view=views.get(controller?.id),stamp=view?.document;
+      const shorter=stamp&&parents.length===page.layouts.length&&page.failed===page.layouts.length&&page.failed<stamp.expected;
+      if(!view||view.controller!==controller||view.root!==root||!root.isConnected||!view.gated||!stamp||stamp.index!==index+1||(prefix?stamp.expected!==prefix.pending:stamp.expected!==page.layouts.length&&!shorter)||(index>0&&parents.length&&stamp.expected!==views.get(parents[0]?.id)?.document?.expected)||stamp.url!==page.url||stamp.title!==page.title||!sameLayoutSeed(stamp.descriptor,expected))throw new HydrationMismatch();
+      matchDom(view.nodes,root,false);
+    }
     try{
+      if(retirement)for(let n=0;n<retirement.roots.length;n++){
+        const root=retirement.roots[n],index=page.layouts.length+n,expected=prefix.layouts[index],props=readProps(root);
+        if(!root.isConnected||root.localName!=="div"||root.attributes.length!==3||props.component!==expected.component||props.kind!==expected.kind||props.value!==expected.value)throw new HydrationMismatch();
+        if(departing.length)attest(departing[n],root,index,expected);
+        else{
+          const selected=retirement.bytes.slice();selected[4]=index+1;
+          const temporary=start(root,null,true,selected,false,true);
+          try{releaseNative(temporary.id);forget(temporary.id,true,false);}catch(error){stop(true);throw error;}
+        }
+      }
       for(let index=0;index<roots.length;index++){
         const root=roots[index],segment=layoutOnly?layoutIndex:index<page.layouts.length?index+1:0,expected=segment?page.layouts[segment-1]:page,props=readProps(root);
         if((layoutOnly||index<parents.length)&&!root.isConnected||root.localName!=="div"||root.attributes.length!==3||props.component!==expected.component||props.kind!==expected.kind||props.value!==expected.value)throw new HydrationMismatch();
         if(index<parents.length){
-          const controller=parents[index],view=views.get(controller?.id),stamp=view?.document;
-          const shorter=stamp&&parents.length===page.layouts.length&&page.failed===page.layouts.length&&page.failed<stamp.expected;
-          if(!view||view.controller!==controller||view.root!==root||!view.gated||!stamp||stamp.index!==index+1||(stamp.expected!==page.layouts.length&&!shorter)||(index>0&&stamp.expected!==views.get(parents[0]?.id)?.document?.expected)||stamp.url!==page.url||stamp.title!==page.title||!sameLayoutSeed(stamp.descriptor,expected))throw new HydrationMismatch();
-          matchDom(view.nodes,root,false);controllers.push(controller);continue;
+          const controller=parents[index];attest(controller,root,index,expected);controllers.push(controller);continue;
         }
         const selected=bytes.slice();if(segment)selected[4]=segment;
         const controller=start(root,null,true,selected,false,true);controllers.push(controller);
@@ -857,7 +877,10 @@ export async function createRuntime(url, options = {}) {
       },
       commit(){
         if(finished||!activated)throw invalid();
-        if(parents.some(controller=>{const view=views.get(controller.id);return !view?.gated||!view.document||view.controller!==controller;}))throw invalid();
+        if([...parents,...departing].some(controller=>{const view=views.get(controller.id);return !view?.gated||!view.document||view.controller!==controller;}))throw invalid();
+        for(let n=0;n<parents.length;n++)attest(parents[n],roots[n],n,page.layouts[n]);
+        for(let n=0;n<departing.length;n++)attest(departing[n],retirement.roots[n],page.layouts.length+n,prefix.layouts[page.layouts.length+n]);
+        try{for(const controller of [...departing].reverse()){releaseNative(controller.id);forget(controller.id,true);}}catch(error){stop(true);throw error;}
         for(const controller of parents){const view=views.get(controller.id);view.gated=false;view.document=null;}
         finished=true;undo.length=0;controllers.length=0;
       },
@@ -867,7 +890,7 @@ export async function createRuntime(url, options = {}) {
   return Object.freeze({
     applicationRevision,
     validatePage,
-    preparePageHydration(roots,bytes,parents=[]){return prepareHydration(roots,bytes,parents);},
+    preparePageHydration(roots,bytes,parents=[],retirement=null){return prepareHydration(roots,bytes,parents,0,retirement);},
     hydrateLayout(root,bytes,index){
       const transaction=prepareHydration([root],bytes,[],index);
       try{const [controller]=transaction.activate();transaction.commit();return controller;}catch(error){transaction.rollback();throw error;}

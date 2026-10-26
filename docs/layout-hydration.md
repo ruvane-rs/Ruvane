@@ -162,3 +162,5 @@ input, malformed records, final failure, native guards, budgets, navigation,
 page departure and one hundred ownership cycles. Test hooks are removed from
 the generated demo after verification. No third-party Cargo/npm/test package is
 used.
+
+Alpha.30 supports [ancestor boundary recovery](streamed-leaf-errors.md#ancestor-boundary-recovery-alpha30) after descendants have already been emitted. Removal happens only after validating the complete error branch.

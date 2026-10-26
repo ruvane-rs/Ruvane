@@ -17,8 +17,8 @@ app.client_page_document_streaming(
 
 This also works with the default document stream, which activates after parsing.
 A child boundary on the innermost layout can handle the leaf if the page has no
-boundary. The boundary must retain the full emitted layout chain. A boundary
-above an already emitted descendant cannot recover that subtree in this version.
+boundary. Through alpha.29, recovery required retaining the full emitted layout chain.
+Alpha.30 also supports a boundary above emitted descendants, as described below.
 
 ## Error completion
 
@@ -48,8 +48,7 @@ gates. Parent fields are not reconciled from the initial seed again. The error
 component stays read-only; the navigator owns the accessible retry control.
 No automatic page GET or POST is needed to activate the error document.
 
-An absent or invalid boundary, a root layout failure, or a boundary which would remove
-an emitted descendant retains the existing failure path. In early-hydration mode,
+An absent or invalid boundary or a root layout failure retains the existing failure path. In early-hydration mode,
 caught application failures use generic abort HTML when budgets permit; other
 streams remain incomplete. Invalid/eventful/panicking error components and initial
 actions also use that fallback. Diagnostics are never reflected in the response.
@@ -125,8 +124,8 @@ still require the full chain. A rejected record's uncommitted seed is discarded.
 An explicit retry fetches the full route and builds the missing layout and page.
 Compatible ancestors keep their live state and DOM, including fields, focus and
 selection. Repeated errors stay retryable and uncached. No GET or POST is retried
-automatically. Removal of already emitted descendants to reach a higher boundary
-remains unsupported, as does recovery without a surviving parent for a root failure.
+automatically. Alpha.30 adds removal of already emitted descendants to reach a higher boundary.
+Recovery without a surviving parent for a root failure remains unsupported.
 
 The generated **Recover a failed layout** link opens
 `/tasks/resilient?recover=yes`. Its context fails once per server process. Increment
@@ -138,3 +137,50 @@ activation, buffered/progressive retry, ancestor node identity and field state,
 invalid final packets, repeated failures and one hundred cleanup cycles. Native
 tests include a cumulative prefix that exceeds the packet budget after a seed
 was constructed, invalid boundaries and a root failure without a surviving parent.
+
+
+## Ancestor boundary recovery (alpha.30)
+
+For `workspace → context → page`, a page failure can use the workspace child
+boundary even after context was displayed and activated. The workspace retains
+its own DOM, state, drafts and focus. Context and everything below it are removed
+only after validating the complete error branch. Their local drafts are no longer
+part of the active page. An explicit GET retry rebuilds these descendants.
+
+The server closes departed layout wrappers before rendering the error host beside
+the departed subtree. It cannot retract HTML already sent. A hidden direct App
+child `ruvane-retired`, immediately before `ruvane-initial`, contains the original
+emitted RVP4 prefix inside RVH1. The existing RVP3 identifies both the failing index
+and the shorter retained prefix. This uses existing codecs and adds no ABI export
+or runtime asset. Without JavaScript, the received descendants and error remain
+visible; native-only requests still use buffered SSR and actual HTTP statuses.
+
+The browser checks exact revision, URL, title, prefix length, retained descriptors,
+canonical keys, seeds and complete DOM shape. Rust/Wasm validates both packets.
+Early owners must attest the full emitted prefix; other documents validate the
+retiring roots against temporary prepared views without activating them. Missing,
+duplicate, malformed, inconsistent or unnecessary retirement records refuse startup.
+
+The error view is prepared without changing the current branch. Native form guards,
+history, action epoch, destination and ownership checks run before commitment.
+Only then are departed controllers retired, the subtree removed and the error
+activated. A rejected preparation or history write leaves the received subtree
+in place. Focus inside a surviving ancestor remains there; focus inside the removed
+subtree moves to the error host. Removed controls lose their handlers. Parent action
+gates are released only on a successful complete commit.
+
+Retries remain explicit, uncached GETs for errors. New navigation, departure,
+disposal, deadlines, exhausted quotas and invalid data cannot commit stale replies.
+No POST is automatically sent or replayed. A root layout still has no surviving
+parent boundary and uses the existing fallback.
+
+The generated **Recover through a parent boundary** link opens
+`/tasks/resilient?recover=page&delay=yes`. Its context becomes interactive before
+the leaf fails once. The workspace catches that error, removes the context and
+keeps its counter. **Try again** reconstructs the context and page.
+
+`web/parent-recovery-tests.mjs` checks gated real delivery, two retired descendants,
+nearest boundaries, early/default activation, retained drafts and selection, focus
+inside removed views, explicit retries, malformed or unnecessary records, native
+guards, history refusal, stale owners/destinations, cancellation, budgets and one
+hundred startup/cleanup cycles. Fixture routes and controls are removed from the demo.

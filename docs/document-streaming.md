@@ -97,14 +97,17 @@ shutdown checks. There are no producer threads, unbounded output queues or
 parallel loaders. Synchronous application code is trusted and cannot be forcibly
 interrupted; socket failures are observed at writes.
 
-After commitment, a loader error, panic, schema/title mismatch, quota, deadline,
-shutdown or failed write leaves an incomplete response. Previously received HTML
-can remain visible. The framework emits no diagnostic text, fabricated second
-status, replacement error branch or automatic retry. No completion suffix means
-the standard bootstrap is absent; manually starting with incomplete metadata
-also fails before activation. Recovery is an ordinary reload or native link.
-Buffered SSR keeps its existing scoped error rendering. Rendering error branches
-inside a partially emitted layout chain is deferred.
+After commitment, eligible loader errors, panics and schema/title mismatches can
+finish through a typed boundary. Alpha.30 also supports ancestor boundaries which
+retire emitted descendants after the complete error branch is validated. The
+committed HTTP status and head stay unchanged; error packets carry logical status.
+
+Without a valid boundary, default streams remain incomplete. Early-hydration
+streams can finish with generic abort HTML when transport budgets permit. Quotas,
+deadlines, shutdown, failed writes and cleanup failures can still leave an
+incomplete response. No diagnostic text or automatic retry is emitted. Incomplete
+metadata never activates a branch. Native-only buffered SSR keeps its actual HTTP
+error statuses and scoped rendering.
 
 ABI v11, the 22 exports, the four existing runtime assets and RVI1/RVP/RVS1/RVA1
 formats are unchanged. Both crates remain first-party and need no Cargo/npm,
@@ -125,3 +128,5 @@ Wasm loading to test early input adoption. It also exercises malformed completio
 metadata, the real bootstrap, cleanup, navigation, native rendering and repeated
 activation. Fixture hooks and test assets are removed from the generated demo
 after verification. All harness code is first-party.
+
+Alpha.30 supports [ancestor boundary recovery](streamed-leaf-errors.md#ancestor-boundary-recovery-alpha30) after descendants have already been emitted. Removal happens only after validating the complete error branch.

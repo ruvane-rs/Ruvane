@@ -171,6 +171,7 @@ pub fn application() -> App {
 
     app
 }
+static PARENT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LAYOUT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static RECOVERY_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn project_page(context: &PageContext<'_>) -> Result<ClientPageData, PageError> {
@@ -194,6 +195,12 @@ fn project_page(context: &PageContext<'_>) -> Result<ClientPageData, PageError> 
     if context.request().unwrap().path() == "/tasks/live"
         && query.get("recover") == Some("yes")
         && !RECOVERY_READY.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        return Err(PageError::InternalServerError);
+    }
+    if context.request().unwrap().path() == "/tasks/resilient"
+        && query.get("recover") == Some("page")
+        && !PARENT_READY.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         return Err(PageError::InternalServerError);
     }
@@ -255,6 +262,17 @@ pub fn shell(children: Html) -> Html {
                     .query("recover", "yes")
                     .unwrap(),
                 "Recover a failed layout",
+            )),
+        )
+        .child(
+            element(Tag::P).child(ruvane::link(
+                &InternalUrl::new("/tasks/resilient")
+                    .unwrap()
+                    .query("recover", "page")
+                    .unwrap()
+                    .query("delay", "yes")
+                    .unwrap(),
+                "Recover through a parent boundary",
             )),
         )
         .child(children)

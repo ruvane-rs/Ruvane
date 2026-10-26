@@ -49,7 +49,8 @@ Pages can also opt into [early layout hydration](docs/layout-hydration.md):
 local layout events work while the leaf loads, and final activation keeps their state.
 [Streamed branch errors](docs/streamed-leaf-errors.md) can retain healthy parents
 when the leaf or an un-emitted nested layout fails. An explicit GET retry builds
-the missing descendants without reloading the document.
+the missing descendants without reloading the document. Ancestor boundaries can
+also retire already emitted descendants after the complete error is validated.
 
 Create an interactive project from a local checkout:
 

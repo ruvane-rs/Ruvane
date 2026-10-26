@@ -284,9 +284,6 @@ impl DocumentProducer {
             .app
             .error_boundary(self.index, self.opened)
             .ok_or(PageError::InternalServerError)?;
-        if depth != self.opened {
-            return Err(PageError::InternalServerError);
-        }
         let status = error.status();
         let props =
             ComponentProps::new(boundary.error, InitialState::Number(status.as_u16() as u32))
@@ -298,7 +295,7 @@ impl DocumentProducer {
             ActionData::default(),
             status,
         )
-        .and_then(|page| page.with_failure(self.opened, self.seeds.clone()))
+        .and_then(|page| page.with_failure(failed, self.seeds[..depth].to_vec()))
         .map_err(|_| PageError::InternalServerError)?;
         let own = App::client_view(self.app.client_factory.unwrap(), props, packet.data(), true)?;
         self.finish(packet, own, Html::default())
@@ -312,15 +309,44 @@ impl DocumentProducer {
         if !self.app.validate_navigation(&packet) {
             return Err(PageError::InternalServerError);
         }
+        let retained = packet.layouts().len();
+        let retired = if retained < self.opened {
+            if retained == 0 || packet.failed_segment() != Some(self.opened) {
+                return Err(PageError::InternalServerError);
+            }
+            let prefix = NavigationPage::new(
+                self.url.clone(),
+                &self.title,
+                self.props,
+                ActionData::default(),
+                StatusCode::Ok,
+            )
+            .and_then(|page| page.with_pending_layouts(self.inputs.len(), self.seeds.clone()))
+            .map_err(|_| PageError::InternalServerError)?;
+            if !self.app.validate_navigation(&prefix) {
+                return Err(PageError::InternalServerError);
+            }
+            let prefix =
+                LayoutSnapshot::new(self.app.client_runtime.as_ref().unwrap().revision, prefix)
+                    .map_err(|_| PageError::InternalServerError)?;
+            format!(
+                "<div hidden id=\"ruvane-retired\">{}</div>",
+                crate::navigation_snapshot::hex(&prefix.encode()),
+            )
+        } else {
+            String::new()
+        };
         let snapshot =
             NavigationSnapshot::new(self.app.client_runtime.as_ref().unwrap().revision, packet)
                 .map_err(|_| PageError::InternalServerError)?;
         let output = format!(
-            "<div data-ruvane-page=\"\" tabindex=\"-1\">{}</div>{}<div id=\"ruvane-fallback\">{}</div></div>{}{}",
+            "{}<div data-ruvane-page=\"\" tabindex=\"-1\">{}</div>{}<div id=\"ruvane-fallback\">{}</div></div>{}{}{}",
+            LAYOUT_END.repeat(self.opened - retained),
             own.as_str(),
-            LAYOUT_END.repeat(self.opened),
+            LAYOUT_END.repeat(retained),
             fallback.as_str(),
             self.tail,
+            retired,
             snapshot.html().as_str(),
         );
         self.done = true;

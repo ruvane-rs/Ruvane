@@ -62,8 +62,14 @@ Open **Recover a failed layout** for `/tasks/resilient?recover=yes`. Its context
 layout fails once before emitting its HTML. The workspace child boundary shows
 the error while keeping the workspace counter active. Increment it, then choose
 **Try again**: the context and page appear without resetting the workspace.
-The failed layout cannot catch its own error. A boundary cannot remove a layout
-that has already been emitted.
+The failed layout cannot catch its own error.
+
+Open **Recover through a parent boundary** for
+`/tasks/resilient?recover=page&delay=yes`. The context is displayed before the leaf
+fails once. The workspace catches the error and the context is retired. Its counter
+survives, and **Try again** reconstructs the context and page. Descendants are
+removed only after the complete error branch is validated. Without JavaScript,
+the received descendants and the error remain visible.
 
 Open **Streaming SSR** for `/stream`, a native progressive report. Its header
 arrives before the deferred content. Edit `progressive_report` in `src/main.rs`;

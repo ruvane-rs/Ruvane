@@ -83,6 +83,16 @@ await test("a generated application ships an independent, revision-matched Wasm 
       const error=stage(bytes);assert.ok(error);assert.ok(drain().some(c=>c.op===2&&c.text==="Page unavailable"));assert.equal(e.ruvane_dispose(error),1);drain();
       for(const failed of [0,3]){bytes[5]=failed;assert.equal(stage(bytes,true),0);assert.equal(e.ruvane_live_instances(),0);drain();}
     });
+    await t.test("ancestor errors validate alongside the full retired prefix",()=>{
+      const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
+      const empty=[82,86,65,49,0,0,0],layout=(name,key,id)=>[...text(name),...text(key),...word(id),...word(1),...word(0),...word(empty.length),...empty];
+      const workspace=layout("workspace","/tasks",12),context=layout("resilientContext","/tasks/resilient",13),leaf=packet("/tasks/resilient",17,0,200,true);
+      const prefix=new Uint8Array([82,86,80,52,0,2,...leaf.slice(4),2,...workspace,...context]);
+      const error=packet("/tasks/resilient",16,500,500,true),final=new Uint8Array([82,86,80,51,0,2,...error.slice(4),1,...workspace]);
+      for(const bytes of [prefix,final]){assert.equal(stage(bytes,true),1);assert.equal(e.ruvane_live_instances(),0);drain();}
+      const owner=stage(final);assert.ok(owner);drain();assert.equal(e.ruvane_dispose(owner),1);drain();
+      final[4]=2;assert.equal(stage(final),0);assert.equal(e.ruvane_live_instances(),0);drain();
+    });
     await t.test("the generated Cargo graph has only project and framework packages", () => {
       const metadata=JSON.parse(run(process.env.CARGO || "cargo",["metadata","--offline","--locked","--format-version","1"],project));
       assert.deepEqual(metadata.packages.map(p=>p.name).sort(),["application-fixture","ruvane","ruvane-application-browser","ruvane-browser"]);
