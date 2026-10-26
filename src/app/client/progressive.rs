@@ -117,9 +117,9 @@ struct BranchProducer {
 }
 impl BranchProducer {
     fn failure(&self, failed: usize, error: PageError) -> Result<NavigationPage, PageError> {
-        let (depth, boundary) = self
+        let (depth, component) = self
             .app
-            .error_boundary(self.index, failed)
+            .failure_presentation(self.index, failed, error.status())
             .ok_or(PageError::InternalServerError)?;
         if depth > self.seeds.len() {
             return Err(PageError::InternalServerError);
@@ -133,8 +133,7 @@ impl BranchProducer {
         NavigationPage::new(
             self.url.clone(),
             title,
-            ComponentProps::new(boundary.error, InitialState::Number(status.as_u16() as u32))
-                .unwrap(),
+            ComponentProps::new(component, InitialState::Number(status.as_u16() as u32)).unwrap(),
             ActionData::default(),
             status,
         )

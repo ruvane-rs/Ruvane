@@ -190,7 +190,7 @@ impl BrowserRuntime {
             root,
             props,
             Some(data),
-            page.failed_segment().is_some() && page.selected_segment() == 0,
+            page.status() != ruvane::StatusCode::Ok && page.selected_segment() == 0,
         )
     }
 
@@ -319,7 +319,7 @@ impl BrowserRuntime {
                 .map_err(|_| BrowserError::InvalidPage)?;
             Self::resources(component.as_ref())?;
             let view = component.view()?;
-            if page.failed_segment().is_some() && index == 0 && view.event_count() != 0 {
+            if page.status() != ruvane::StatusCode::Ok && index == 0 && view.event_count() != 0 {
                 return Err(BrowserError::InvalidPage);
             }
             view.snapshot()

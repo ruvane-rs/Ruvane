@@ -130,6 +130,52 @@ pub const LOADING: u32 = 15;
 pub const BOUNDARY_ERROR: u32 = 16;
 pub const PROJECT: u32 = 17;
 pub const GLOBAL_ERROR: u32 = 19;
+pub const GLOBAL_NOT_FOUND: u32 = 20;
+pub const TASK_NOT_FOUND: u32 = 21;
+struct Missing {
+    global: bool,
+}
+impl Component for Missing {
+    fn page_data(&mut self, data: ActionData) -> Result<(), ComponentError> {
+        if data.is_empty() {
+            Ok(())
+        } else {
+            Err(ComponentError::InvalidProps)
+        }
+    }
+    fn view(&self) -> Result<View, ComponentError> {
+        let mut view = View::new();
+        let root = view.element(0, Section)?;
+        view.leaf(
+            root,
+            Heading,
+            if self.global {
+                "Page not found"
+            } else {
+                "Task not found"
+            },
+        )?;
+        view.leaf(
+            root,
+            Span,
+            if self.global {
+                "This address does not have a page."
+            } else {
+                "This task is unavailable or has been removed."
+            },
+        )?;
+        view.link(
+            root,
+            1,
+            &InternalUrl::new(if self.global { "/" } else { "/tasks" }).unwrap(),
+            if self.global { "Home" } else { "Back to tasks" },
+        )?;
+        Ok(view)
+    }
+    fn dispatch(&mut self, _: u32) -> Result<(), ComponentError> {
+        Err(ComponentError::InvalidEvent)
+    }
+}
 struct Presentation {
     loading: bool,
     global: bool,
@@ -183,6 +229,13 @@ impl Component for Presentation {
     }
 }
 pub fn create_component(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
+    if let (GLOBAL_NOT_FOUND | TASK_NOT_FOUND, InitialState::Number(404)) =
+        (props.component(), props.state())
+    {
+        return Ok(Box::new(Missing {
+            global: props.component() == GLOBAL_NOT_FOUND,
+        }));
+    }
     if let (LOADING, InitialState::Number(0)) = (props.component(), props.state()) {
         return Ok(Box::new(Presentation {
             loading: true,

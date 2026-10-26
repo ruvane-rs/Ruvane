@@ -126,6 +126,69 @@ resulting `FileRouteBoundary` is attached through `FilePage::with_boundary` or
 `FileLayout::with_boundary` by the generator. Applications may still override
 named boundaries through ordinary App APIs after registration.
 
+## Not-found presentations
+
+Alpha.37 adds `not_found.rs`, independent of loading/error pairs:
+
+```rust
+// src/routes/not_found.rs
+pub fn not_found() -> ruvane::FileNotFound {
+    ruvane::FileNotFound::new(20)
+}
+// src/routes/tasks/not_found.rs
+pub fn not_found() -> ruvane::FileNotFound {
+    ruvane::FileNotFound::new(21)
+}
+```
+
+Each file exports `pub fn not_found() -> FileNotFound`. Its component must accept
+`Number(404)` and empty `ActionData`, return a bounded read-only view without
+Rust event bindings, and queue no action. The registry checks this before commit.
+Diagnostics identify the relative source; invalid declarations poison the batch.
+Native unwinding panics become generic diagnostics. Wasm traps remain runtime
+faults. No loading/error companion is required.
+
+Client pages and client layouts inherit the nearest file declaration. A local
+file replaces that presentation; removing it restores the ancestor. On a
+`PageError::NotFound`, the page's declaration takes priority, then ancestor
+layout declarations, then the global declaration, then existing error handling.
+A layout cannot catch its own loader failure. Only validated healthy parents
+are retained. Other errors continue to use `error.rs` and the existing App APIs.
+
+Only `src/routes/not_found.rs` configures the global unknown-URL presentation.
+An unmatched URL, including one below `/tasks`, uses this global presentation
+without layouts. Prefix similarity does not establish a route, captures or a
+trusted parent chain. Without a root declaration the ordinary App error
+component remains the unknown-URL fallback. Parser errors, unsupported methods,
+POST handlers and authorization checks keep their existing dispatch rules.
+
+Initial HTML and buffered navigation keep HTTP 404 and `no-store`. Native
+responses keep `script-src 'none'`. Error documents contain a noindex robots
+hint and no canonical URL. Client navigation reuses an existing robots hint or adds a temporary one,
+without duplicates. Success restores the prior value or removes its temporary
+hint. An existing noindex hint remains in place. Other document metadata is
+not erased. The Wasm validator checks the exact component, status, failure
+scope, empty seed and complete retained layout prefix before mounting.
+
+Initial document streaming is buffered for routes with a custom 404 profile,
+so a missing resource is known before HTTP headers commit. Successful buffered
+documents retain their configured head. Progressive **navigation** still uses
+the existing RVS1 transport: HTTP 200 frames carry the final validated 404
+packet. It does not rewrite already committed transport headers.
+
+The starter includes global and task presentations. Native page/layout
+consumers inheriting file presentations are rejected; native pages retain
+`App::not_found`. In mixed applications, keep native file routes outside custom
+file-presentation scopes, or configure the client global fallback explicitly
+with `App::client_not_found` instead of a root file.
+
+Generated code calls `FileRouteRegistry::not_found`, then attaches the validated
+`FileRouteNotFound` through `FilePage::with_not_found` and
+`FileLayout::with_not_found`. After registration, `client_not_found`,
+`client_page_not_found` and `client_layout_not_found` can set or remove explicit
+client presentations. These App setters perform structural checks; file
+registration and runtime validation enforce the component view contract.
+
 ## Native pages and existing App features
 
 `FilePage::server(name, mode, render)` accepts the existing `PageMode` policies.
@@ -183,12 +246,12 @@ tree; target-dependent declaration code remains the author's responsibility.
 
 ## Bounds and trust
 
-- Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs` and route directories are accepted.
+- Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs` and route directories are accepted.
 - Literal directories use the portable lowercase ASCII path profile. Dynamic
   names use lowercase ASCII letters, digits and underscores, beginning with a
   letter or underscore. Literal and parameter segments are limited to 64 bytes.
 - The scan limits directories to 128, entries to 512, depth to 16 and relative
-  directory paths to 512 bytes. At most 128 sources of all four kinds are accepted,
+  directory paths to 512 bytes. At most 128 sources of all five kinds are accepted,
   including at most the existing 32 App layouts.
 - A source file is at most 256 KiB of UTF-8; the total is at most 4 MiB. Generated
   Rust is at most 1 MiB. Existing App, static-export and runtime quotas also apply.

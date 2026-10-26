@@ -53,6 +53,15 @@ fn factory(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> 
                 value: "Local boundary".into(),
             }))
         }
+        (6 | 7, InitialState::Number(404)) => Ok(Box::new(Model {
+            error: true,
+            value: if props.component() == 6 {
+                "Global missing"
+            } else {
+                "Task missing"
+            }
+            .into(),
+        })),
         (3, InitialState::Number(400 | 404)) => Ok(Box::new(Model {
             error: true,
             value: "Error page".into(),
@@ -1161,5 +1170,336 @@ fn file_presentations_reject_event_bindings_pending_actions_and_panics() {
                 .contains("private presentation diagnostic")
         );
         assert!(registry.finish().is_err());
+        let mut registry = ruvane::FileRouteRegistry::new(&mut app);
+        let error = registry
+            .not_found(
+                "tasks/not_found.rs",
+                ruvane::FileNotFound::new(component),
+                true,
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.path(), "tasks/not_found.rs");
+        assert!(
+            !error
+                .to_string()
+                .contains("private presentation diagnostic")
+        );
+        assert!(registry.finish().is_err());
     }
+}
+
+fn file_missing_app() -> App {
+    use ruvane::{FileError, FileLayout, FileLoading, FileNotFound, FilePage, FileRouteRegistry};
+    let mut app = App::new();
+    app.components(factory, 3).unwrap();
+    let mut registry = FileRouteRegistry::new(&mut app);
+    let global = registry
+        .not_found("not_found.rs", FileNotFound::new(6), true)
+        .unwrap();
+    let local = registry
+        .not_found("items/not_found.rs", FileNotFound::new(7), false)
+        .unwrap();
+    let boundary = registry
+        .boundary(
+            None,
+            Some(("loading.rs", FileLoading::new(5))),
+            Some(("error.rs", FileError::new(4))),
+        )
+        .unwrap();
+    let root = registry
+        .layout(
+            "layout.rs",
+            "/",
+            None,
+            FileLayout::client("root", 1, zero, |context| {
+                if context.request().unwrap().query_params().get("root") == Some("missing") {
+                    return Err(PageError::NotFound);
+                }
+                Ok(ruvane::ClientLayoutData::new(data("Healthy root")))
+            })
+            .with_not_found(&global),
+        )
+        .unwrap();
+    let child = registry
+        .layout(
+            "items/layout.rs",
+            "/items",
+            Some(&root),
+            FileLayout::client("child", 1, zero, |context| {
+                if context.request().unwrap().query_params().get("layout") == Some("missing") {
+                    return Err(PageError::NotFound);
+                }
+                Ok(ruvane::ClientLayoutData::new(data("Healthy child")))
+            })
+            .with_not_found(&local)
+            .with_boundary(&boundary),
+        )
+        .unwrap();
+    registry
+        .page(
+            "items/page.rs",
+            "/items",
+            Some(&child),
+            FilePage::client("items", 2, zero, |context| {
+                match context.request().unwrap().query_params().get("mode") {
+                    Some("ok") => Ok(ClientPageData::new("Ready", data("Ready"))),
+                    Some("error") => Err(PageError::InternalServerError),
+                    _ => Err(PageError::NotFound),
+                }
+            })
+            .with_not_found(&local)
+            .with_boundary(&boundary),
+        )
+        .unwrap();
+    registry.finish().unwrap();
+    app
+}
+
+#[test]
+fn file_not_found_selects_the_valid_scope_keeps_parents_and_leaves_other_errors_separate() {
+    let mut app = file_missing_app();
+    app.client_page(
+        PageRoute::new("unresolved", "/unresolved").unwrap(),
+        2,
+        |_| Err(PageError::NotFound),
+        |_| panic!("unresolved state must not load"),
+    )
+    .unwrap();
+    app.client_page_not_found("unresolved", Some(7)).unwrap();
+    let server = Running::new(app.clone());
+    for (url, component, parents, failed, status) in [
+        ("/items", 7, 2, Some(2), StatusCode::NotFound),
+        ("/items?layout=missing", 6, 1, Some(1), StatusCode::NotFound),
+        ("/items?root=missing", 6, 0, Some(0), StatusCode::NotFound),
+        ("/items/no/such/route", 6, 0, None, StatusCode::NotFound),
+        ("/unknown", 6, 0, None, StatusCode::NotFound),
+        ("/unresolved", 6, 0, None, StatusCode::NotFound),
+        (
+            "/items?mode=error",
+            4,
+            2,
+            Some(2),
+            StatusCode::InternalServerError,
+        ),
+    ] {
+        let (headers, body) = server.get("GET", url, true);
+        assert!(headers.starts_with(&format!("HTTP/1.1 {}", status.as_u16())));
+        assert!(headers.contains("Cache-Control: no-store"));
+        let packet = NavigationPage::decode(&body).unwrap();
+        assert_eq!(packet.props().component(), component);
+        assert_eq!(packet.layouts().len(), parents);
+        assert_eq!(packet.failed_segment(), failed);
+        assert!(app.validate_navigation(&packet));
+    }
+    for (url, label) in [
+        ("/items?native=yes", "Task missing"),
+        ("/unknown?native=yes", "Global missing"),
+    ] {
+        let (headers, body) = server.get("GET", url, false);
+        let html = String::from_utf8(body).unwrap();
+        assert!(headers.starts_with("HTTP/1.1 404") && headers.contains("Cache-Control: no-store"));
+        assert!(headers.contains("script-src 'none'") && !html.contains("<script"));
+        assert!(html.contains(label) && html.contains("content=\"noindex, follow\""));
+    }
+    let (headers, body) = server.get("HEAD", "/items", false);
+    assert!(headers.starts_with("HTTP/1.1 404") && body.is_empty());
+}
+
+#[test]
+fn file_not_found_rejects_forged_components_statuses_scopes_and_missing_parent_proofs() {
+    let app = file_missing_app();
+    let mut standalone = app.clone();
+    standalone.client_not_found(None).unwrap();
+    let default = NavigationPage::new(
+        InternalUrl::new("/unknown").unwrap(),
+        "Missing",
+        ComponentProps::new(3, InitialState::Number(404)).unwrap(),
+        ActionData::default(),
+        StatusCode::NotFound,
+    )
+    .unwrap();
+    assert!(standalone.validate_navigation(&default));
+    let server = Running::new(app.clone());
+    let (_, bytes) = server.get("GET", "/items", true);
+    let valid = NavigationPage::decode(&bytes).unwrap();
+    for (url, component, status, failed, layouts) in [
+        (
+            "/items",
+            6,
+            StatusCode::NotFound,
+            Some(2),
+            valid.layouts().to_vec(),
+        ),
+        (
+            "/items",
+            4,
+            StatusCode::NotFound,
+            Some(2),
+            valid.layouts().to_vec(),
+        ),
+        (
+            "/items",
+            7,
+            StatusCode::InternalServerError,
+            Some(2),
+            valid.layouts().to_vec(),
+        ),
+        ("/unknown", 7, StatusCode::NotFound, None, Vec::new()),
+        ("/unknown", 3, StatusCode::NotFound, None, Vec::new()),
+        ("/items", 6, StatusCode::NotFound, None, Vec::new()),
+        ("/items", 7, StatusCode::NotFound, Some(2), Vec::new()),
+    ] {
+        let mut packet = NavigationPage::new(
+            InternalUrl::new(url).unwrap(),
+            "Missing",
+            ComponentProps::new(component, InitialState::Number(status.as_u16() as u32)).unwrap(),
+            ActionData::default(),
+            status,
+        )
+        .unwrap();
+        if let Some(failed) = failed {
+            packet = packet.with_failure(failed, layouts).unwrap();
+        }
+        assert!(!app.validate_navigation(&packet), "{url} / {component}");
+    }
+}
+
+#[test]
+fn file_not_found_validates_before_commit_and_requires_client_consumers() {
+    use ruvane::{FileNotFound, FilePage, FileRouteRegistry};
+    let mut missing_factory = App::new();
+    assert!(missing_factory.client_not_found(Some(6)).is_err());
+    let mut registry = FileRouteRegistry::new(&mut missing_factory);
+    assert!(
+        registry
+            .not_found("not_found.rs", FileNotFound::new(6), true)
+            .is_err()
+    );
+    assert!(registry.finish().is_err());
+    let mut configured = file_missing_app();
+    assert!(configured.client_not_found(Some(0)).is_err());
+    assert!(
+        configured
+            .client_page_not_found("unknown", Some(7))
+            .is_err()
+    );
+    assert!(
+        configured
+            .client_layout_not_found("unknown", Some(7))
+            .is_err()
+    );
+    for component in [0, 1, 5, 999] {
+        let mut app = App::new();
+        app.components(factory, 3).unwrap();
+        let mut registry = FileRouteRegistry::new(&mut app);
+        let error = registry
+            .not_found("items/not_found.rs", FileNotFound::new(component), true)
+            .err()
+            .unwrap();
+        assert_eq!(error.path(), "items/not_found.rs");
+        assert!(registry.finish().is_err());
+        let packet = NavigationPage::new(
+            InternalUrl::new("/unknown").unwrap(),
+            "Missing",
+            ComponentProps::new(3, InitialState::Number(404)).unwrap(),
+            ActionData::default(),
+            StatusCode::NotFound,
+        )
+        .unwrap();
+        assert!(app.validate_navigation(&packet));
+    }
+    let mut app = App::new();
+    app.components(factory, 3).unwrap();
+    let mut registry = FileRouteRegistry::new(&mut app);
+    let missing = registry
+        .not_found("not_found.rs", FileNotFound::new(6), true)
+        .unwrap();
+    assert!(
+        registry
+            .page(
+                "page.rs",
+                "/",
+                None,
+                FilePage::server("native", PageMode::fixed(), |_| Ok(ruvane::Page::new(
+                    "Native", "Native"
+                )))
+                .with_not_found(&missing)
+            )
+            .is_err()
+    );
+    assert!(registry.finish().is_err());
+    assert!(app.url("native", &[]).is_err());
+}
+
+#[test]
+fn file_not_found_documents_are_buffered_for_real_status_before_headers_commit() {
+    fn head(_: &ruvane::PageContext<'_>) -> Result<ruvane::ClientDocument, PageError> {
+        Ok(ruvane::ClientDocument::new("Ready").metadata(
+            ruvane::Metadata::new()
+                .description("Preserved buffered head")
+                .unwrap(),
+        ))
+    }
+    let mut app = file_missing_app();
+    app.client_page_document_streaming("items", Some(head))
+        .unwrap();
+    let server = Running::new(app);
+    let (headers, body) = server.get("GET", "/items", false);
+    let html = String::from_utf8(body).unwrap();
+    assert!(headers.starts_with("HTTP/1.1 404") && !headers.contains("Transfer-Encoding"));
+    assert!(html.contains("Task missing") && html.contains("noindex, follow"));
+    assert!(!html.contains("data-ruvane-document="));
+    let (headers, body) = server.get("GET", "/items?mode=ok", false);
+    assert!(
+        headers.starts_with("HTTP/1.1 200")
+            && String::from_utf8(body)
+                .unwrap()
+                .contains("Preserved buffered head")
+    );
+}
+
+#[test]
+fn file_not_found_progressive_navigation_keeps_the_existing_final_packet_contract() {
+    let mut app = file_missing_app();
+    app.client_page_streaming("items", true).unwrap();
+    let server = Running::new(app.clone());
+    let (headers, bytes) = server.get_headers(
+        "GET",
+        "/items",
+        false,
+        Some("123"),
+        "Accept: application/vnd.ruvane.page-stream\r\nRuvane-Stream-Token: 7\r\n",
+    );
+    assert!(headers.starts_with("HTTP/1.1 200") && headers.contains("Cache-Control: no-store"));
+    let mut rest = bytes.as_slice();
+    let mut body = Vec::new();
+    loop {
+        let end = rest.windows(2).position(|w| w == b"\r\n").unwrap();
+        let size = usize::from_str_radix(std::str::from_utf8(&rest[..end]).unwrap(), 16).unwrap();
+        rest = &rest[end + 2..];
+        if size == 0 {
+            break;
+        }
+        body.extend_from_slice(&rest[..size]);
+        rest = &rest[size + 2..];
+    }
+    assert!(body.starts_with(b"RVS1"));
+    let mut rest = &body[20..];
+    let mut last = None;
+    while !rest.is_empty() {
+        let size = u32::from_le_bytes(rest[..4].try_into().unwrap()) as usize;
+        rest = &rest[4..];
+        if size == 0 {
+            break;
+        }
+        let packet = NavigationPage::decode(&rest[..size]).unwrap();
+        assert!(app.validate_navigation(&packet));
+        last = Some(packet);
+        rest = &rest[size..];
+    }
+    let packet = last.unwrap();
+    assert_eq!(packet.status(), StatusCode::NotFound);
+    assert_eq!(packet.props().component(), 7);
+    assert_eq!(packet.layouts().len(), 2);
 }

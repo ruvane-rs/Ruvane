@@ -538,6 +538,17 @@ recover Wasm traps. Native consumers and orphan screens are rejected. Existing
 boundary scope validation, no-store errors, script-free native responses and
 fresh GET retry apply unchanged; POST actions are never replayed by retry.
 
+Alpha.37 not_found.rs declarations share the bounded source budgets and atomic
+registry. Local 404 views accept Number(404) and empty seeds without event
+bindings or initial actions. Selection is shared with Wasm validation; a file
+404 cannot authorize another scope or substitute for a 500. An unmatched URL
+uses only the explicit root fallback, with no inferred captures or layouts.
+Buffered errors keep HTTP 404, no-store, noindex and native script blocking.
+Initial documents with custom 404 profiles are buffered before headers commit;
+RVS1 navigation retains its HTTP 200 framing and final typed 404 packet.
+Native consumers of file presentations are rejected. The source remains trusted
+executable Rust, and presentation checks do not sandbox arbitrary callbacks.
+
 For reporting options, consult the repository's Security tab. If private
 vulnerability reporting is unavailable, contact a maintainer privately before
 sharing sensitive details. Do not include credentials or personal data.

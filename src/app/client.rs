@@ -6,6 +6,7 @@ use crate::{
 mod boundaries;
 mod document;
 mod layouts;
+mod not_found;
 mod progressive;
 pub use boundaries::ClientBoundary;
 pub use document::{ClientDocument, ClientDocumentHead};
@@ -156,6 +157,7 @@ pub(super) struct ClientRoute {
     state: fn(&NavigationMatch) -> Result<InitialState, PageError>,
     layout: Option<usize>,
     boundary: Option<ClientBoundary>,
+    not_found: Option<u32>,
     progressive: bool,
     document: Option<ClientDocumentHead>,
 }
@@ -217,6 +219,7 @@ impl App {
             cache: crate::NavigationCachePolicy::no_store(),
             layout: None,
             boundary: None,
+            not_found: None,
             progressive: false,
             document: None,
         });
@@ -300,12 +303,17 @@ impl App {
             if page.failed_segment().is_some() {
                 return self.validate_boundary_page(page);
             }
+            if page.status() == StatusCode::NotFound
+                && self.scoped_not_found_packet_required(page.url())
+            {
+                return false;
+            }
             return matches!(page.status(), StatusCode::BadRequest | StatusCode::NotFound)
                 && page.layouts().is_empty()
                 && page.data().is_empty()
                 && page.props()
                     == ComponentProps::new(
-                        self.client_error,
+                        self.failure_component(page.status()),
                         InitialState::Number(page.status().as_u16() as u32),
                     )
                     .unwrap();
@@ -495,6 +503,7 @@ impl App {
             Some(crate::NAVIGATION_MEDIA_TYPE | crate::NAVIGATION_STREAM_MEDIA_TYPE)
         ) && request.query_params().get("native") != Some("yes")
             && self.pages[index].client.unwrap().document.is_some()
+            && !self.has_not_found(index)
         {
             return self.client_document_response(index, context, request);
         }
@@ -513,7 +522,7 @@ impl App {
         };
         let status = error.status();
         let props = ComponentProps::new(
-            self.client_error,
+            self.failure_component(status),
             InitialState::Number(status.as_u16() as u32),
         )
         .unwrap();
@@ -534,6 +543,7 @@ impl App {
             Html::default(),
             request,
             crate::NavigationCachePolicy::no_store(),
+            None,
         )
         .unwrap_or_else(|_| Response::error(StatusCode::InternalServerError))
     }
@@ -580,6 +590,7 @@ impl App {
         fallback: Html,
         request: &Request,
         policy: crate::NavigationCachePolicy,
+        head: Option<ClientDocument>,
     ) -> Result<Response, PageError> {
         let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
         let native = request.query_params().get("native") == Some("yes");
@@ -590,7 +601,7 @@ impl App {
             factory,
             packet.props(),
             packet.data(),
-            packet.failed_segment().is_some(),
+            packet.status() != StatusCode::Ok,
             !native,
         )?;
         let mut page_html = Html::rendered(format!(
@@ -654,7 +665,13 @@ impl App {
             );
             body.push_str(&runtime.development_script());
         }
-        let mut document = Document::new(packet.title(), Html::rendered(body));
+        let mut document = match head {
+            Some(head) => head.buffered(packet.title(), Html::rendered(body))?,
+            None => Document::new(packet.title(), Html::rendered(body)),
+        };
+        if packet.status() != StatusCode::Ok {
+            document = document.metadata(Metadata::new().robots(Robots::NoIndexFollow));
+        }
         for stylesheet in &runtime.stylesheets {
             document = document.stylesheet(stylesheet.clone());
         }

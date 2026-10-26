@@ -50,8 +50,8 @@ pub use content::{
 };
 pub use development::{Development, MAX_DEVELOPMENT_STATUS_BYTES};
 pub use file_routes::{
-    FileError, FileLayout, FileLoading, FilePage, FileRouteBoundary, FileRouteError,
-    FileRouteLayout, FileRouteRegistry, FileRoutes, MAX_FILE_ROUTE_FILES,
+    FileError, FileLayout, FileLoading, FileNotFound, FilePage, FileRouteBoundary, FileRouteError,
+    FileRouteLayout, FileRouteNotFound, FileRouteRegistry, FileRoutes, MAX_FILE_ROUTE_FILES,
     MAX_FILE_ROUTE_MODULE_BYTES, MAX_FILE_ROUTE_SOURCE_BYTES, MAX_FILE_ROUTE_TOTAL_BYTES,
 };
 pub use forms::{FormData, FormError, GetForm, MAX_FORM_NAME_BYTES, MAX_POST_BODY_BYTES, PostForm};

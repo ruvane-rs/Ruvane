@@ -953,14 +953,14 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
     };
     let missing = error_packet("/tasks/999");
     assert_eq!(missing.status(), ruvane::StatusCode::NotFound);
-    assert_eq!(missing.props().component(), 16);
+    assert_eq!(missing.props().component(), 21);
     assert_eq!(missing.layouts().len(), 2);
     assert_eq!(missing.failed_segment(), Some(2));
     let override_path = root.join("src/routes/tasks/[id]/error.rs");
     let override_source = "pub fn error() -> ruvane::FileError { ruvane::FileError::new(crate::components::GLOBAL_ERROR) }\n";
     fs::write(&override_path, override_source).unwrap();
     running.address("Ruvane dev at");
-    assert_eq!(error_packet("/tasks/999").props().component(), 19);
+    assert_eq!(error_packet("/tasks/999").props().component(), 21);
     let retained = revision(&application_html(address)).to_owned();
     fs::write(
         &override_path,
@@ -969,7 +969,7 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
     .unwrap();
     running.until("keeping the previous server");
     assert_eq!(revision(&application_html(address)), retained);
-    assert_eq!(error_packet("/tasks/999").props().component(), 19);
+    assert_eq!(error_packet("/tasks/999").props().component(), 21);
     fs::write(&override_path, "pub fn error() -> ruvane::FileError { ruvane::FileError::new(crate::components::WORKSPACE) }\n").unwrap();
     running.until("Restored the previous server");
     assert_eq!(revision(&application_html(address)), retained);
@@ -982,7 +982,7 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
     );
     fs::remove_file(&override_path).unwrap();
     running.address("Ruvane dev at");
-    assert_eq!(error_packet("/tasks/999").props().component(), 16);
+    assert_eq!(error_packet("/tasks/999").props().component(), 21);
     let loading = root.join("src/routes/tasks/loading.rs");
     let loading_source = fs::read_to_string(&loading).unwrap();
     fs::remove_file(&loading).unwrap();
@@ -994,9 +994,39 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
             .unwrap()
             .contains("tasks/error.rs: loading.rs and error.rs must resolve")
     );
-    assert_eq!(error_packet("/tasks/999").props().component(), 16);
+    assert_eq!(error_packet("/tasks/999").props().component(), 21);
     fs::write(&loading, loading_source).unwrap();
     running.address("Ruvane dev at");
+    let not_found_path = root.join("src/routes/tasks/[id]/not_found.rs");
+    fs::write(&not_found_path, "pub fn not_found() -> ruvane::FileNotFound { ruvane::FileNotFound::new(crate::components::GLOBAL_NOT_FOUND) }\n").unwrap();
+    running.address("Ruvane dev at");
+    assert_eq!(error_packet("/tasks/999").props().component(), 20);
+    let retained = revision(&application_html(address)).to_owned();
+    fs::write(
+        &not_found_path,
+        "pub fn not_found() -> ruvane::FileError { ruvane::FileError::new(16) }\n",
+    )
+    .unwrap();
+    running.until("keeping the previous server");
+    assert_eq!(revision(&application_html(address)), retained);
+    assert_eq!(error_packet("/tasks/999").props().component(), 20);
+    fs::write(&not_found_path, "pub fn not_found() -> ruvane::FileNotFound { ruvane::FileNotFound::new(crate::components::WORKSPACE) }\n").unwrap();
+    running.until("Restored the previous server");
+    assert_eq!(revision(&application_html(address)), retained);
+    assert!(
+        running
+            .logs
+            .lock()
+            .unwrap()
+            .contains("tasks/[id]/not_found.rs: not-found presentation")
+    );
+    fs::remove_file(&not_found_path).unwrap();
+    running.address("Ruvane dev at");
+    assert_eq!(error_packet("/tasks/999").props().component(), 21);
+    let unknown = error_packet("/tasks/no/such/route");
+    assert_eq!(unknown.status(), ruvane::StatusCode::NotFound);
+    assert_eq!(unknown.props().component(), 20);
+    assert!(unknown.layouts().is_empty() && unknown.failed_segment().is_none());
     let added = root.join("src/routes/added");
     fs::create_dir(&added).unwrap();
     let page = "pub fn page() -> ruvane::FilePage { ruvane::FilePage::client(\"added\", crate::components::HOME, crate::pages::zero, |_| Ok(ruvane::ClientPageData::new(\"Added\", crate::store::snapshot()?))) }\n";
@@ -1050,7 +1080,7 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
     let home = fs::read_to_string(&home_path).unwrap();
     fs::write(&home_path, "pub fn page() {}\n").unwrap();
     running.until("keeping the previous server");
-    assert!(development_status(address, &session, "").contains("mismatched types"));
+    assert!(development_status(address, &session, "").contains("error[E"));
     assert_eq!(revision(&application_html(address)), retained);
     fs::write(&home_path, &home).unwrap();
     running.address("Ruvane dev at");
@@ -1082,6 +1112,9 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
     );
     fs::write(&settings_path, settings_source).unwrap();
     running.address("Ruvane dev at");
+    let global_not_found = root.join("src/routes/not_found.rs");
+    let global_not_found_source = fs::read_to_string(&global_not_found).unwrap();
+    fs::remove_file(&global_not_found).unwrap();
     let native_dir = root.join("src/routes/native");
     fs::create_dir(&native_dir).unwrap();
     fs::write(native_dir.join("page.rs"), "pub fn page() -> ruvane::FilePage { ruvane::FilePage::server(\"native\", ruvane::PageMode::fixed(), |_| Ok(ruvane::Page::new(\"Native file page\", \"Rendered from a file\"))) }\n").unwrap();
@@ -1094,6 +1127,7 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
             && !native.contains("<script")
     );
     fs::remove_file(native_dir.join("page.rs")).unwrap();
+    fs::write(&global_not_found, global_not_found_source).unwrap();
     running.address("Ruvane dev at");
     running.quit();
     let built = cli(&root, &["build", "--offline"]);

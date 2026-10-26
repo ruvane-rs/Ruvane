@@ -29,6 +29,7 @@ pub(in crate::app) struct ClientLayout {
     pub(super) load: LayoutLoader,
     pub(super) cache: NavigationCachePolicy,
     pub(super) boundary: Option<ClientBoundary>,
+    pub(super) not_found: Option<u32>,
 }
 type LayoutLoader =
     Arc<dyn Fn(&PageContext<'_>) -> Result<ClientLayoutData, PageError> + Send + Sync>;
@@ -114,6 +115,7 @@ impl App {
             load: Arc::new(load),
             cache: NavigationCachePolicy::no_store(),
             boundary: None,
+            not_found: None,
         });
         Ok(())
     }

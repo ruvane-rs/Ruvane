@@ -97,6 +97,31 @@ function patternParts(pattern){
   internalTarget(pattern.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g,(_,name)=>{if(names.has(name))throw failure();names.add(name);return "1";}));
   return pattern==="/"?[]:pattern.slice(1).split("/").map(value=>/^\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)?null:decodeURIComponent(value));
 }
+const ERROR_ROBOTS=new WeakMap();
+function errorMetadata(status){
+  const head=document.head;
+  let node=head.querySelector('meta[data-ruvane-error-status]');
+  if(status===200){
+    if(node){
+      if(ERROR_ROBOTS.has(node)){
+        const value=ERROR_ROBOTS.get(node);ERROR_ROBOTS.delete(node);
+        if(value===null)node.removeAttribute("content");else node.setAttribute("content",value);
+        node.removeAttribute("data-ruvane-error-status");
+      }else node.remove();
+    }
+    return;
+  }
+  if(!node){
+    node=head.querySelector('meta[name="robots"]');
+    const existing=node?.getAttribute("content")?.toLowerCase().split(/[\s,]+/)??[];
+    if(existing.includes("noindex")||existing.includes("none"))return;
+    if(node)ERROR_ROBOTS.set(node,node.getAttribute("content"));
+    else {node=document.createElement("meta");node.setAttribute("name","robots");head.append(node);}
+    node.setAttribute("data-ruvane-error-status","");
+  }
+  const directives=(node.getAttribute("content")??"").toLowerCase().split(/[\s,]+/).filter(value=>value&&value!=="index"&&value!=="noindex");
+  node.setAttribute("content",["noindex",...(directives.length?directives:["follow"])].join(", "));
+}
 function boundaryConfig(entries){
   if(!Array.isArray(entries)||entries.length>161)throw failure();
   const used=new Set(),records=entries.map(item=>{
@@ -472,7 +497,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         operation.changed=true;current?.dispose();
         for(const item of [...previousBranch,...source].reverse())if(!retained.has(item.controller)&&!retired.has(item.controller)){item.controller.dispose();retired.add(item.controller);}
         mountPoint.replaceChildren(fragment); branch=source.slice(0,shared).concat(preparedLayouts);preparedLayouts=[];current=prepared;prepared=null;operation.preview=null;pageHost=host; activeURL = url; started = true; history.scrollRestoration = "manual";
-        document.title = page.title; status.textContent = page.status === 200 ? "Ready." : `Page ${page.status}.`;
+        document.title = page.title; errorMetadata(page.status); status.textContent = page.status === 200 ? "Ready." : `Page ${page.status}.`;
         if (mode !== "start"&&!keepFocus) host.focus({ preventScroll:true }); restore(point);
         if (!cached) store(url,bytes,expires,version,epoch);
         if(page.failed!==null){lastFailure={url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(url,"error",false);}
@@ -574,6 +599,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
       transaction.commit();transaction=null;server.departing?.remove();server.fallback.remove();retired?.node.remove();
       if(focusRemoved)server.host.focus({preventScroll:true});
       branch=server.layouts.map((item,n)=>({...item,controller:controllers[n]}));current=controllers.at(-1);pageHost=server.host;activeURL=page.url;started=true;history.scrollRestoration="manual";
+      errorMetadata(page.status);
       status.textContent=page.status===200?"Ready.":`Page ${page.status}.`;
       if(page.failed!==null){lastFailure={url:page.url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(page.url,"error",false);}
       return "success";

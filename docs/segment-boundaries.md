@@ -29,6 +29,12 @@ The nearest configured ancestor is selected. Without a usable boundary, the
 existing global error/document behavior applies. Unknown URLs have no declared
 branch to inherit.
 
+Alpha.37 [not_found.rs](file-routes.md#not-found-presentations) declarations take
+priority for typed 404s, independently of loading/error pairs. Page, ancestor
+layout and global 404 declarations are checked before generic error boundaries.
+A layout still cannot catch its own failure. Unknown URLs use only the global
+404 and keep no layouts; other statuses retain the error-boundary rules above.
+
 ## Loading and transport errors
 
 The initial HTML contains a hidden, bounded `ruvane-boundaries` manifest with

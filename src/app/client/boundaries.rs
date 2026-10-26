@@ -112,8 +112,8 @@ impl App {
         if self.client_props(packet.url()).is_err() {
             return false;
         }
-        self.error_boundary(index, failed)
-            .is_some_and(|(depth, boundary)| {
+        self.failure_presentation(index, failed, packet.status())
+            .is_some_and(|(depth, component)| {
                 depth == packet.layouts().len()
                     && packet.data().is_empty()
                     && matches!(
@@ -123,7 +123,7 @@ impl App {
                             | StatusCode::InternalServerError
                     )
                     && ComponentProps::new(
-                        boundary.error,
+                        component,
                         InitialState::Number(packet.status().as_u16() as u32),
                     )
                     .is_ok_and(|props| props == packet.props())
@@ -141,7 +141,8 @@ impl App {
         request: &Request,
         error: PageError,
     ) -> Response {
-        let Some((depth, boundary)) = self.error_boundary(index, failed) else {
+        let Some((depth, component)) = self.failure_presentation(index, failed, error.status())
+        else {
             return self.client_failure(request, error);
         };
         let result = Self::guarded(|| {
@@ -157,7 +158,7 @@ impl App {
             let packet = NavigationPage::new(
                 Self::target(request)?,
                 title,
-                ComponentProps::new(boundary.error, InitialState::Number(status.as_u16() as u32))
+                ComponentProps::new(component, InitialState::Number(status.as_u16() as u32))
                     .unwrap(),
                 ActionData::default(),
                 status,
@@ -169,6 +170,7 @@ impl App {
                 Html::default(),
                 request,
                 NavigationCachePolicy::no_store(),
+                None,
             )
         });
         result.unwrap_or_else(|_| Response::error(StatusCode::InternalServerError))
@@ -249,7 +251,22 @@ impl App {
             )
             .and_then(|page| page.with_layouts(seeds.clone()))
             .map_err(|_| PageError::InternalServerError)?;
-            self.client_finish(&packet, page.body, request, policy)
+            let head = if !matches!(
+                request.header("accept"),
+                Some(crate::NAVIGATION_MEDIA_TYPE | crate::NAVIGATION_STREAM_MEDIA_TYPE)
+            ) && request.query_params().get("native") != Some("yes")
+                && self.has_not_found(index)
+            {
+                self.pages[index]
+                    .client
+                    .unwrap()
+                    .document
+                    .map(|head| head(context))
+                    .transpose()?
+            } else {
+                None
+            };
+            self.client_finish(&packet, page.body, request, policy, head)
         });
         result.unwrap_or_else(|error| {
             self.boundary_failure(index, chain.len(), seeds, request, error)

@@ -22,6 +22,12 @@ The generated interactive application demonstrates this at
 response. The existing `/tasks/project` demonstration still exercises progressive
 client navigation. Native `HtmlStream` responses retain their script-blocking CSP.
 
+Custom [file 404 profiles](file-routes.md#not-found-presentations) buffer their
+initial documents so HTTP 404 can be decided before headers commit. Successful
+buffered documents retain the configured head. Routes without a custom 404
+profile retain the streaming behavior described below. Progressive navigation
+keeps its separate RVS1 transport contract.
+
 ## Before headers
 
 The head resolver returns the title, language, typed `Metadata` and `StreamLimits`.

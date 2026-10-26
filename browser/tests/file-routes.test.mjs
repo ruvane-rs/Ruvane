@@ -16,8 +16,11 @@ const empty = [82,86,65,49,0,0,0], count = [82,86,65,49,0,1,0,5,99,111,117,110,1
 function packet(url, component, state = 0, layouts = []) {
   return new Uint8Array([82,86,80,layouts.length ? 50 : 49,...(layouts.length ? [0] : []),200,0,...text(url),...text("File route"),...word(component),...word(1),...word(state),...word(count.length),...count,...(layouts.length ? [layouts.length, ...layouts.flatMap(([name,key,id,value]) => [...text(name),...text(key),...word(id),...word(1),...word(value),...word(empty.length),...empty])] : [])]);
 }
-function failure(url, component, layouts, failed = layouts.length) {
-  return new Uint8Array([82,86,80,51,0,failed,244,1,...text(url),...text("File error"),...word(component),...word(1),...word(500),...word(empty.length),...empty,layouts.length,...layouts.flatMap(([name,key,id,value]) => [...text(name),...text(key),...word(id),...word(1),...word(value),...word(empty.length),...empty])]);
+function failure(url, component, layouts, failed = layouts.length, status = 500) {
+  return new Uint8Array([82,86,80,51,0,failed,status & 255,status >>> 8,...text(url),...text("File error"),...word(component),...word(1),...word(status),...word(empty.length),...empty,layouts.length,...layouts.flatMap(([name,key,id,value]) => [...text(name),...text(key),...word(id),...word(1),...word(value),...word(empty.length),...empty])]);
+}
+function missing(url, component) {
+  return new Uint8Array([82,86,80,49,148,1,...text(url),...text("Missing"),...word(component),...word(1),...word(404),...word(empty.length),...empty]);
 }
 async function exportsFor(project, version) {
   const bundle = join(project, "dist", `build-${String(version).padStart(6,"0")}`);
@@ -53,6 +56,16 @@ await test("generated file routes own the same Wasm registry across additions an
       const owner = e.ruvane_boundary_mount(8,15,1,0); assert.ok(owner); e.ruvane_commands_clear();
       assert.equal(e.ruvane_dispose(owner),1); e.ruvane_commands_clear(); assert.equal(e.ruvane_live_instances(),0);
     });
+    await t.test("file 404s validate the dedicated component, status and complete parent scope", () => {
+      assert.equal(probe(e,failure("/tasks/999",21,parents,2,404)),1);
+      for (const bytes of [failure("/tasks/999",20,parents,2,404),failure("/tasks/999",16,parents,2,404),failure("/tasks/999",21,parents,2,500),failure("/tasks/999",21,[],2,404),missing("/tasks/999",20)]) assert.equal(probe(e,bytes),0);
+      assert.equal(probe(e,missing("/unknown",20)),1);
+      assert.equal(probe(e,missing("/tasks/no/such/route",20)),1);
+      assert.equal(probe(e,missing("/unknown",21)),0);
+      assert.equal(probe(e,missing("/unknown",11)),0);
+    });
+    const notFoundOverride = join(project,"src/routes/tasks/[id]/not_found.rs");
+    await writeFile(notFoundOverride,'pub fn not_found() -> ruvane::FileNotFound { ruvane::FileNotFound::new(crate::components::GLOBAL_NOT_FOUND) }\n');
     const override = join(project,"src/routes/tasks/[id]/error.rs");
     await writeFile(override,'pub fn error() -> ruvane::FileError { ruvane::FileError::new(crate::components::GLOBAL_ERROR) }\n');
     const added = join(project,"src/routes/added"); await mkdir(added);
@@ -63,6 +76,15 @@ await test("generated file routes own the same Wasm registry across additions an
       assert.equal(probe(updated,failure("/tasks/999",19,parents)),1);
       assert.equal(probe(updated,failure("/tasks/999",16,parents)),0);
     });
+    await t.test("a local not-found override changes only 404 ownership", () => {
+      assert.equal(probe(updated,failure("/tasks/999",20,parents,2,404)),1);
+      assert.equal(probe(updated,failure("/tasks/999",21,parents,2,404)),0);
+      assert.equal(probe(updated,failure("/tasks/999",19,parents)),1);
+      assert.equal(probe(updated,missing("/unknown",20)),1);
+    });
+    await rm(notFoundOverride);
+    await rm(join(project,"src/routes/not_found.rs"));
+    await rm(join(project,"src/routes/tasks/not_found.rs"));
     await rm(override);
     await rm(join(project,"src/routes/tasks/loading.rs"));
     await rm(join(project,"src/routes/tasks/error.rs"));
@@ -72,6 +94,11 @@ await test("generated file routes own the same Wasm registry across additions an
       assert.equal(probe(removed,failure("/tasks/999",19,[],2)),1);
       assert.equal(probe(removed,failure("/tasks/999",19,parents)),0);
       assert.equal(probe(removed,failure("/tasks/999",16,parents)),0);
+    });
+    await t.test("removing not-found files restores generic unknown-URL ownership", () => {
+      assert.equal(probe(removed,missing("/unknown",11)),1);
+      assert.equal(probe(removed,missing("/unknown",20)),0);
+      assert.equal(probe(removed,failure("/tasks/999",21,parents,2,404)),0);
     });
   } finally { await rm(directory,{recursive:true,force:true}); }
 });

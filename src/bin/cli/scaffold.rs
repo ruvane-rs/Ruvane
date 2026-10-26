@@ -245,6 +245,14 @@ fn create_interactive(name: &str, framework: Option<&Path>, file_routes: bool) -
                 include_str!("templates/file_routes/home.rs.txt"),
             ),
             (
+                "src/routes/not_found.rs",
+                include_str!("templates/file_routes/root_not_found.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/not_found.rs",
+                include_str!("templates/file_routes/task_not_found.rs.txt"),
+            ),
+            (
                 "src/routes/tasks/page.rs",
                 include_str!("templates/file_routes/tasks.rs.txt"),
             ),

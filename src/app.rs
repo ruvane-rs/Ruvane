@@ -320,6 +320,7 @@ pub struct App {
     client_factory: Option<ComponentFactory>,
     client_error: u32,
     client_boundary: Option<ClientBoundary>,
+    client_not_found: Option<u32>,
     client_runtime: Option<ClientRuntime>,
     client_layouts: Vec<client::ClientLayout>,
 }

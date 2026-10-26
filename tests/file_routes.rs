@@ -419,3 +419,51 @@ fn regeneration_rechecks_the_combined_source_budget_including_screens() {
             .contains("total byte limit")
     );
 }
+
+#[test]
+fn not_found_files_have_independent_inheritance_and_share_source_limits() {
+    let temp = Temp::new();
+    for file in [
+        "routes/not_found.rs",
+        "routes/page.rs",
+        "routes/tasks/not_found.rs",
+        "routes/tasks/layout.rs",
+        "routes/tasks/page.rs",
+        "routes/tasks/[id]/page.rs",
+    ] {
+        temp.file(file, "");
+    }
+    let routes = temp.routes().unwrap();
+    assert_eq!(routes.not_found_count(), 2);
+    let source = routes.rust_module().unwrap();
+    assert!(
+        source.contains("registry.not_found(\"not_found.rs\", __ruvane_file_0::not_found(), true)")
+    );
+    assert!(source.contains(
+        "registry.not_found(\"tasks/not_found.rs\", __ruvane_file_2::not_found(), false)"
+    ));
+    assert!(source.contains("::layout().with_not_found(&not_found_2)"));
+    assert_eq!(
+        source
+            .matches("::page().with_not_found(&not_found_2)")
+            .count(),
+        2
+    );
+    assert_eq!(source, routes.rust_module().unwrap());
+    let temp = Temp::new();
+    temp.file("routes/page.rs", "");
+    temp.file("routes/orphan/not_found.rs", "");
+    assert!(
+        temp.routes()
+            .unwrap_err()
+            .to_string()
+            .contains("orphan/not_found.rs: not-found presentation has no descendant pages")
+    );
+    let temp = Temp::new();
+    temp.file("routes/page.rs", "");
+    temp.file(
+        "routes/not_found.rs",
+        vec![b' '; ruvane::MAX_FILE_ROUTE_SOURCE_BYTES + 1],
+    );
+    assert_eq!(temp.routes().unwrap_err().path(), "not_found.rs");
+}

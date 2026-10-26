@@ -31,6 +31,19 @@ impl FileError {
     }
 }
 
+/// A read-only Number(404) component declared by `pub fn not_found()`.
+pub struct FileNotFound(u32);
+impl FileNotFound {
+    /// Declares a component validated with an empty seed before registration commits.
+    pub fn new(component: u32) -> Self {
+        Self(component)
+    }
+}
+
+/// A validated file 404 presentation inherited by generated client routes.
+#[derive(Clone, Copy)]
+pub struct FileRouteNotFound(u32);
+
 /// A complete, validated pair of inherited file presentations.
 #[derive(Clone, Copy)]
 pub struct FileRouteBoundary {
@@ -48,6 +61,7 @@ pub struct FilePage {
     name: String,
     kind: PageKind,
     boundary: Option<FileRouteBoundary>,
+    not_found: Option<FileRouteNotFound>,
 }
 enum PageKind {
     Server(PageMode, PageLoader),
@@ -64,6 +78,7 @@ impl FilePage {
             name: name.into(),
             kind: PageKind::Server(mode, Arc::new(render)),
             boundary: None,
+            not_found: None,
         }
     }
     /// Declares a shared SSR/Wasm page. The component factory remains application-owned.
@@ -77,11 +92,17 @@ impl FilePage {
             name: name.into(),
             kind: PageKind::Client(component, state, Arc::new(load)),
             boundary: None,
+            not_found: None,
         }
     }
     /// Attaches the generated directory's presentations to this client page.
     pub fn with_boundary(mut self, boundary: &FileRouteBoundary) -> Self {
         self.boundary = Some(*boundary);
+        self
+    }
+    /// Attaches the directory's inherited 404 presentation to a client declaration.
+    pub fn with_not_found(mut self, presentation: &FileRouteNotFound) -> Self {
+        self.not_found = Some(*presentation);
         self
     }
 }
@@ -91,6 +112,7 @@ pub struct FileLayout {
     name: String,
     kind: LayoutKind,
     boundary: Option<FileRouteBoundary>,
+    not_found: Option<FileRouteNotFound>,
 }
 enum LayoutKind {
     Server(LayoutRenderer),
@@ -106,6 +128,7 @@ impl FileLayout {
             name: name.into(),
             kind: LayoutKind::Server(Arc::new(render)),
             boundary: None,
+            not_found: None,
         }
     }
     /// Declares a persistent client layout inherited by interactive descendant pages.
@@ -119,11 +142,17 @@ impl FileLayout {
             name: name.into(),
             kind: LayoutKind::Client(component, state, Arc::new(load)),
             boundary: None,
+            not_found: None,
         }
     }
     /// Attaches presentations for this client layout's children, excluding its own loader.
     pub fn with_boundary(mut self, boundary: &FileRouteBoundary) -> Self {
         self.boundary = Some(*boundary);
+        self
+    }
+    /// Attaches the directory's inherited 404 presentation to a client declaration.
+    pub fn with_not_found(mut self, presentation: &FileRouteNotFound) -> Self {
+        self.not_found = Some(*presentation);
         self
     }
 }
@@ -149,6 +178,27 @@ impl<'a> FileRouteRegistry<'a> {
             target: app,
             failed: false,
         }
+    }
+
+    /// Checks a local 404 component and optionally sets the global unknown-URL fallback.
+    pub fn not_found(
+        &mut self,
+        source: &str,
+        declaration: FileNotFound,
+        global: bool,
+    ) -> Result<FileRouteNotFound, FileRouteError> {
+        let result = (|| {
+            self.candidate.validate_file_presentation(declaration.0, &[404])
+                .map_err(|_| FileRouteError::at(source, "not-found presentation must accept Number(404), an empty seed and a read-only view"))?;
+            if global {
+                self.candidate
+                    .client_not_found(Some(declaration.0))
+                    .map_err(|error| FileRouteError::at(source, error))?;
+            }
+            Ok(FileRouteNotFound(declaration.0))
+        })();
+        self.failed |= result.is_err();
+        result
     }
 
     /// Resolves local screens against file ancestors, without consulting the App fallback.
@@ -223,7 +273,7 @@ impl<'a> FileRouteRegistry<'a> {
         declaration: FileLayout,
     ) -> Result<FileRouteLayout, FileRouteError> {
         let client = matches!(declaration.kind, LayoutKind::Client(..));
-        if !client && declaration.boundary.is_some() {
+        if !client && (declaration.boundary.is_some() || declaration.not_found.is_some()) {
             return Err(FileRouteError::at(
                 source,
                 "file presentations require a client layout",
@@ -257,6 +307,11 @@ impl<'a> FileRouteRegistry<'a> {
                 .client_layout_boundary(&declaration.name, Some(boundary.client()))
                 .map_err(|error| FileRouteError::at(source, error))?;
         }
+        if let Some(presentation) = declaration.not_found {
+            self.candidate
+                .client_layout_not_found(&declaration.name, Some(presentation.0))
+                .map_err(|error| FileRouteError::at(source, error))?;
+        }
         Ok(FileRouteLayout {
             name: declaration.name,
             client,
@@ -283,7 +338,7 @@ impl<'a> FileRouteRegistry<'a> {
         declaration: FilePage,
     ) -> Result<(), FileRouteError> {
         let client = matches!(declaration.kind, PageKind::Client(..));
-        if !client && declaration.boundary.is_some() {
+        if !client && (declaration.boundary.is_some() || declaration.not_found.is_some()) {
             return Err(FileRouteError::at(
                 source,
                 "file presentations require a client page",
@@ -323,6 +378,11 @@ impl<'a> FileRouteRegistry<'a> {
         if let Some(boundary) = declaration.boundary {
             self.candidate
                 .client_page_boundary(&declaration.name, Some(boundary.client()))
+                .map_err(|error| FileRouteError::at(source, error))?;
+        }
+        if let Some(presentation) = declaration.not_found {
+            self.candidate
+                .client_page_not_found(&declaration.name, Some(presentation.0))
                 .map_err(|error| FileRouteError::at(source, error))?;
         }
         Ok(())

@@ -29,6 +29,15 @@ impl ClientDocument {
             hydrate_shell: false,
         }
     }
+    pub(super) fn buffered(self, title: &str, body: Html) -> Result<Document, PageError> {
+        if self.title != title {
+            return Err(PageError::InternalServerError);
+        }
+        Ok(Document::new(title, body)
+            .language(self.language)
+            .metadata(self.metadata))
+    }
+
     /// Sets the escaped document language.
     pub fn language(mut self, language: impl Into<String>) -> Self {
         self.language = language.into();
@@ -73,6 +82,8 @@ impl App {
     /// Streams a page's initial HTML, or restores buffered SSR with None.
     /// Head resolution runs before headers; loaders run root-first after them.
     /// Native-only and typed navigation requests retain their existing behavior.
+    /// A custom 404 profile buffers the initial document to decide its HTTP status.
+    /// Successful buffered documents retain this head's title, language and metadata.
     pub fn client_page_document_streaming(
         &mut self,
         name: &str,
@@ -305,14 +316,13 @@ impl DocumentProducer {
         }
         // A rejected record may have added a seed without emitting its layout.
         self.seeds.truncate(failed);
-        let (depth, boundary) = self
+        let (depth, component) = self
             .app
-            .error_boundary(self.index, self.opened)
+            .failure_presentation(self.index, self.opened, error.status())
             .ok_or(PageError::InternalServerError)?;
         let status = error.status();
-        let props =
-            ComponentProps::new(boundary.error, InitialState::Number(status.as_u16() as u32))
-                .map_err(|_| PageError::InternalServerError)?;
+        let props = ComponentProps::new(component, InitialState::Number(status.as_u16() as u32))
+            .map_err(|_| PageError::InternalServerError)?;
         let packet = NavigationPage::new(
             self.url.clone(),
             &self.title,

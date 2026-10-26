@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.37 — Unreleased
+
+- Add typed not_found.rs declarations independent of loading/error pairs, with
+  inherited client presentations and a root fallback for unmatched URLs.
+- Select dedicated 404 views before generic error boundaries while preserving
+  healthy validated parents and excluding a failed layout from its own scope.
+- Validate read-only Number(404) views and reject forged components, statuses,
+  seeds and parent scopes in native and Wasm navigation.
+- Preserve real HTTP 404, no-store, noindex metadata and script-free native
+  responses. Buffer initial documents under custom 404 profiles before headers;
+  retain configured successful heads and the existing progressive navigation wire.
+- Add global/task starter views, source diagnostics, atomic dev recovery and
+  native, CLI, Wasm and browser coverage without third-party dependencies.
+  ABI v11, 22 exports, four runtime assets and two first-party crates remain.
+
 ## 0.1.0-alpha.36 — Unreleased
 
 - Generate typed loading.rs/error.rs declarations with explicit file inheritance;
