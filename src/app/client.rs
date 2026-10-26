@@ -78,6 +78,7 @@ pub struct ClientRuntime {
     revision: u64,
     shell: fn(Html) -> Html,
     stylesheets: Vec<InternalUrl>,
+    development: Option<crate::Development>,
 }
 impl ClientRuntime {
     /// Attaches a trusted, bounded Wasm module with the same exported revision.
@@ -90,6 +91,7 @@ impl ClientRuntime {
             revision,
             shell: |children| children,
             stylesheets: Vec::new(),
+            development: None,
         })
     }
     /// Sets a common shell. It must not depend on the current route or page title.
@@ -97,6 +99,20 @@ impl ClientRuntime {
     pub fn shell(mut self, shell: fn(Html) -> Html) -> Self {
         self.shell = shell;
         self
+    }
+    /// Enables local CLI diagnostics and guarded full-document reloads.
+    /// Production builds must leave this unset.
+    pub fn development(mut self, development: crate::Development) -> Self {
+        self.development = Some(development);
+        self
+    }
+    fn development_script(&self) -> String {
+        self.development
+            .as_ref()
+            .map_or_else(String::new, |value| value.script(self.revision))
+    }
+    pub(super) fn route_count(&self) -> usize {
+        4 + usize::from(self.development.is_some()) * 3
     }
     /// Adds a stylesheet shared by all interactive pages.
     pub fn stylesheet(mut self, url: InternalUrl) -> Result<Self, AppError> {
@@ -341,7 +357,12 @@ impl App {
         })
     }
     pub(super) fn validate_client_routes(&self, router: &mut Router) -> Result<(), AppError> {
-        if self.pages.len() + self.assets.len() + usize::from(self.client_runtime.is_some()) * 4
+        if self.pages.len()
+            + self.assets.len()
+            + self
+                .client_runtime
+                .as_ref()
+                .map_or(0, ClientRuntime::route_count)
             > MAX_APP_ROUTES
         {
             return Err(AppError::TooManyRoutes);
@@ -370,6 +391,9 @@ impl App {
                 }
                 router.get(runtime.asset(name), |_| Response::text(""))?;
             }
+            if let Some(development) = &runtime.development {
+                development.mount(router)?;
+            }
         }
         Ok(())
     }
@@ -394,6 +418,9 @@ impl App {
                 router
                     .asset(runtime.asset(name), bytes, kind)
                     .map_err(|_| AppError::RouteConflict)?;
+            }
+            if let Some(development) = &runtime.development {
+                development.mount(router)?;
             }
         }
         Ok(())
@@ -579,6 +606,7 @@ impl App {
                 crate::module_script(&InternalUrl::new(&runtime.asset("application.mjs")).unwrap())
                     .as_str(),
             );
+            body.push_str(&runtime.development_script());
         }
         let mut document = Document::new(packet.title(), Html::rendered(body));
         for stylesheet in &runtime.stylesheets {

@@ -1,0 +1,8 @@
+#ruvane-development-panel{position:fixed;z-index:2147483647;right:1rem;bottom:1rem;width:min(42rem,calc(100vw - 2rem));max-height:65vh;overflow:auto;box-sizing:border-box;padding:1rem;background:#101827;color:#f5f7fa;border:1px solid #8190a5;border-radius:.5rem;box-shadow:0 .5rem 2rem #0005;font:14px/1.5 system-ui,sans-serif;color-scheme:dark}
+#ruvane-development-panel[hidden],#ruvane-development-panel [hidden]{display:none}
+#ruvane-development-panel p{margin:0 0 .5rem;color:inherit}
+#ruvane-development-panel p[role=status]{font-weight:700}
+#ruvane-development-panel pre{overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;color:#ffd3d0;margin:.5rem 0}
+#ruvane-development-panel button{padding:.4rem .8rem;border:1px solid #abb9cc;border-radius:.25rem;background:#25364f;color:#fff;font:inherit;cursor:pointer}
+#ruvane-development-panel button:focus-visible{outline:3px solid #88bfff;outline-offset:3px}
+#ruvane-development-panel button:disabled{opacity:.6;cursor:wait}

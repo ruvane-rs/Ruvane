@@ -167,8 +167,10 @@ snapshotted. These checks do not sandbox trusted Cargo builds.
 
 Only a complete candidate stops the previous server. A Wasm or native compiler
 failure keeps the old server and its module. Startup failure attempts to restart
-the retained executable, which still embeds its old module. The browser refresh
-is manual. In-memory state resets on a process restart, including restoration.
+the retained executable, which still embeds its old module. New alpha.33 starters
+show compiler diagnostics and reload ready versions when input and actions are
+safe. See [development feedback](development.md), including the update needed for
+older starters. In-memory state resets on a process restart, including restoration.
 
 ```sh
 ruvane build --offline

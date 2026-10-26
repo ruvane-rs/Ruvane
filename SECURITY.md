@@ -504,6 +504,13 @@ applications must keep sensitive data out of their own logs. Builds using
 Local binding and Host checks are not an authentication boundary against
 other local programs. Read handlers must not perform state-changing actions.
 
+Alpha.33 development diagnostics use explicit compile-time configuration,
+same-origin external assets, bounded status/output reads and per-session checks.
+Production builds remove inherited development configuration; native-only pages
+keep scripts disabled. Compiler output is visible to the local development
+browser and must not contain secrets. Session IDs are public and do not
+authenticate local programs. See [development feedback](docs/development.md).
+
 For reporting options, consult the repository's Security tab. If private
 vulnerability reporting is unavailable, contact a maintainer privately before
 sharing sensitive details. Do not include credentials or personal data.

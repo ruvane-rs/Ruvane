@@ -1,13 +1,16 @@
-use super::{Result, project, watch};
+use super::{Result, development, project, watch};
 use ruvane::SiteOrigin;
 use std::fs;
+use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+static READING_COMPILER: AtomicBool = AtomicBool::new(false);
 const EXECUTABLE: &str = if cfg!(windows) {
     "ruvane-app.exe"
 } else {
@@ -69,14 +72,16 @@ pub(super) fn compile(
     project: &project::Project,
     offline: bool,
     quit: &AtomicBool,
+    development: Option<&development::Session>,
 ) -> Result<Binary> {
-    compile_profile(project, offline, quit, false)
+    compile_profile(project, offline, quit, false, development)
 }
 fn compile_profile(
     project: &project::Project,
     offline: bool,
     quit: &AtomicBool,
     release: bool,
+    development: Option<&development::Session>,
 ) -> Result<Binary> {
     let content = project.root.join("content");
     if fs::symlink_metadata(&content).is_ok() {
@@ -141,8 +146,7 @@ fn compile_profile(
             "--release",
         ])
         .env("RUVANE_APPLICATION_REVISION", binary.revision.to_string());
-        let mut child = ChildGuard(wasm.spawn()?);
-        wait(&mut child, quit, Duration::from_secs(120))?;
+        run_compiler(wasm, quit)?;
         let bytes = project::read(
             &target.join("wasm32-unknown-unknown/release/ruvane_application_browser.wasm"),
             ruvane::MAX_ASSET_BYTES,
@@ -176,6 +180,13 @@ fn compile_profile(
             .env("RUVANE_WASM_FILE", path)
             .env("RUVANE_APPLICATION_REVISION", binary.revision.to_string());
     }
+    if !release {
+        if let Some(development) = development {
+            command
+                .env("RUVANE_DEV_STATUS", &development.path)
+                .env("RUVANE_DEV_SESSION", development.id.to_string());
+        }
+    }
     command.env(
         "RUVANE_CONTENT_REVISION",
         format!(
@@ -184,8 +195,7 @@ fn compile_profile(
             NEXT.fetch_add(1, Ordering::Relaxed)
         ),
     );
-    let mut child = ChildGuard(command.spawn()?);
-    wait(&mut child, quit, Duration::from_secs(120))?;
+    run_compiler(command, quit)?;
     if let Some(before) = &before {
         if *before != watch::snapshot(&project.root)? {
             return Err("sources changed during compilation; waiting for the next build".into());
@@ -210,6 +220,10 @@ fn cargo(project: &project::Project, target: &Path, offline: bool) -> Command {
         .arg(project.root.join("Cargo.toml"))
         .arg("--target-dir")
         .arg(target)
+        .arg("--color")
+        .arg("never")
+        .env_remove("RUVANE_DEV_STATUS")
+        .env_remove("RUVANE_DEV_SESSION")
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
@@ -217,6 +231,76 @@ fn cargo(project: &project::Project, target: &Path, offline: bool) -> Command {
         command.arg("--offline");
     }
     command
+}
+
+struct CompilerReader;
+impl Drop for CompilerReader {
+    fn drop(&mut self) {
+        READING_COMPILER.store(false, Ordering::SeqCst);
+    }
+}
+
+#[derive(Debug)]
+struct CompilerFailure {
+    reason: String,
+    output: String,
+}
+impl std::fmt::Display for CompilerFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+impl std::error::Error for CompilerFailure {}
+
+pub(super) fn diagnostics(error: &(dyn std::error::Error + 'static)) -> String {
+    error.downcast_ref::<CompilerFailure>().map_or_else(
+        || error.to_string(),
+        |failure| format!("{}\n{}", failure.reason, failure.output),
+    )
+}
+
+fn run_compiler(mut command: Command, quit: &AtomicBool) -> Result<()> {
+    if READING_COMPILER.swap(true, Ordering::SeqCst) {
+        return Err(
+            "previous compiler output is still open; stop its descendants before rebuilding".into(),
+        );
+    }
+    let guard = CompilerReader;
+    let mut child = ChildGuard(command.stderr(Stdio::piped()).spawn()?);
+    let mut stream = child.0.stderr.take().ok_or("missing compiler output")?;
+    let output = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let captured = Arc::clone(&output);
+    let reader = std::thread::spawn(move || {
+        let _guard = guard;
+        let mut chunk = [0; 4096];
+        loop {
+            let size = match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(size) => size,
+            };
+            let _ = std::io::stderr().lock().write_all(&chunk[..size]);
+            let mut tail = captured.lock().unwrap_or_else(|error| error.into_inner());
+            tail.extend_from_slice(&chunk[..size]);
+            let excess = tail.len().saturating_sub(24 * 1024);
+            tail.drain(..excess);
+        }
+    });
+    let outcome = wait(&mut child, quit, Duration::from_secs(120));
+    drop(child);
+    let start = Instant::now();
+    while !reader.is_finished() && start.elapsed() < Duration::from_millis(200) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if reader.is_finished() {
+        let _ = reader.join();
+    }
+    outcome.map_err(|error| {
+        let bytes = output.lock().unwrap_or_else(|error| error.into_inner());
+        Box::new(CompilerFailure {
+            reason: error.to_string(),
+            output: String::from_utf8_lossy(&bytes).into_owned(),
+        }) as Box<dyn std::error::Error>
+    })
 }
 
 pub(super) fn build_application(
@@ -228,7 +312,7 @@ pub(super) fn build_application(
     project::managed(&container, ".ruvane-app-builds", super::APP_BUILDS_MARKER)?;
     let version = project::next_build(&container)?;
     let destination = container.join(&version);
-    let binary = compile_profile(project, offline, &AtomicBool::new(false), true)?;
+    let binary = compile_profile(project, offline, &AtomicBool::new(false), true, None)?;
     fs::create_dir(&destination)?;
     let resources = destination.join("resources");
     let identity = destination.join("Ruvane.runtime");
@@ -317,6 +401,9 @@ pub(super) struct App {
 }
 
 impl App {
+    pub fn revision(&self) -> u64 {
+        self.binary.revision
+    }
     pub fn start(binary: Binary, port: u16, quit: &AtomicBool) -> Result<Self> {
         let mut app = Self {
             binary,

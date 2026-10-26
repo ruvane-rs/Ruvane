@@ -463,7 +463,12 @@ impl App {
     }
 
     fn check_capacity(&self) -> Result<(), AppError> {
-        if self.pages.len() + self.assets.len() + usize::from(self.client_runtime.is_some()) * 4
+        if self.pages.len()
+            + self.assets.len()
+            + self
+                .client_runtime
+                .as_ref()
+                .map_or(0, ClientRuntime::route_count)
             >= MAX_APP_ROUTES
         {
             Err(AppError::TooManyRoutes)

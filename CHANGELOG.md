@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-alpha.33 — Unreleased
+
+- Add first-build waiting pages and bounded browser compiler diagnostics for
+  generated interactive development projects.
+- Publish a new revision only after server readiness; retain the previous app on
+  compiler errors and attempt executable rollback after startup failure.
+- Reload clean documents automatically; protect drafts, composition, pending
+  navigation, native submissions and pending or uncertain actions.
+- Offer explicit reload for protected documents, without replaying mutations.
+- Isolate development routes, scripts and configuration from production builds;
+  preserve native-only CSP, loopback origin checks and the four runtime assets.
+- Add native and browser lifecycle coverage without third-party dependencies.
+  ABI v11, 22 exports and two first-party crates remain.
+
 ## 0.1.0-alpha.32 — Unreleased
 
 - Add explicit early shell hydration, independently of early layout hydration.

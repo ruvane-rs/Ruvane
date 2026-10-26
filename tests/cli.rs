@@ -560,6 +560,24 @@ fn interactive_wire(address: SocketAddr, target: &str, typed: bool) -> Vec<u8> {
     stream.read_to_end(&mut bytes).unwrap();
     bytes
 }
+fn development_status(address: SocketAddr, session: &str, extra: &str) -> String {
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .unwrap();
+    write!(stream, "GET /_ruvane/dev/status HTTP/1.1\r\nHost: {address}\r\nAccept: text/plain\r\nRuvane-Development: {session}\r\n{extra}\r\n").unwrap();
+    let mut text = String::new();
+    stream.read_to_string(&mut text).unwrap();
+    text
+}
+fn development_session(html: &str) -> &str {
+    html.split("data-session=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+}
 fn response_body(bytes: &[u8]) -> &[u8] {
     let index = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
     &bytes[index + 4..]
@@ -619,9 +637,45 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
         String::from_utf8_lossy(&output.stderr)
     );
     let root = temp.0.join("application");
+    let wasm_path = root.join("browser/src/lib.rs");
+    let wasm = fs::read_to_string(&wasm_path).unwrap();
+    fs::write(
+        &wasm_path,
+        format!("{wasm}\ncompile_error!(\"first build failure <script>\");\n"),
+    )
+    .unwrap();
     let mut running = Running::start(&root, &["dev", "--offline", "--port", "0"]);
+    let waiting = running.address("Ruvane dev waiting at");
+    running.until("keeping the previous server");
+    let waiting_html = application_html(waiting);
+    let session = development_session(&waiting_html).to_owned();
+    let status = development_status(waiting, &session, "");
+    assert!(
+        status.starts_with("HTTP/1.1 200")
+            && status.contains("\nerror\n0\n\n")
+            && status.contains("first build failure <script>")
+    );
+    assert!(
+        status.contains("Cache-Control: no-store")
+            && status.contains("X-Content-Type-Options: nosniff")
+    );
+    assert!(development_status(waiting, "1", "").starts_with("HTTP/1.1 409"));
+    for header in [
+        "Sec-Fetch-Site: cross-site\r\n",
+        "Origin: http://example.com\r\n",
+    ] {
+        assert!(development_status(waiting, &session, header).starts_with("HTTP/1.1 403"));
+    }
+    assert!(
+        String::from_utf8(interactive_wire(waiting, "/tasks/12", false))
+            .unwrap()
+            .contains("Waiting for the application build")
+    );
+    fs::write(&wasm_path, &wasm).unwrap();
     let address = running.address("Ruvane dev at");
+    assert_eq!(address, waiting);
     let html = application_html(address);
+    assert_eq!(development_session(&html), session);
     let version = revision(&html).to_owned();
     let path = module_path(&html).to_owned();
     assert!(html.contains("<a href=\"/stream\">Streaming SSR</a>"));
@@ -672,14 +726,13 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
             .status(),
         ruvane::StatusCode::NotFound
     );
-    let wasm_path = root.join("browser/src/lib.rs");
-    let wasm = fs::read_to_string(&wasm_path).unwrap();
     fs::write(
         &wasm_path,
         format!("{wasm}\ncompile_error!(\"wasm failure\");\n"),
     )
     .unwrap();
     running.until("keeping the previous server");
+    assert!(development_status(address, &session, "").contains("wasm failure"));
     assert_eq!(revision(&application_html(address)), version);
     assert_eq!(
         response_body(&interactive_wire(address, &path, false)),
@@ -689,6 +742,10 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
     let restored = running.address("Ruvane dev at");
     assert_eq!(restored, address);
     let updated = application_html(address);
+    assert!(
+        development_status(address, &session, "")
+            .contains(&format!("\nready\n{}\n\n", revision(&updated)))
+    );
     assert_ne!(revision(&updated), version);
     let native_path = root.join("src/main.rs");
     let native = fs::read_to_string(&native_path).unwrap();
@@ -698,6 +755,7 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
     )
     .unwrap();
     running.until("keeping the previous server");
+    assert!(development_status(address, &session, "").contains("native failure"));
     assert_eq!(revision(&application_html(address)), revision(&updated));
     fs::write(&native_path, &native).unwrap();
     running.address("Ruvane dev at");
@@ -713,9 +771,23 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
     .unwrap();
     running.until("Restored the previous server");
     assert_eq!(revision(&application_html(address)), revision(&healthy));
+    assert!(development_status(address, &session, "").contains("Application startup failed"));
     running.quit();
+    assert!(!fs::read_dir(root.join(".ruvane")).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("dev-")
+    }));
     fs::write(&native_path, &native).unwrap();
-    let built = cli(&root, &["build", "--offline"]);
+    let built = Command::new(CLI)
+        .current_dir(&root)
+        .args(["build", "--offline"])
+        .env("RUVANE_DEV_STATUS", "invalid-inherited-path")
+        .env("RUVANE_DEV_SESSION", "123")
+        .output()
+        .unwrap();
     assert!(
         built.status.success(),
         "{}",
@@ -727,6 +799,7 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
     );
     let bundle = root.join("dist/build-000001");
     let manifest = fs::read_to_string(bundle.join("Ruvane.bundle")).unwrap();
+    assert!(!manifest.contains("/_ruvane/dev/"));
     assert!(manifest.starts_with("ruvane-application\t1\nrevision\t"));
     assert_eq!(
         fs::read(bundle.join("complete")).unwrap(),

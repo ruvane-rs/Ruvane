@@ -1,7 +1,10 @@
 import { createRuntime } from "./bridge.mjs";
 import { createNavigator, readBoundaries, readInitialSnapshot, createDocumentHydration } from "./navigation.mjs";
 const root=document.getElementById("ruvane-application");
-let runtime,navigator,session,retired=false;
+let runtime,navigator,session,retired=false,ready=false;
+export function applicationState(){
+  return Object.freeze({ready:ready&&!retired,actions:runtime?.actionState()??null,navigationPending:navigator?.stats().pending??false});
+}
 function shell(adopted=[]){
   const outlet=root.querySelector("#ruvane-outlet");
   for(const element of root.querySelectorAll("[data-ruvane-version]"))if(!outlet.contains(element)&&!adopted.includes(element))runtime.hydrate(element);
@@ -35,6 +38,7 @@ try{
     session?.commit();
     root.querySelector("#ruvane-initial").remove();root.querySelector("#ruvane-complete")?.remove();
     if(segments)shell(initial.shells.map(row=>row.root));
+    ready=true;
   }else{session?.retire();navigator.dispose();}
 }catch{
   session?.retire();navigator?.dispose();

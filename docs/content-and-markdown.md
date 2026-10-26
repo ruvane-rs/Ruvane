@@ -142,7 +142,8 @@ Each compiled executable contains a fixed content snapshot. The old executable
 can therefore restore its original text if a new server fails to start. No
 request-time disk lookup or parsing is needed. A failed build retains the
 previous static `current` selection. Source files are not needed by preview of
-a completed export. The browser refresh remains manual.
+a completed export. Static starters require manual browser refresh; interactive
+starters support [development feedback](development.md).
 
 The loader accepts a flat directory of regular `.md` files, with protected real
 ancestors. Subdirectories, symlinks, special files, extra files, invalid UTF-8,

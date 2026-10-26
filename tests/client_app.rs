@@ -123,6 +123,41 @@ fn initial_snapshot(html: &str) -> ruvane::NavigationSnapshot {
     ruvane::NavigationSnapshot::decode(&bytes).unwrap()
 }
 #[test]
+fn development_is_explicit_and_native_pages_keep_their_script_free_policy() {
+    let path = std::fs::canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("ruvane-client-dev-{}", std::process::id()));
+    std::fs::write(&path, "RVD1\n9\n1\nready\n123\n\n").unwrap();
+    let mut candidate = app(Arc::new(AtomicUsize::new(0)));
+    candidate
+        .client_runtime(runtime().development(ruvane::Development::new(&path, 9).unwrap()))
+        .unwrap();
+    let server = Running::start(candidate);
+    let (headers, body) = server.get("GET", "/", false);
+    let html = String::from_utf8(body).unwrap();
+    assert_eq!(html.matches("id=\"ruvane-development\"").count(), 1);
+    assert!(html.contains("data-session=\"9\" data-revision=\"123\""));
+    assert!(headers.contains(ruvane::INTERACTIVE_CONTENT_SECURITY_POLICY));
+    assert_eq!(initial_snapshot(&html).revision(), 123);
+    let (headers, body) = server.get("GET", "/?native=yes", false);
+    assert!(headers.contains(ruvane::CONTENT_SECURITY_POLICY));
+    assert!(!String::from_utf8(body).unwrap().contains("<script"));
+    drop(server);
+    std::fs::remove_file(path).unwrap();
+    let production = Running::new(app(Arc::new(AtomicUsize::new(0))));
+    assert!(
+        !String::from_utf8(production.get("GET", "/", false).1)
+            .unwrap()
+            .contains("ruvane-development")
+    );
+    assert!(
+        production
+            .get("GET", "/_ruvane/dev/status", false)
+            .0
+            .starts_with("HTTP/1.1 404")
+    );
+}
+#[test]
 fn ssr_carries_the_exact_initial_seed_without_executable_markup_or_an_extra_loader_call() {
     let loads = Arc::new(AtomicUsize::new(0));
     let mut app = app(Arc::clone(&loads));
@@ -241,6 +276,9 @@ struct Running {
 impl Running {
     fn new(mut app: App) -> Self {
         app.client_runtime(runtime()).unwrap();
+        Self::start(app)
+    }
+    fn start(app: App) -> Self {
         let server =
             Server::bind("127.0.0.1:0".parse().unwrap(), app.router(None).unwrap()).unwrap();
         let address = server.local_addr().unwrap();

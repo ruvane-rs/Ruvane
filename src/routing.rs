@@ -133,6 +133,9 @@ pub(crate) fn pattern_segments(pattern: &str) -> Result<(Vec<Segment>, bool), Ro
 }
 
 impl Router {
+    pub(crate) fn has_path(&self, path: &str) -> bool {
+        self.routes.iter().any(|route| route.matches(path))
+    }
     /// Registers a typed POST action with the same origin/body policy as native forms.
     pub fn post_action(
         &mut self,

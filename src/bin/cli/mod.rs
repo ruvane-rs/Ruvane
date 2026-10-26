@@ -1,3 +1,4 @@
+mod development;
 mod process;
 mod project;
 mod scaffold;
@@ -29,7 +30,7 @@ const HELP: &str = "Ruvane — zero third-party dependencies
 
 Run dev/build inside a generated trusted project. Preview accepts an existing
 flat export or a versioned build directory. Open the printed HTTP URL.
-Dev rebuilds and restarts the server; refresh the browser manually.
+Interactive starters reload after successful builds when no input or action is at risk.
 ";
 
 pub(super) fn run(arguments: impl Iterator<Item = OsString>) -> Result<()> {
@@ -141,6 +142,23 @@ fn dev(args: &[OsString]) -> Result<()> {
     let mut pending = true;
     let mut changed_at = Instant::now() - Duration::from_secs(1);
     let mut running: Option<process::App> = None;
+    let mut session = if project.interactive {
+        Some(development::Session::new(&project)?)
+    } else {
+        None
+    };
+    let mut waiting = if let Some(session) = &session {
+        Some(session.waiting(selected_port)?)
+    } else {
+        None
+    };
+    if let Some(server) = &waiting {
+        selected_port = server.address.port();
+        println!(
+            "Ruvane dev waiting at http://{} — waiting for the first build.",
+            server.address
+        );
+    }
     while !quit.load(Ordering::SeqCst) {
         let current = match watch::snapshot(&project.root) {
             Ok(snapshot) => snapshot,
@@ -163,7 +181,11 @@ fn dev(args: &[OsString]) -> Result<()> {
         if pending && changed_at.elapsed() >= Duration::from_millis(200) {
             pending = false;
             println!("Compiling application...");
-            match process::compile(&project, offline, &quit) {
+            let active = running.as_ref().map_or(0, process::App::revision);
+            if let Some(session) = &mut session {
+                session.publish("building", active, "")?;
+            }
+            match process::compile(&project, offline, &quit, session.as_ref()) {
                 Ok(binary) => {
                     if quit.load(Ordering::SeqCst) {
                         break;
@@ -173,17 +195,19 @@ fn dev(args: &[OsString]) -> Result<()> {
                     if let Some(app) = &mut previous {
                         app.stop();
                     }
+                    drop(waiting.take());
                     match process::App::start(binary, selected_port, &quit) {
                         Ok(app) => {
                             selected_port = app.address.port();
-                            println!(
-                                "Ruvane dev at http://{} — refresh your browser after changes.",
-                                app.address
-                            );
+                            if let Some(session) = &mut session {
+                                session.publish("ready", app.revision(), "")?;
+                            }
+                            println!("Ruvane dev at http://{} — application ready.", app.address);
                             running = Some(app);
                         }
                         Err(error) => {
                             eprintln!("Application startup failed: {error}");
+                            let message = format!("Application startup failed: {error}");
                             if let Some(mut app) = previous {
                                 match app.restart(selected_port, &quit) {
                                     Ok(()) => {
@@ -198,11 +222,24 @@ fn dev(args: &[OsString]) -> Result<()> {
                                     }
                                 }
                             }
+                            if let Some(session) = &mut session {
+                                session.publish(
+                                    "error",
+                                    running.as_ref().map_or(0, process::App::revision),
+                                    &message,
+                                )?;
+                                if running.is_none() {
+                                    waiting = Some(session.waiting(selected_port)?);
+                                }
+                            }
                         }
                     }
                 }
                 Err(error) if !quit.load(Ordering::SeqCst) => {
-                    eprintln!("{error}; keeping the previous server when available.")
+                    if let Some(session) = &mut session {
+                        session.publish("error", active, &process::diagnostics(error.as_ref()))?;
+                    }
+                    eprintln!("{error}; keeping the previous server when available.");
                 }
                 Err(_) => break,
             }
@@ -213,11 +250,20 @@ fn dev(args: &[OsString]) -> Result<()> {
             if app.exited()? {
                 eprintln!("Application exited; waiting for a source change.");
                 running = None;
+                if let Some(session) = &mut session {
+                    session.publish(
+                        "error",
+                        0,
+                        "Application exited. Save a source file to rebuild.",
+                    )?;
+                    waiting = Some(session.waiting(selected_port)?);
+                }
             }
         }
         std::thread::sleep(Duration::from_millis(150));
     }
     drop(running);
+    drop(waiting);
     println!("Development server stopped.");
     Ok(())
 }
@@ -268,7 +314,7 @@ fn build(args: &[OsString]) -> Result<()> {
     let version = project::next_build(&container)?;
     let destination = container.join(&version);
     let quit = AtomicBool::new(false);
-    let binary = process::compile(&project, offline, &quit)?;
+    let binary = process::compile(&project, offline, &quit, None)?;
     process::export(&binary, &destination, &origin, &quit)?;
     StaticSite::preview_export(&destination)?;
     project::publish(&container, &version)?;

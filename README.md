@@ -54,6 +54,9 @@ also retire already emitted descendants after the complete error is validated.
 An explicit App boundary can recover root layout failures and retain the shell.
 Opted-in [shell islands](docs/shell-hydration.md) can activate independently while
 the initial page loads, preserving local state through final adoption and recovery.
+New interactive starters provide [browser development feedback](docs/development.md):
+compiler diagnostics, first-build waiting pages and guarded full-document reloads
+after the replacement server is ready.
 
 Create an interactive project from a local checkout:
 
@@ -234,7 +237,10 @@ Open the HTTP address printed by `dev`. It watches `src/`, `assets/`, the Cargo
 manifest and lockfile, consolidates changes, and recompiles one application at
 a time. A successful compilation restarts the server at the same address.
 Compilation errors keep the previous server running; startup failures attempt
-to restore its executable. Refresh the browser manually. Type `q` then Enter
+to restore its executable. New interactive starters show compiler errors and
+reload ready versions when fields and actions are safe; otherwise an explicit
+Reload button is offered. See [development feedback](docs/development.md).
+Static starters still require manual refresh. Type `q` then Enter
 to stop dev before running another build command in that project.
 
 ```sh

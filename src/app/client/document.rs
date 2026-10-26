@@ -163,7 +163,8 @@ impl App {
                 }
             }
             let body = format!(
-                "<div id=\"ruvane-application\" data-ruvane-module=\"{}\" data-ruvane-revision=\"{}\" data-ruvane-document=\"{profile}\"{attributes}>{early}{}<p id=\"ruvane-status\">Native links and forms are ready.</p><div id=\"ruvane-outlet\">",
+                "{}<div id=\"ruvane-application\" data-ruvane-module=\"{}\" data-ruvane-revision=\"{}\" data-ruvane-document=\"{profile}\"{attributes}>{early}{}<p id=\"ruvane-status\">Native links and forms are ready.</p><div id=\"ruvane-outlet\">",
+                runtime.development_script(),
                 runtime.asset("app.wasm"),
                 runtime.revision,
                 before,

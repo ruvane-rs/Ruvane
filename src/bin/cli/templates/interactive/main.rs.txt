@@ -9,11 +9,13 @@ fn application() -> Result<ruvane::App, Box<dyn std::error::Error>> {
         include_bytes!("../assets/site.css"),
         MediaType::Css,
     )?;
-    app.client_runtime(
-        ClientRuntime::new(include_bytes!(env!("RUVANE_WASM_FILE")), REVISION)?
+    let mut runtime = ClientRuntime::new(include_bytes!(env!("RUVANE_WASM_FILE")), REVISION)?
             .shell(pages::shell)
-            .stylesheet(InternalUrl::new("/assets/site.css")?)?,
-    )?;
+            .stylesheet(InternalUrl::new("/assets/site.css")?)?;
+    if let (Some(path), Some(session)) = (option_env!("RUVANE_DEV_STATUS"), option_env!("RUVANE_DEV_SESSION")) {
+        runtime = runtime.development(ruvane::Development::new(path, session.parse()?)?);
+    }
+    app.client_runtime(runtime)?;
     Ok(app)
 }
 fn router() -> Result<ruvane::Router, Box<dyn std::error::Error>> {

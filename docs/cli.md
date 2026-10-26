@@ -1,5 +1,9 @@
 # Ruvane CLI
 
+Alpha.33 adds [browser development feedback](development.md) for new interactive
+starters: first-build diagnostics, a bounded compiler-error panel and guarded
+reload after server readiness. Static starters retain manual refresh.
+
 Alpha.19 adds `new --interactive --framework-path PATH`, paired native/Wasm dev
 builds and versioned application bundles. Browser sources join the watched set.
 Interactive `build --offline` does not require an origin; static builds still
@@ -74,8 +78,9 @@ compilation the CLI stops the old server and starts the new executable at the
 same port; there can be a short interruption. If startup fails, it attempts to
 restart the retained previous executable. Restoration is not a guarantee against
 OS errors or a newly occupied port. A crashed app waits for a source change
-instead of entering an unlimited restart loop. The browser refresh is manual;
-the fixed CSP still blocks scripts.
+instead of entering an unlimited restart loop. Static starters require manual
+refresh; their fixed CSP still blocks scripts. New interactive starters use the
+guarded reload and diagnostics described in [development feedback](development.md).
 
 Type `q` then Enter, or close stdin, for normal shutdown. Generated servers
 have a dedicated stdin pipe: data or EOF requests the library's shutdown.
