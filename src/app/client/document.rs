@@ -15,6 +15,7 @@ pub struct ClientDocument {
     metadata: Metadata,
     limits: StreamLimits,
     hydrate_layouts: bool,
+    hydrate_shell: bool,
 }
 impl ClientDocument {
     /// Creates a fixed head with English language and the default stream budgets.
@@ -25,6 +26,7 @@ impl ClientDocument {
             metadata: Metadata::new(),
             limits: StreamLimits::default(),
             hydrate_layouts: false,
+            hydrate_shell: false,
         }
     }
     /// Sets the escaped document language.
@@ -41,6 +43,12 @@ impl ClientDocument {
     /// Server actions stay blocked until the complete page branch commits.
     pub fn hydrate_layouts(mut self, enabled: bool) -> Self {
         self.hydrate_layouts = enabled;
+        self
+    }
+    /// Activates marked independent shell views before the page completes.
+    /// Server actions stay blocked until the complete document commits.
+    pub fn hydrate_shell(mut self, enabled: bool) -> Self {
+        self.hydrate_shell = enabled;
         self
     }
     /// Replaces the budgets, additionally constrained by the server configuration.
@@ -115,9 +123,19 @@ impl App {
                 return Err(PageError::InternalServerError);
             }
             let (before, after) = shell.split_once(SLOT).unwrap();
+            let mut islands = Vec::new();
+            if head.hydrate_shell {
+                for value in shell.split("<div data-ruvane-shell=\"").skip(1) {
+                    let name = value.split('"').next().unwrap();
+                    if islands.len() == 8 || islands.contains(&name) {
+                        return Err(PageError::InternalServerError);
+                    }
+                    islands.push(name);
+                }
+            }
             let script =
                 crate::module_script(&InternalUrl::new(&runtime.asset("application.mjs")).unwrap());
-            let (profile, early, bootstrap) = if head.hydrate_layouts {
+            let (profile, early, bootstrap) = if head.hydrate_layouts || head.hydrate_shell {
                 (
                     "segments",
                     format!(
@@ -129,7 +147,7 @@ impl App {
             } else {
                 ("stream", String::new(), script.into_string())
             };
-            let attributes = if head.hydrate_layouts {
+            let mut attributes = if head.hydrate_layouts || head.hydrate_shell {
                 format!(
                     " data-ruvane-layouts=\"{}\" data-ruvane-timeout=\"{}\"",
                     inputs.len(),
@@ -138,6 +156,12 @@ impl App {
             } else {
                 String::new()
             };
+            if head.hydrate_shell {
+                attributes.push_str(&format!(" data-ruvane-shells=\"{}\"", islands.join(",")));
+                if !head.hydrate_layouts {
+                    attributes.push_str(" data-ruvane-layout-hydration=\"off\"");
+                }
+            }
             let body = format!(
                 "<div id=\"ruvane-application\" data-ruvane-module=\"{}\" data-ruvane-revision=\"{}\" data-ruvane-document=\"{profile}\"{attributes}>{early}{}<p id=\"ruvane-status\">Native links and forms are ready.</p><div id=\"ruvane-outlet\">",
                 runtime.asset("app.wasm"),

@@ -132,3 +132,6 @@ after verification. All harness code is first-party.
 Alpha.30 supports [ancestor boundary recovery](streamed-leaf-errors.md#ancestor-boundary-recovery-alpha30) after descendants have already been emitted. Removal happens only after validating the complete error branch.
 
 Alpha.31 adds an explicit [App boundary](streamed-leaf-errors.md#app-boundary-recovery-alpha31) for root and unhandled branch errors while retaining the independent shell.
+
+Alpha.32 adds [early shell hydration](shell-hydration.md) for explicitly marked
+independent views, with or without early layouts.

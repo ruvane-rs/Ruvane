@@ -229,7 +229,7 @@ initial actions or schema rejection use the minimal existing fallback without
 internal diagnostics. Transport failures, exhausted quotas and expired deadlines
 cannot be converted into a successful error completion. Without JavaScript, HTML
 already sent remains visible alongside the error; native-only SSR remains buffered
-and keeps actual HTTP statuses. Early shell activation timing is unchanged.
+and keeps actual HTTP statuses. Alpha.32 adds an independent [early shell hydration](shell-hydration.md) opt-in.
 
 The generated **Recover a root layout** and **Recover an application error** links
 use `/tasks/global?recover=root` and `/tasks/global?recover=page&delay=yes`.

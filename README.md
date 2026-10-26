@@ -52,6 +52,8 @@ when the leaf or an un-emitted nested layout fails. An explicit GET retry builds
 the missing descendants without reloading the document. Ancestor boundaries can
 also retire already emitted descendants after the complete error is validated.
 An explicit App boundary can recover root layout failures and retain the shell.
+Opted-in [shell islands](docs/shell-hydration.md) can activate independently while
+the initial page loads, preserving local state through final adoption and recovery.
 
 Create an interactive project from a local checkout:
 

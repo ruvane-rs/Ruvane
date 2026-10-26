@@ -795,6 +795,43 @@ export async function createRuntime(url, options = {}) {
     } catch (error) { stop(true); throw error; }
     finally { busy = false; }
   }
+  function remember(root){
+    const records=[];
+    function visit(node){
+      if(node.nodeType===3){records.push({node,text:node.data});return;}
+      const item={node,children:[...node.childNodes],attributes:[...node.attributes].map(a=>[a.name,a.value])};
+      if(node.localName==="input"||node.localName==="textarea"){item.value=node.value;item.checked=node.checked;}
+      records.push(item);for(const child of item.children)visit(child);
+    }
+    visit(root);
+    return()=>{for(const item of records){if("text"in item){item.node.data=item.text;continue;}item.node.replaceChildren(...item.children);for(const a of [...item.node.attributes])item.node.removeAttribute(a.name);for(const [name,value]of item.attributes)item.node.setAttribute(name,value);if("value"in item){item.node.value=item.value;if(item.checked!==undefined)item.node.checked=item.checked;}}};
+  }
+  function shellOwners(controllers,url,roots=null){
+    live();internalTarget(url);
+    if(!Array.isArray(controllers)||controllers.length>8||new Set(controllers).size!==controllers.length||roots!==null&&(!Array.isArray(roots)||roots.length!==controllers.length))throw new HydrationMismatch();
+    const names=new Set();
+    return controllers.map((controller,index)=>{
+      const view=views.get(controller?.id),stamp=view?.shell;
+      if(!stamp||view.controller!==controller||!view.gated||stamp.url!==url||!view.root.isConnected||view.root.attributes.length!==3||names.has(stamp.name)||roots!==null&&view.root!==roots[index]||stamp.host.localName!=="div"||stamp.host.parentNode!==stamp.parent||stamp.host.childNodes.length!==1||stamp.host.firstChild!==view.root||stamp.host.attributes.length!==1||stamp.host.getAttribute("data-ruvane-shell")!==stamp.name)throw new HydrationMismatch();
+      const props=readProps(view.root);if(props.component!==stamp.props.component||props.kind!==stamp.props.kind||props.value!==stamp.props.value)throw new HydrationMismatch();
+      names.add(stamp.name);matchDom(view.nodes,view.root,false);return view;
+    });
+  }
+  function hydrateShell(root,name,url){
+    live();internalTarget(url);
+    if(!applicationRevision||!root.isConnected||root.attributes.length!==3||! /^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(name))throw new HydrationMismatch();
+    const focused=document.activeElement,saved=selection(focused),props=readProps(root);let controller,restore;
+    try{
+      controller=start(root,props,true,null,false,true);restore=remember(root);const view=views.get(controller.id);view.gated=true;view.shell={name,url,props,host:root.parentNode,parent:root.parentNode.parentNode};
+      const decoded=view.prepared;delete view.prepared;hydratingBranch=true;busy=true;
+      try{drain(controller.id,"hydrate",decoded);}finally{busy=false;}
+      const edits=view.hydrationEdits;view.hydrationEdits=[];adopt(view,controller.id,edits);
+      shellOwners([controller],url);return controller;
+    }catch(error){
+      if(controller&&views.has(controller.id))try{releaseNative(controller.id);forget(controller.id,true,false);}catch{stop(true);}
+      restore?.();if(focused?.isConnected){focused.focus({preventScroll:true});restoreSelection(focused,saved);}throw error;
+    }finally{hydratingBranch=false;busy=false;}
+  }
   function prepareHydration(roots,bytes,parents=[],layoutIndex=0,retirement=null) {
     live();const page=decodePage(bytes),layoutOnly=layoutIndex!==0;
     if(!Array.isArray(parents)||!Array.isArray(roots)||page.selected!==0)throw new MountRejected();
@@ -811,17 +848,6 @@ export async function createRuntime(url, options = {}) {
     validatePage(bytes);
     const controllers=[],undo=[];let activated=false,finished=false;
     const focused=document.activeElement,savedSelection=selection(focused),point={x:scrollX,y:scrollY};
-    function remember(root){
-      const records=[];
-      function visit(node){
-        if(node.nodeType===3){records.push({node,text:node.data});return;}
-        const item={node,children:[...node.childNodes],attributes:[...node.attributes].map(a=>[a.name,a.value])};
-        if(node.localName==="input"||node.localName==="textarea"){item.value=node.value;item.checked=node.checked;}
-        records.push(item);for(const child of item.children)visit(child);
-      }
-      visit(root);
-      return()=>{for(const item of records){if("text"in item){item.node.data=item.text;continue;}item.node.replaceChildren(...item.children);for(const a of [...item.node.attributes])item.node.removeAttribute(a.name);for(const [name,value]of item.attributes)item.node.setAttribute(name,value);if("value"in item){item.node.value=item.value;if(item.checked!==undefined)item.node.checked=item.checked;}}};
-    }
     function rollback(){
       if(finished)return false;finished=true;
       for(const controller of controllers.slice(parents.length).reverse()){
@@ -898,6 +924,17 @@ export async function createRuntime(url, options = {}) {
     retireLayout(controller){
       const view=views.get(controller?.id);
       if(!view?.document||view.controller!==controller)return false;
+      if(busy)throw invalid();busy=true;
+      try{releaseNative(controller.id);forget(controller.id,true);return true;}catch(error){stop(true);throw error;}finally{busy=false;}
+    },
+    hydrateShell,
+    validateShells(controllers,url,roots){shellOwners(controllers,url,roots);},
+    commitShells(controllers,bytes){
+      const page=decodePage(bytes);if(page.pending!==null||page.selected!==0)throw new HydrationMismatch();validatePage(bytes);
+      const owned=shellOwners(controllers,page.url);for(const view of owned){view.gated=false;view.shell=null;}
+    },
+    retireShell(controller){
+      const view=views.get(controller?.id);if(!view?.shell||view.controller!==controller)return false;
       if(busy)throw invalid();busy=true;
       try{releaseNative(controller.id);forget(controller.id,true);return true;}catch(error){stop(true);throw error;}finally{busy=false;}
     },

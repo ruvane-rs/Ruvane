@@ -68,7 +68,8 @@ hydration transaction. A component which immediately queues another action
 while handling local rejection fails closed; it cannot create a retry loop.
 `Rejected` also retains its existing unexpected-server-status meaning.
 
-The leaf and independent shell islands remain inert until final validation.
+The leaf remains inert until final validation. Independent shell islands wait too,
+unless [early shell hydration](shell-hydration.md) is explicitly enabled.
 The complete RVI1 snapshot, completion marker and parsed document are required.
 The runtime checks that already active parents belong to this runtime, match
 the exact route/index/seed and retain valid live DOM. It prepares only missing

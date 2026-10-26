@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0-alpha.32 — Unreleased
+
+- Add explicit early shell hydration, independently of early layout hydration.
+- Add named complete-view markers, bounded declarations and attested shell owners.
+- Keep early server actions gated; release them only after the final branch commit,
+  preserving local state, fields, focus and selection without double hydration.
+- Retire early owners on invalid documents, history refusal, cancellation or expiry.
+- Add shell draft/menu demos and native/browser lifecycle checks without dependencies.
+  ABI v11, 22 exports, four runtime assets and two first-party crates remain.
+
 ## 0.1.0-alpha.31 — Unreleased
 
 - Add an explicit App client boundary for root layout and unhandled branch errors,

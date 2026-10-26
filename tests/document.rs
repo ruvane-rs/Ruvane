@@ -70,11 +70,21 @@ fn head(ctx: &PageContext<'_>) -> Result<ClientDocument, PageError> {
     }
     Ok(ClientDocument::new("Report <&🦀")
         .hydrate_layouts(q.get("hydrate") == Some("yes"))
+        .hydrate_shell(q.get("shell") == Some("yes"))
         .language("en\"<")
         .limits(limits)
         .unwrap())
 }
 fn app(loads: Arc<AtomicUsize>, gate: Arc<AtomicBool>) -> App {
+    app_shell(loads, gate, |child| {
+        element(Tag::Main)
+            .child("Shell")
+            .child(child)
+            .child("Footer")
+            .render()
+    })
+}
+fn app_shell(loads: Arc<AtomicUsize>, gate: Arc<AtomicBool>, shell: fn(Html) -> Html) -> App {
     let mut app = App::new();
     app.components(factory, 3).unwrap();
     let count = loads.clone();
@@ -173,13 +183,7 @@ fn app(loads: Arc<AtomicUsize>, gate: Arc<AtomicBool>) -> App {
     app.client_runtime(
         ClientRuntime::new(b"\0asm\x01\0\0\0", 42)
             .unwrap()
-            .shell(|child| {
-                element(Tag::Main)
-                    .child("Shell")
-                    .child(child)
-                    .child("Footer")
-                    .render()
-            }),
+            .shell(shell),
     )
     .unwrap();
     app
@@ -1139,4 +1143,153 @@ fn app_boundaries_do_not_bypass_transport_limits_or_cancellation() {
         assert!(!complete && !body.contains("ruvane-complete"));
     }
     assert!(server.get("/work/page").2);
+}
+
+fn shell_view(name: &str) -> Html {
+    let mut view = View::new();
+    view.leaf(0, BrowserTag::Heading, "Shell <&🦀").unwrap();
+    view.shell_island(
+        name,
+        ComponentProps::new(3, InitialState::Number(0)).unwrap(),
+    )
+    .unwrap()
+}
+fn marked_shell(child: Html) -> Html {
+    element(Tag::Main)
+        .child(shell_view("header"))
+        .child(child)
+        .child(shell_view("footer"))
+        .render()
+}
+#[test]
+fn shell_islands_have_bounded_names_and_complete_view_markers() {
+    let props = ComponentProps::new(1, InitialState::Number(7)).unwrap();
+    let mut view = View::new();
+    let label = view.element(0, BrowserTag::Label).unwrap();
+    view.leaf(label, BrowserTag::Span, "Draft").unwrap();
+    view.input(label, 1, "Draft <&🦀", 1, false).unwrap();
+    for name in [
+        "",
+        "1header",
+        "a-b",
+        "header,footer",
+        "<script>",
+        "é",
+        &"a".repeat(33),
+    ] {
+        assert_eq!(
+            view.shell_island(name, props),
+            Err(ViewError::InvalidIdentifier)
+        );
+    }
+    for name in ["header", "_draft2", &"a".repeat(32)] {
+        let html = view.shell_island(name, props).unwrap().into_string();
+        assert!(html.starts_with(&format!(
+            "<div data-ruvane-shell=\"{name}\"><div data-ruvane-version="
+        )));
+        assert!(html.ends_with(&format!(
+            "</div></div><br hidden data-ruvane-shell-ready=\"{name}\">"
+        )));
+        assert!(html.contains("disabled") && html.contains("Draft &lt;&amp;🦀"));
+    }
+}
+#[test]
+fn shell_only_hydration_streams_complete_islands_before_the_leaf() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(AtomicBool::new(false));
+    let app = app_shell(loads.clone(), gate.clone(), marked_shell);
+    let server = Running::new(&app, ServerConfig::default());
+    let mut reader = server.connect("GET", "/work/page?shell=yes&pause=yes", "text/html");
+    assert!(headers(&mut reader).contains("chunked"));
+    let prefix = String::from_utf8(chunk(&mut reader).unwrap()).unwrap();
+    assert!(
+        prefix.contains("data-ruvane-document=\"segments\"")
+            && prefix.contains("data-ruvane-shells=\"header,footer\"")
+    );
+    assert!(
+        prefix.contains("data-ruvane-layout-hydration=\"off\"")
+            && prefix.contains("<script type=\"module\" async src=")
+    );
+    assert!(
+        prefix.contains("data-ruvane-shell-ready=\"header\"")
+            && !prefix.contains("data-ruvane-shell-ready=\"footer\"")
+    );
+    gate.store(true, Ordering::Release);
+    let (body, complete) = chunks(&mut reader);
+    assert!(complete);
+    let body = String::from_utf8(body).unwrap();
+    assert!(
+        !body.contains("data-ruvane-segment")
+            && body.contains("data-ruvane-shell-ready=\"footer\"")
+    );
+    assert_eq!(snapshot(&body).page().layouts().len(), 2);
+    assert_eq!(loads.load(Ordering::SeqCst), 3);
+}
+#[test]
+fn shell_and_layout_hydration_are_independent_opt_ins() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let app = app_shell(loads, Arc::new(AtomicBool::new(true)), marked_shell);
+    let server = Running::new(&app, ServerConfig::default());
+    for query in ["shell=yes", "shell=yes&hydrate=yes", "hydrate=yes", ""] {
+        let (h, body, complete) = server.get(&format!("/work/page?{query}"));
+        assert!(h.starts_with("HTTP/1.1 200") && complete);
+        assert_eq!(
+            body.contains("data-ruvane-shells="),
+            query.contains("shell=yes")
+        );
+        assert_eq!(
+            body.contains("data-ruvane-segment="),
+            query.contains("hydrate=yes")
+        );
+        assert_eq!(
+            body.contains("data-ruvane-layout-hydration=\"off\""),
+            query == "shell=yes"
+        );
+    }
+    let (h, body, _) = server.get("/work/page?shell=yes&native=yes");
+    assert!(h.contains("script-src 'none'") && !body.contains("data-ruvane-shells="));
+}
+#[test]
+fn duplicate_and_excess_shell_islands_fail_before_deferred_loading() {
+    let duplicate: fn(Html) -> Html =
+        |child| fragment([shell_view("same"), child, shell_view("same")]);
+    let excess: fn(Html) -> Html = |child| {
+        let mut parts = vec![child];
+        for n in 0..9 {
+            parts.push(shell_view(&format!("item{n}")));
+        }
+        fragment(parts)
+    };
+    for shell in [duplicate, excess] {
+        let loads = Arc::new(AtomicUsize::new(0));
+        let app = app_shell(loads.clone(), Arc::new(AtomicBool::new(true)), shell);
+        let server = Running::new(&app, ServerConfig::default());
+        let (h, _, _) = server.get("/work/page?shell=yes");
+        assert!(h.starts_with("HTTP/1.1 500") && !h.contains("chunked"));
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+    }
+}
+#[test]
+fn empty_shell_opt_in_preserves_lazy_head_requests() {
+    let (app, loads, _) = fixture();
+    let server = Running::new(&app, ServerConfig::default());
+    let mut reader = server.connect("HEAD", "/work/page?shell=yes", "text/html");
+    assert!(headers(&mut reader).contains("chunked"));
+    let mut body = Vec::new();
+    reader.read_to_end(&mut body).unwrap();
+    assert!(body.is_empty());
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+    let (_, body, complete) = server.get("/work/page?shell=yes");
+    assert!(complete && body.contains("data-ruvane-shells=\"\""));
+}
+#[test]
+fn early_shell_metadata_cannot_bypass_prefix_and_stream_budgets() {
+    let loads = Arc::new(AtomicUsize::new(0));
+    let app = app_shell(loads.clone(), Arc::new(AtomicBool::new(true)), marked_shell);
+    let server = Running::new(&app, ServerConfig::default());
+    let (h, _, _) = server.get("/work/page?shell=yes&limit=prefix");
+    assert!(h.starts_with("HTTP/1.1 500") && !h.contains("chunked"));
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+    let (h, body, complete) = server.get("/work/page?shell=yes&limit=chunks");
+    assert!(h.starts_with("HTTP/1.1 200") && !complete && !body.contains("ruvane-complete"));
 }

@@ -8,21 +8,69 @@ pub const TASKS: u32 = 9;
 pub const DETAIL: u32 = 10;
 pub const ERROR: u32 = 11;
 
-struct Counter(u32);
+struct Counter {
+    value: u32,
+    draft: String,
+    notes: String,
+    tools: bool,
+}
+impl Counter {
+    fn new(value: u32) -> Self {
+        Self {
+            value,
+            draft: String::new(),
+            notes: String::new(),
+            tools: false,
+        }
+    }
+}
 impl Component for Counter {
     fn view(&self) -> Result<View, ComponentError> {
         let mut view = View::new();
-        let section = view.element(0, Section)?;
-        view.leaf(section, Heading, "Layout counter")?;
-        view.leaf(section, Output, &self.0.to_string())?;
-        view.button(section, "Increment", 1, self.0 == 1000)?;
+        let root = view.element(0, Section)?;
+        view.leaf(root, Heading, "Layout counter")?;
+        view.leaf(root, Output, &self.value.to_string())?;
+        view.button(root, "Increment", 1, self.value == 1000)?;
+        let label = view.keyed_element(root, 1, Label)?;
+        view.keyed_leaf(label, 1, Span, "Shell draft")?;
+        view.input(label, 2, &self.draft, 2, false)?;
+        let label = view.keyed_element(root, 2, Label)?;
+        view.keyed_leaf(label, 1, Span, "Shell notes")?;
+        view.textarea(label, 2, &self.notes, 3, false)?;
+        view.button(
+            root,
+            if self.tools {
+                "Hide tools"
+            } else {
+                "Show tools"
+            },
+            4,
+            false,
+        )?;
+        if self.tools {
+            view.keyed_leaf(root, 3, Span, "Shell tools are ready.")?;
+        }
         Ok(view)
     }
     fn dispatch(&mut self, event: u32) -> Result<(), ComponentError> {
-        if event != 1 {
-            return Err(ComponentError::InvalidEvent);
+        match event {
+            1 => self.value = self.value.saturating_add(1).min(1000),
+            4 => self.tools = !self.tools,
+            _ => return Err(ComponentError::InvalidEvent),
         }
-        self.0 = self.0.saturating_add(1).min(1000);
+        Ok(())
+    }
+    fn dispatch_value(
+        &mut self,
+        event: u32,
+        value: ruvane::EventValue,
+    ) -> Result<(), ComponentError> {
+        match (event, value) {
+            (2, ruvane::EventValue::Text(value)) => self.draft = value,
+            (3, ruvane::EventValue::Text(value)) => self.notes = value,
+            (event, ruvane::EventValue::None) => return self.dispatch(event),
+            _ => return Err(ComponentError::InvalidEvent),
+        }
         Ok(())
     }
 }
@@ -160,7 +208,7 @@ pub fn create_component(props: ComponentProps) -> Result<Box<dyn Component>, Com
         }));
     }
     if let (1, InitialState::Number(value @ 0..=1000)) = (props.component(), props.state()) {
-        return Ok(Box::new(Counter(value)));
+        return Ok(Box::new(Counter::new(value)));
     }
     create(props)
 }

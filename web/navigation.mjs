@@ -184,9 +184,12 @@ export function createDocumentHydration(runtime,root,{timeoutMs}={}){
   if(!(root instanceof HTMLElement)||root.ownerDocument!==document||root.getAttribute("data-ruvane-document")!=="segments"||DOCUMENT_OWNERS.has(root)||typeof runtime?.hydrateLayout!=="function"||typeof runtime?.retireLayout!=="function")throw failure();
   const raw=root.getAttribute("data-ruvane-layouts"),rawTime=root.getAttribute("data-ruvane-timeout");
   if(!/^[0-6]$/.test(raw??"")||! /^[1-9][0-9]{0,4}$/.test(rawTime??"")||Number(rawTime)>60000)throw failure();
+  const shellNames=root.getAttribute("data-ruvane-shells"),layoutMode=root.getAttribute("data-ruvane-layout-hydration"),earlyLayouts=layoutMode!=="off";
+  const names=shellNames===null?[]:shellNames===""?[]:shellNames.split(",");
+  if(names.length>8||new Set(names).size!==names.length||!names.every(name=>/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(name))||layoutMode!==null&&(layoutMode!=="off"||shellNames===null)||shellNames!==null&&!["hydrateShell","validateShells","commitShells","retireShell"].every(name=>typeof runtime[name]==="function"))throw failure();
   const expected=Number(raw),budget=timeoutMs??Number(rawTime);
   if(!Number.isFinite(budget)||budget<1||budget>Number(rawTime)||runtime.applicationRevision!==root.getAttribute("data-ruvane-revision"))throw failure();
-  const url=target(),moduleURL=root.getAttribute("data-ruvane-module"),rows=[];let state="waiting",queued=false,title=null,resolve,reject;
+  const url=target(),moduleURL=root.getAttribute("data-ruvane-module"),rows=[],shellRows=[];let snapshotBytes=null,state="waiting",queued=false,title=null,resolve,reject;
   const ready=new Promise((yes,no)=>{resolve=yes;reject=no;});
   DOCUMENT_OWNERS.add(root);
   const observer=new MutationObserver(schedule),timer=setTimeout(()=>retire(),budget);
@@ -195,13 +198,20 @@ export function createDocumentHydration(runtime,root,{timeoutMs}={}){
   function retire(){
     if(state==="retired"||state==="committed")return false;state="retired";cleanup(true);
     for(const row of rows.reverse())try{runtime.retireLayout(row.controller);}catch{ /* Runtime failure owns any remaining handles. */ }
-    rows.length=0;const status=root.querySelector("#ruvane-status");if(status)status.textContent="Interactive mode is unavailable. Native links and forms are ready.";
+    for(const row of shellRows.reverse())try{runtime.retireShell(row.controller);}catch{ /* Runtime shutdown owns remaining views. */ }
+    rows.length=0;shellRows.length=0;const status=root.querySelector("#ruvane-status");if(status)status.textContent="Interactive mode is unavailable. Native links and forms are ready.";
     reject(failure());return true;
   }
   function shape(){
-    if(root.querySelector("[data-ruvane-stream-error]")||!root.isConnected||document.querySelectorAll("#ruvane-application").length!==1||document.getElementById("ruvane-application")!==root||root.getAttribute("data-ruvane-document")!=="segments"||root.getAttribute("data-ruvane-layouts")!==raw||root.getAttribute("data-ruvane-timeout")!==rawTime||root.getAttribute("data-ruvane-revision")!==runtime.applicationRevision||root.getAttribute("data-ruvane-module")!==moduleURL||target()!==url||runtime.actionState().state!=="active"||runtime.actionState().pending||runtime.actionState().uncertain)throw failure();
+    if(root.querySelector("[data-ruvane-stream-error]")||!root.isConnected||document.querySelectorAll("#ruvane-application").length!==1||document.getElementById("ruvane-application")!==root||root.getAttribute("data-ruvane-document")!=="segments"||root.getAttribute("data-ruvane-shells")!==shellNames||root.getAttribute("data-ruvane-layout-hydration")!==layoutMode||root.getAttribute("data-ruvane-layouts")!==raw||root.getAttribute("data-ruvane-timeout")!==rawTime||root.getAttribute("data-ruvane-revision")!==runtime.applicationRevision||root.getAttribute("data-ruvane-module")!==moduleURL||target()!==url||runtime.actionState().state!=="active"||runtime.actionState().pending||runtime.actionState().uncertain)throw failure();
     const outlet=root.querySelector("#ruvane-outlet"),status=root.querySelector("#ruvane-status");
     if(root.querySelectorAll("#ruvane-outlet").length>1||root.querySelectorAll("#ruvane-status").length>1)throw failure();
+    if(shellNames!==null){
+      const hosts=[...root.querySelectorAll("[data-ruvane-shell]")];
+      if(hosts.length>names.length||!hosts.every((host,n)=>host.getAttribute("data-ruvane-shell")===names[n]&&!outlet?.contains(host)&&!host.contains(outlet)&&!host.parentElement?.closest("[data-ruvane-shell]")&&document.querySelectorAll(`[data-ruvane-shell="${names[n]}"]`).length===1))throw failure();
+      for(const row of shellRows)if(row.host.parentNode!==row.parent||row.host.localName!=="div"||row.host.attributes.length!==1||row.host.getAttribute("data-ruvane-shell")!==row.name||row.host.childNodes.length!==1||row.host.firstChild!==row.root||!root.contains(row.host)||outlet?.contains(row.host))throw failure();
+      runtime.validateShells(shellRows.map(row=>row.controller),url);
+    }
     return{outlet,status};
   }
   function pump(){
@@ -209,8 +219,21 @@ export function createDocumentHydration(runtime,root,{timeoutMs}={}){
     try{
       const {outlet,status}=shape();
       if(!outlet||!status){if(document.readyState!=="loading")throw failure();return;}
+      if(shellNames!==null){
+        for(const host of root.querySelectorAll("[data-ruvane-shell]")){
+          if(shellRows.some(row=>row.host===host))continue;
+          const name=host.getAttribute("data-ruvane-shell"),marker=host.nextSibling;
+          if(!marker){if(document.readyState!=="loading")throw failure();break;}
+          if(name!==names[shellRows.length]||host.localName!=="div"||host.attributes.length!==1||host.childNodes.length!==1||marker.localName!=="br"||marker.attributes.length!==2||!marker.hasAttribute("hidden")||marker.getAttribute("data-ruvane-shell-ready")!==name||marker.childNodes.length)throw failure();
+          const view=host.firstChild,controller=runtime.hydrateShell(view,name,url);marker.remove();shellRows.push({name,host,root:view,parent:host.parentNode,controller});
+          status.textContent="Shell ready. Loading page…";
+        }
+        const markers=[...root.querySelectorAll("[data-ruvane-shell-ready]")];
+        if(markers.length>names.length-shellRows.length||markers.some(node=>!names.slice(shellRows.length).includes(node.getAttribute("data-ruvane-shell-ready"))))throw failure();
+      }
       let added=false;
       for(const node of root.querySelectorAll("[data-ruvane-segment]")){
+        if(!earlyLayouts)throw failure();
         if(rows.length>=expected)throw failure();
         const own=node.parentElement,host=own?.parentElement,slot=rows.at(-1)?.outlet??outlet,child=host?.lastChild;
         if(!node.querySelector("[data-ruvane-ready]")||host?.childNodes.length===1){if(document.readyState!=="loading")throw failure();break;}
@@ -224,20 +247,20 @@ export function createDocumentHydration(runtime,root,{timeoutMs}={}){
       if(document.readyState!=="loading"){
         const snapshot=readInitialSnapshot(root),page=decodeNavigationSnapshot(snapshot).page;
         const retired=readRetiredBranch(root,page),shorter=rows.length<expected&&page.failed===rows.length;
-        if(!rows.length&&page.failed===0){const declaration=clientDeclaration(readBoundaries(root),page.url);if(!declaration||declaration.chain.length!==expected)throw failure();}
-        if((rows.length!==expected&&!shorter)||title!==null&&title!==page.title||root.querySelector("[data-ruvane-segment]"))throw failure();
+        if(!earlyLayouts||!rows.length&&page.failed===0){const declaration=clientDeclaration(readBoundaries(root),page.url);if(!declaration||declaration.chain.length!==expected)throw failure();}
+        if(earlyLayouts&&(rows.length!==expected&&!shorter)||title!==null&&title!==page.title||root.querySelector("[data-ruvane-segment]")||shellRows.length!==names.length||shellNames!==null&&root.querySelector("[data-ruvane-shell-ready]"))throw failure();
         if(retired){
-          if(retired.page.pending!==expected||rows.length!==page.failed||!retired.page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor)))throw failure();
+          if(retired.page.pending!==expected||earlyLayouts&&(rows.length!==page.failed||!retired.page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor))))throw failure();
           runtime.validatePage(retired.bytes);
-        }else if(page.layouts.length!==rows.length||!page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor)))throw failure();
+        }else if(earlyLayouts&&(page.layouts.length!==rows.length||!page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor))))throw failure();
         runtime.validatePage(decodeNavigationSnapshot(snapshot).bytes);
-        state="ready";resolve(Object.freeze({snapshot,parents:Object.freeze(rows.map(row=>row.controller)),accept(){if(state!=="ready")return false;try{shape();return true;}catch{retire();return false;}}}));
+        snapshotBytes=decodeNavigationSnapshot(snapshot).bytes;state="ready";resolve(Object.freeze({snapshot,shells:Object.freeze(shellRows.map(row=>Object.freeze({root:row.root,controller:row.controller}))),parents:Object.freeze(rows.map(row=>row.controller)),accept(){if(state!=="ready")return false;try{shape();return true;}catch{retire();return false;}}}));
       }
     }catch{retire();}
   }
   function schedule(){if(!["waiting","ready"].includes(state)||queued)return;queued=true;queueMicrotask(pump);}
   observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true});document.addEventListener("readystatechange",schedule);window.addEventListener("pagehide",leave,{once:true});window.addEventListener("popstate",leave);schedule();
-  return Object.freeze({ready,retire,commit(){if(state!=="ready")throw failure();state="committed";cleanup(true);rows.length=0;}});
+  return Object.freeze({ready,retire,commit(){if(state!=="ready")throw failure();shape();if(shellNames!==null)runtime.commitShells(shellRows.map(row=>row.controller),snapshotBytes);state="committed";cleanup(true);rows.length=0;shellRows.length=0;}});
 }
 
 /** Keeps page data in a bounded cache; live views belong to the runtime. */
@@ -526,12 +549,14 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   function sameInitialDOM(a,b){
     return a.host===b.host&&a.fallback===b.fallback&&a.departing===b.departing&&a.roots.length===b.roots.length&&a.roots.every((root,n)=>root===b.roots[n])&&a.layouts.every((row,n)=>row.host===b.layouts[n]?.host&&row.own===b.layouts[n].own&&row.outlet===b.layouts[n].outlet)&&a.retiringRoots.length===b.retiringRoots.length&&a.retiringRoots.every((root,n)=>root===b.retiringRoots[n]);
   }
-  function initialize(snapshotBytes,accept,parents=[]){
+  function initialize(snapshotBytes,accept,parents=[],shells=[]){
     let transaction=null;
     try{
       const {revision,bytes,page}=decodeNavigationSnapshot(snapshotBytes),epoch=runtime.actionState().epoch;
       if(revision!==runtime.applicationRevision||page.url!==target()||runtime.actionState().pending||runtime.actionState().uncertain||typeof runtime.preparePageHydration!=="function")throw failure();
       runtime.validatePage(bytes);
+      const checkShells=()=>{if(shells.length){const roots=shells.map(row=>{if(!(row?.root instanceof HTMLElement)||!scope.contains(row.root)||outlet.contains(row.root))throw failure();return row.root;});runtime.validateShells(shells.map(row=>row.controller),page.url,roots);}};
+      checkShells();
       if(accept&&!accept()){status.textContent="Native forms are ready.";return "native";}
       if(disposed||pending||started)throw failure();
       const root=outlet.closest("#ruvane-application")??scope,retired=readRetiredBranch(root,page);
@@ -541,8 +566,10 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
       if(retired&&(afterRetired?.node!==retired.node||afterRetired.text!==retired.text)||!sameInitialDOM(server,after)||page.url!==target()||runtime.actionState().epoch!==epoch||accept&&!accept()||disposed||pending||started)throw failure();
       history.replaceState({...stateObject(history.state),[KEY]:entry(target()+location.hash,scrollX,scrollY)},"",location.href);
       if(disposed||pending||started||page.url!==target()||runtime.actionState().epoch!==epoch||runtime.actionState().pending||runtime.actionState().uncertain)throw failure();
+      if(accept&&!accept())throw failure();
+      checkShells();
       const finalRetired=readRetiredBranch(root,page);
-      if(retired&&(finalRetired?.node!==retired.node||finalRetired.text!==retired.text)||!sameInitialDOM(server,initialDOM(page,finalRetired)))throw failure();
+      if(retired&&(finalRetired?.node!==retired.node||finalRetired.text!==retired.text)||!sameInitialDOM(server,initialDOM(page,finalRetired))||disposed||pending||started||page.url!==target()||runtime.actionState().state!=="active"||runtime.actionState().epoch!==epoch||runtime.actionState().pending||runtime.actionState().uncertain)throw failure();
       const focusRemoved=server.departing?.contains(document.activeElement);
       transaction.commit();transaction=null;server.departing?.remove();server.fallback.remove();retired?.node.remove();
       if(focusRemoved)server.host.focus({preventScroll:true});
@@ -556,7 +583,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   }
   scope.addEventListener("click",click); scope.addEventListener("pointerover",intend); scope.addEventListener("focusin",intend); window.addEventListener("popstate",pop); window.addEventListener("scroll",scroll,{passive:true});
   return Object.freeze({
-    start({accept,snapshot,parents=[]}={}) { if (started || pending || disposed || accept !== undefined && typeof accept !== "function" || !Array.isArray(parents) || parents.length>6 || snapshot===undefined&&parents.length) throw failure(); if(snapshot!==undefined){idle=Promise.resolve(initialize(snapshot,accept,parents));return idle;} return run(target(),"start",{x:scrollX,y:scrollY},accept); },
+    start({accept,snapshot,parents=[],shells=[]}={}) { if (started || pending || disposed || accept !== undefined && typeof accept !== "function" || !Array.isArray(parents) || parents.length>6 || !Array.isArray(shells) || shells.length>8 || snapshot===undefined&&(parents.length||shells.length)) throw failure(); if(snapshot!==undefined){idle=Promise.resolve(initialize(snapshot,accept,parents,shells));return idle;} return run(target(),"start",{x:scrollX,y:scrollY},accept); },
     navigate(url,{replace=false}={}) { return run(url,replace ? "replace" : "push"); },
     prefetch,
     retry,

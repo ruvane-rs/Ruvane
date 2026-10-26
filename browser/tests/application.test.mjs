@@ -43,6 +43,12 @@ await test("a generated application ships an independent, revision-matched Wasm 
       const page=stage(packet("/",8,0));assert.ok(page);assert.ok(drain().some(c=>c.op===12 && c.url==="/tasks"));assert.equal(e.ruvane_dispose(page),1);drain();
       const error=stage(packet("/unknown",11,404,404,true));assert.ok(error);assert.ok(drain().some(c=>c.op===2 && c.text==="Page not found"));assert.equal(e.ruvane_dispose(error),1);drain();assert.equal(e.ruvane_live_instances(),0);
     });
+    await t.test("the shell toolbar keeps its fields while its keyed tools toggle",()=>{
+      const id=e.ruvane_mount(1,1,1,5);assert.ok(id);const initial=drain(),toggle=initial.find(c=>c.op===3&&c.event===4),input=initial.find(c=>c.op===3&&c.event===2);assert.ok(toggle&&input);
+      for(let n=0;n<6;n++){assert.equal(e.ruvane_dispatch(id,toggle.node,4,0,0),1);const commands=drain();assert.ok(commands.some(c=>n%2===0?c.op===2&&c.text==="Shell tools are ready.":c.op===6));assert.ok(!commands.some(c=>c.op===11));}
+      const bytes=new TextEncoder().encode("Draft 🦀");assert.equal(e.ruvane_event_begin(id,input.node,2,bytes.length),1);for(let p=0;p<bytes.length;p+=4){let value=0;const size=Math.min(4,bytes.length-p);for(let n=0;n<size;n++)value|=bytes[p+n]<<(8*n);assert.equal(e.ruvane_event_chunk(value>>>0,size),1);}assert.equal(e.ruvane_dispatch(id,input.node,2,1,0),1);assert.ok(drain().some(c=>c.op===8&&c.value==="Draft 🦀"));
+      assert.equal(e.ruvane_dispose(id),1);drain();assert.equal(e.ruvane_live_instances(),0);
+    });
     await t.test("nested packets validate layout ownership and mount selected segments", () => {
       const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
       const branch=(name="workspace",key="/tasks")=>{

@@ -177,7 +177,32 @@ pub fn application() -> App {
     app.client_page_streaming("global", true).unwrap();
     app.client_page_document_streaming(
         "global",
-        Some(|_| Ok(ruvane::ClientDocument::new("Project / Ruvane").hydrate_layouts(true))),
+        Some(|_| {
+            Ok(ruvane::ClientDocument::new("Project / Ruvane")
+                .hydrate_layouts(true)
+                .hydrate_shell(true))
+        }),
+    )
+    .unwrap();
+
+    app.client_page(
+        PageRoute::new("shell", "/tasks/shell").unwrap(),
+        components::PROJECT,
+        zero,
+        project_page,
+    )
+    .unwrap();
+    app.client_page_layout("shell", Some("workspace")).unwrap();
+    app.client_page_streaming("shell", true).unwrap();
+    app.client_page_document_streaming(
+        "shell",
+        Some(|context| {
+            Ok(ruvane::ClientDocument::new("Project / Ruvane")
+                .hydrate_shell(true)
+                .hydrate_layouts(
+                    context.request().unwrap().query_params().get("layouts") == Some("yes"),
+                ))
+        }),
     )
     .unwrap();
 
@@ -226,8 +251,12 @@ static LAYOUT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 static RECOVERY_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn project_page(context: &PageContext<'_>) -> Result<ClientPageData, PageError> {
     let query = context.request().unwrap().query_params();
-    if query.get("delay") == Some("yes") {
-        let delay = std::time::Duration::from_millis(500);
+    if matches!(query.get("delay"), Some("yes" | "long")) {
+        let delay = std::time::Duration::from_millis(if query.get("delay") == Some("long") {
+            3000
+        } else {
+            500
+        });
         if let Some(stream) = context.stream_context() {
             stream
                 .wait(delay)
@@ -268,7 +297,7 @@ pub fn shell(children: Html) -> Html {
         .unwrap()
         .view()
         .unwrap()
-        .hydratable(props)
+        .shell_island("toolbar", props)
         .unwrap();
     element(Tag::Main)
         .child(
@@ -278,6 +307,14 @@ pub fn shell(children: Html) -> Html {
                 .child(application().prefetch_link("home", &[], "Home").unwrap())
                 .child(" · ")
                 .child(application().prefetch_link("tasks", &[], "Tasks").unwrap())
+                .child(" · ")
+                .child(ruvane::link(
+                    &InternalUrl::new("/tasks/shell")
+                        .unwrap()
+                        .query("delay", "long")
+                        .unwrap(),
+                    "Interactive shell",
+                ))
                 .child(" · ")
                 .child(ruvane::link(
                     &InternalUrl::new("/stream").unwrap(),

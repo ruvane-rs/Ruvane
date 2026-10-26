@@ -2,9 +2,9 @@ import { createRuntime } from "./bridge.mjs";
 import { createNavigator, readBoundaries, readInitialSnapshot, createDocumentHydration } from "./navigation.mjs";
 const root=document.getElementById("ruvane-application");
 let runtime,navigator,session,retired=false;
-function shell(){
+function shell(adopted=[]){
   const outlet=root.querySelector("#ruvane-outlet");
-  for(const element of root.querySelectorAll("[data-ruvane-version]"))if(!outlet.contains(element))runtime.hydrate(element);
+  for(const element of root.querySelectorAll("[data-ruvane-version]"))if(!outlet.contains(element)&&!adopted.includes(element))runtime.hydrate(element);
 }
 try{
   if(!root||document.querySelectorAll("#ruvane-application").length!==1)throw new Error("Invalid Ruvane application shell");
@@ -34,7 +34,7 @@ try{
   if(result==="success"){
     session?.commit();
     root.querySelector("#ruvane-initial").remove();root.querySelector("#ruvane-complete")?.remove();
-    if(segments)shell();
+    if(segments)shell(initial.shells.map(row=>row.root));
   }else{session?.retire();navigator.dispose();}
 }catch{
   session?.retire();navigator?.dispose();

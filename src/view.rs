@@ -533,6 +533,23 @@ impl View {
     pub fn hydratable(&self, props: ComponentProps) -> Result<Html, ViewError> {
         self.hydration_markup(props, false)
     }
+    /// Marks an independent shell view for opted-in early hydration.
+    /// Names must be unique in the application shell. Controls start disabled.
+    pub fn shell_island(&self, name: &str, props: ComponentProps) -> Result<Html, ViewError> {
+        if name.is_empty()
+            || name.len() > 32
+            || !name.bytes().enumerate().all(|(index, byte)| {
+                byte.is_ascii_alphabetic() || byte == b'_' || index > 0 && byte.is_ascii_digit()
+            })
+        {
+            return Err(ViewError::InvalidIdentifier);
+        }
+        let view = self.hydratable(props)?;
+        Ok(Html::rendered(format!(
+            "<div data-ruvane-shell=\"{name}\">{}</div><br hidden data-ruvane-shell-ready=\"{name}\">",
+            view.as_str()
+        )))
+    }
     pub(crate) fn hydratable_page(&self, props: ComponentProps) -> Result<Html, ViewError> {
         self.hydration_markup(props, true)
     }
