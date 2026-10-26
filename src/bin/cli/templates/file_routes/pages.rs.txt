@@ -1,0 +1,99 @@
+use crate::{components, store};
+use ruvane::{
+    App, ComponentProps, Html, InitialState, InternalUrl, NavigationMatch, PageError, PostForm,
+    Tag, element,
+};
+
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/ruvane-routes.rs"));
+}
+
+pub fn zero(_: &NavigationMatch) -> Result<InitialState, PageError> {
+    Ok(InitialState::Number(0))
+}
+pub fn task(route: &NavigationMatch) -> Result<InitialState, PageError> {
+    let raw = route.param("id").ok_or(PageError::BadRequest)?;
+    let id = raw.parse::<u32>().map_err(|_| PageError::BadRequest)?;
+    if id == 0 || id.to_string() != raw {
+        return Err(PageError::BadRequest);
+    }
+    Ok(InitialState::Number(id))
+}
+pub fn application() -> App {
+    let mut app = App::new();
+    app.components(components::create_component, components::ERROR)
+        .unwrap();
+    generated::register(&mut app).unwrap();
+    app.client_boundary(Some(
+        ruvane::ClientBoundary::new(components::LOADING, components::GLOBAL_ERROR).unwrap(),
+    ))
+    .unwrap();
+    app
+}
+pub fn shell(children: Html) -> Html {
+    let props = ComponentProps::new(1, InitialState::Number(5)).unwrap();
+    let counter = components::create_component(props)
+        .unwrap()
+        .view()
+        .unwrap()
+        .shell_island("toolbar", props)
+        .unwrap();
+    let app = application();
+    let mut header = element(Tag::Header)
+        .child(element(Tag::H1).child("Ruvane file routes"))
+        .child(element(Tag::P).child("Shared Rust routes. No third-party dependencies."));
+    for (name, label) in [("home", "Home"), ("tasks", "Tasks")] {
+        if let Ok(url) = app.url(name, &[]) {
+            header = header
+                .child(ruvane::navigation_link(&url, label))
+                .child(" ");
+        }
+    }
+    element(Tag::Main)
+        .child(header)
+        .child(counter)
+        .child(children)
+        .render()
+}
+
+pub fn native_forms(id: Option<u32>) -> Result<Html, PageError> {
+    let mut body = element(Tag::Section).child(element(Tag::H2).child("Native forms"));
+    if id.is_none() {
+        body = body.child(
+            PostForm::new(InternalUrl::new("/tasks").unwrap())
+                .unwrap()
+                .text("title", "Task name", "")
+                .unwrap()
+                .textarea("notes", "Notes", "")
+                .unwrap()
+                .submit_label("Add task")
+                .unwrap(),
+        );
+    }
+    for task in store::tasks()?
+        .into_iter()
+        .filter(|task| id.is_none_or(|id| task.id == id))
+    {
+        let url = InternalUrl::new("/tasks")
+            .unwrap()
+            .segment(&task.id.to_string())
+            .unwrap();
+        body = body
+            .child(element(Tag::H3).child(task.title))
+            .child(
+                PostForm::new(url.clone().segment("status").unwrap())
+                    .unwrap()
+                    .checkbox("done", "Completed", task.done)
+                    .unwrap()
+                    .submit_label("Save status")
+                    .unwrap(),
+            )
+            .child(
+                PostForm::new(url.segment("remove").unwrap())
+                    .unwrap()
+                    .submit_label("Remove task")
+                    .unwrap(),
+            );
+    }
+    Ok(body.render())
+}

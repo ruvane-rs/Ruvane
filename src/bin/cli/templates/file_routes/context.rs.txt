@@ -1,0 +1,7 @@
+use crate::{components, pages};
+use ruvane::{ActionData, ClientLayoutData, FileLayout};
+pub fn layout() -> FileLayout {
+    FileLayout::client("context", components::CONTEXT, pages::task, |_| {
+        Ok(ClientLayoutData::new(ActionData::default()))
+    })
+}

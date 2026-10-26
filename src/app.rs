@@ -539,7 +539,7 @@ impl App {
             .map(|p| p.route.name())
     }
 
-    fn validate(&self) -> Result<(), AppError> {
+    pub(crate) fn validate(&self) -> Result<(), AppError> {
         let mut router = Router::new();
         for page in &self.pages {
             router.get(page.route.pattern(), |_| Response::text(""))?;

@@ -8,6 +8,7 @@ mod assets;
 mod browser;
 mod content;
 mod development;
+mod file_routes;
 mod forms;
 mod html;
 mod http;
@@ -48,6 +49,11 @@ pub use content::{
     markdown,
 };
 pub use development::{Development, MAX_DEVELOPMENT_STATUS_BYTES};
+pub use file_routes::{
+    FileLayout, FilePage, FileRouteError, FileRouteLayout, FileRouteRegistry, FileRoutes,
+    MAX_FILE_ROUTE_FILES, MAX_FILE_ROUTE_MODULE_BYTES, MAX_FILE_ROUTE_SOURCE_BYTES,
+    MAX_FILE_ROUTE_TOTAL_BYTES,
+};
 pub use forms::{FormData, FormError, GetForm, MAX_FORM_NAME_BYTES, MAX_POST_BODY_BYTES, PostForm};
 pub use html::{
     Attribute, Document, Element, Html, ImageError, MAX_IMAGE_DIMENSION, Tag, element, fragment,

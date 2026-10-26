@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.35 — Unreleased
+
+- Add opt-in `new --interactive --file-routes` with a generated native/Wasm
+  registry, fixed and dynamic page directories, and inherited file layouts.
+- Use typed `FilePage`/`FileLayout` exports checked by Rust, with named routes,
+  component factories and loaders remaining explicit application declarations.
+- Validate bounded real-directory trees, route ambiguity and escaped module
+  imports before atomically publishing recognized Cargo output files.
+- Register complete batches on a private App clone; failed or abandoned batches
+  retain the original App, including after ignored registration errors.
+- Preserve protected dev rebuilds on page addition, rename, removal and errors;
+  keep production independent of route source files and runtime filesystem scans.
+- Add native, CLI and Wasm coverage without third-party dependencies.
+  ABI v11, 22 exports, four runtime assets and two first-party crates remain.
+
 ## 0.1.0-alpha.34 — Unreleased
 
 - Update declared CSS in generated interactive dev projects without invoking

@@ -58,6 +58,8 @@ New interactive starters provide [browser development feedback](docs/development
 compiler diagnostics, first-build waiting pages and guarded full-document reloads
 after the replacement server is ready. Declared CSS updates in place without
 compilation or server restart, keeping the current components and drafts.
+Opt-in [file routes](docs/file-routes.md) generate a shared Rust registry from
+`page.rs`, `layout.rs` and `[parameter]` directories during Cargo builds.
 
 Create an interactive project from a local checkout:
 
@@ -67,6 +69,8 @@ ruvane new my-app --interactive --framework-path /absolute/path/to/Ruvane
 cd my-app
 ruvane dev --offline
 ```
+
+Add `--file-routes` to `new --interactive` for the directory-based starter.
 
 The toolchain needs `wasm32-unknown-unknown`. `ruvane build --offline` produces a
 versioned server bundle. The adapter is not published, so interactive generation

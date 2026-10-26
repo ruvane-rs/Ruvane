@@ -34,6 +34,7 @@ jobs:
           cargo build --offline --locked -p ruvane-browser --target wasm32-unknown-unknown --release
           node --test browser/tests/bridge.test.mjs
           node --test browser/tests/application.test.mjs
+          node --test browser/tests/file-routes.test.mjs
           node --test browser/tests/progressive.test.mjs
           node --test browser/tests/initial.test.mjs
           node --test browser/tests/layout-snapshot.test.mjs

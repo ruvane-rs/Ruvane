@@ -1,0 +1,18 @@
+use crate::{components, pages, store};
+use ruvane::{ClientPageData, FilePage, PageError};
+pub fn page() -> FilePage {
+    FilePage::client("task", components::DETAIL, pages::task, |context| {
+        let id = context
+            .param_as::<u32>("id")
+            .map_err(|_| PageError::BadRequest)?;
+        let title = store::tasks()?
+            .into_iter()
+            .find(|task| task.id == id)
+            .ok_or(PageError::NotFound)?
+            .title;
+        Ok(
+            ClientPageData::new(format!("{title} / Ruvane"), store::snapshot()?)
+                .fallback(pages::native_forms(Some(id))?),
+        )
+    })
+}

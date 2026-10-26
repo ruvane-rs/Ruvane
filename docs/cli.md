@@ -1,5 +1,9 @@
 # Ruvane CLI
 
+Alpha.35 adds `new NAME --interactive --file-routes --framework-path PATH`.
+Its [file-route starter](file-routes.md) generates one typed Rust registry for
+the native server and Wasm. Existing starters and projects retain their format.
+
 Alpha.34 updates explicitly declared CSS in interactive dev projects without
 Cargo or server restart, preserving the current document and components.
 Other changes use the existing protected rebuild. See [development feedback](development.md).

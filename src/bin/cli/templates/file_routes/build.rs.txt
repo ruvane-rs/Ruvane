@@ -1,0 +1,10 @@
+#![forbid(unsafe_code)]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-changed=src/routes");
+    println!("cargo:rerun-if-env-changed=RUVANE_CONTENT_REVISION");
+    let output = std::path::PathBuf::from(
+        std::env::var_os("OUT_DIR").ok_or("missing Cargo output directory")?,
+    );
+    ruvane::FileRoutes::read_dir("src/routes")?.write_module(output.join("ruvane-routes.rs"))?;
+    Ok(())
+}

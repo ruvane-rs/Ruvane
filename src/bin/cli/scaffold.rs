@@ -77,9 +77,14 @@ fn quoted(value: &str) -> Result<String> {
     ))
 }
 
-pub(super) fn create(name: &str, framework: Option<&Path>, interactive: bool) -> Result<()> {
+pub(super) fn create(
+    name: &str,
+    framework: Option<&Path>,
+    interactive: bool,
+    file_routes: bool,
+) -> Result<()> {
     if interactive {
-        return create_interactive(name, framework);
+        return create_interactive(name, framework, file_routes);
     }
     if !valid_name(name) {
         return Err(
@@ -128,7 +133,7 @@ pub(super) fn create(name: &str, framework: Option<&Path>, interactive: bool) ->
     Ok(())
 }
 
-fn create_interactive(name: &str, framework: Option<&Path>) -> Result<()> {
+fn create_interactive(name: &str, framework: Option<&Path>, file_routes: bool) -> Result<()> {
     if matches!(
         name,
         "ruvane" | "ruvane-browser" | "ruvane-application-browser"
@@ -156,9 +161,14 @@ fn create_interactive(name: &str, framework: Option<&Path>) -> Result<()> {
             .to_str()
             .ok_or("framework path must be UTF-8")?,
     )?;
-    let manifest = format!(
+    let mut manifest = format!(
         "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\npublish = false\n\n[workspace]\nmembers = [\"browser\"]\ndefault-members = [\".\"]\nresolver = \"2\"\n\n[lib]\nname = \"ruvane_application\"\npath = \"src/lib.rs\"\n\n[[bin]]\nname = \"ruvane-app\"\npath = \"src/main.rs\"\n\n[dependencies]\nruvane = {{ path = {core} }}\n"
     );
+    if file_routes {
+        manifest.push_str(&format!(
+            "\n[build-dependencies]\nruvane = {{ path = {core} }}\n"
+        ));
+    }
     let browser = format!(
         "[package]\nname = \"ruvane-application-browser\"\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\npublish = false\n\n[lib]\nname = \"ruvane_application_browser\"\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nruvane-application = {{ package = \"{name}\", path = \"..\" }}\nruvane-browser = {{ path = {adapter}, default-features = false }}\n"
     );
@@ -182,7 +192,11 @@ fn create_interactive(name: &str, framework: Option<&Path>) -> Result<()> {
         ),
         (
             "src/pages.rs",
-            include_str!("templates/interactive/pages.rs.txt"),
+            if file_routes {
+                include_str!("templates/file_routes/pages.rs.txt")
+            } else {
+                include_str!("templates/interactive/pages.rs.txt")
+            },
         ),
         (
             "src/components.rs",
@@ -200,10 +214,59 @@ fn create_interactive(name: &str, framework: Option<&Path>) -> Result<()> {
             "browser/src/lib.rs",
             include_str!("templates/interactive/browser.rs.txt"),
         ),
-        ("README.md", include_str!("templates/interactive/README.md")),
+        (
+            "README.md",
+            if file_routes {
+                include_str!("templates/file_routes/README.md")
+            } else {
+                include_str!("templates/interactive/README.md")
+            },
+        ),
         ("assets/site.css", include_str!("../../../web/browser.css")),
     ] {
         project::write_new(&destination.join(path), body.as_bytes())?;
+    }
+    if file_routes {
+        for directory in [
+            "src/routes",
+            "src/routes/tasks",
+            "src/routes/tasks/[id]",
+            "src/routes/tasks/settings",
+        ] {
+            fs::create_dir(destination.join(directory))?;
+        }
+        for (path, source) in [
+            (
+                "build.rs",
+                include_str!("templates/file_routes/build.rs.txt"),
+            ),
+            (
+                "src/routes/page.rs",
+                include_str!("templates/file_routes/home.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/page.rs",
+                include_str!("templates/file_routes/tasks.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/layout.rs",
+                include_str!("templates/file_routes/workspace.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/[id]/page.rs",
+                include_str!("templates/file_routes/task.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/[id]/layout.rs",
+                include_str!("templates/file_routes/context.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/settings/page.rs",
+                include_str!("templates/file_routes/settings.rs.txt"),
+            ),
+        ] {
+            project::write_new(&destination.join(path), source.as_bytes())?;
+        }
     }
     Ok(())
 }

@@ -1,5 +1,8 @@
 # Pages and layouts
 
+Alpha.35 adds optional [file routes](file-routes.md), with build-time discovery
+and atomic registration through the existing native/client App APIs.
+
 Alpha.21 adds [persistent client layout branches](client-layouts.md), with shared
 SSR declarations and parent component reuse during client navigation.
 

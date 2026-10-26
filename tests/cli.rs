@@ -892,3 +892,165 @@ fn interactive_options_fail_before_creating_an_incomplete_project() {
         assert!(!temp.0.join(name).exists());
     }
 }
+
+#[test]
+fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_on_errors() {
+    let temp = Temp::new();
+    let parent = temp.0.join("quoted \" project");
+    fs::create_dir(&parent).unwrap();
+    assert!(
+        !cli(&parent, &["new", "invalid", "--file-routes"])
+            .status
+            .success()
+    );
+    assert!(!parent.join("invalid").exists());
+    let created = Command::new(CLI)
+        .current_dir(&parent)
+        .args([
+            "new",
+            "file-application",
+            "--interactive",
+            "--file-routes",
+            "--framework-path",
+        ])
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let root = parent.join("file-application");
+    let mut running = Running::start(&root, &["dev", "--offline", "--port", "0"]);
+    let address = running.address("Ruvane dev at");
+    let html = application_html(address);
+    let session = development_session(&html).to_owned();
+    let version = revision(&html).to_owned();
+    let settings = interactive_wire(address, "/tasks/settings", true);
+    let settings = ruvane::NavigationPage::decode(response_body(&settings)).unwrap();
+    assert_eq!(settings.status(), ruvane::StatusCode::Ok);
+    assert_eq!(settings.props().component(), 14);
+    assert_eq!(settings.layouts().len(), 1);
+    assert!(
+        application_post(address, "title=File+route+task", Some(&version))
+            .starts_with(b"HTTP/1.1 200")
+    );
+    let detail = interactive_wire(address, "/tasks/1", true);
+    let detail = ruvane::NavigationPage::decode(response_body(&detail)).unwrap();
+    assert_eq!(detail.props().component(), 10);
+    assert_eq!(detail.layouts().len(), 2);
+    let native =
+        String::from_utf8(interactive_wire(address, "/tasks/1?native=yes", false)).unwrap();
+    assert!(
+        native.contains("File route task")
+            && native.contains("script-src 'none'")
+            && !native.contains("<script")
+    );
+    let added = root.join("src/routes/added");
+    fs::create_dir(&added).unwrap();
+    let page = "pub fn page() -> ruvane::FilePage { ruvane::FilePage::client(\"added\", crate::components::HOME, crate::pages::zero, |_| Ok(ruvane::ClientPageData::new(\"Added\", crate::store::snapshot()?))) }\n";
+    fs::write(added.join("page.rs"), page).unwrap();
+    running.address("Ruvane dev at");
+    let packet = interactive_wire(address, "/added", true);
+    assert_eq!(
+        ruvane::NavigationPage::decode(response_body(&packet))
+            .unwrap()
+            .status(),
+        ruvane::StatusCode::Ok
+    );
+    let renamed = root.join("src/routes/renamed");
+    fs::rename(&added, &renamed).unwrap();
+    running.address("Ruvane dev at");
+    for (url, status) in [
+        ("/added", ruvane::StatusCode::NotFound),
+        ("/renamed", ruvane::StatusCode::Ok),
+    ] {
+        assert_eq!(
+            ruvane::NavigationPage::decode(response_body(&interactive_wire(address, url, true)))
+                .unwrap()
+                .status(),
+            status
+        );
+    }
+    fs::remove_file(renamed.join("page.rs")).unwrap();
+    running.address("Ruvane dev at");
+    assert_eq!(
+        ruvane::NavigationPage::decode(response_body(&interactive_wire(address, "/renamed", true)))
+            .unwrap()
+            .status(),
+        ruvane::StatusCode::NotFound
+    );
+    let healthy = application_html(address);
+    let retained = revision(&healthy).to_owned();
+    let wasm_path = module_path(&healthy).to_owned();
+    let wasm = interactive_wire(address, &wasm_path, false);
+    let ambiguous = root.join("src/routes/tasks/[slug]");
+    fs::create_dir(&ambiguous).unwrap();
+    fs::write(ambiguous.join("page.rs"), "pub fn page() {}\n").unwrap();
+    running.until("keeping the previous server");
+    assert!(development_status(address, &session, "").contains("ambiguous"));
+    assert_eq!(revision(&application_html(address)), retained);
+    assert_eq!(
+        response_body(&interactive_wire(address, &wasm_path, false)),
+        response_body(&wasm)
+    );
+    fs::remove_file(ambiguous.join("page.rs")).unwrap();
+    let home_path = root.join("src/routes/page.rs");
+    let home = fs::read_to_string(&home_path).unwrap();
+    fs::write(&home_path, "pub fn page() {}\n").unwrap();
+    running.until("keeping the previous server");
+    assert!(development_status(address, &session, "").contains("mismatched types"));
+    assert_eq!(revision(&application_html(address)), retained);
+    fs::write(&home_path, &home).unwrap();
+    running.address("Ruvane dev at");
+    let retained = revision(&application_html(address)).to_owned();
+    let duplicate = root.join("src/routes/duplicate");
+    fs::create_dir(&duplicate).unwrap();
+    fs::write(duplicate.join("page.rs"), &home).unwrap();
+    running.until("Restored the previous server");
+    assert_eq!(revision(&application_html(address)), retained);
+    assert!(
+        running
+            .logs
+            .lock()
+            .unwrap()
+            .contains("duplicate application name")
+    );
+    fs::remove_file(duplicate.join("page.rs")).unwrap();
+    running.address("Ruvane dev at");
+    let settings_path = root.join("src/routes/tasks/settings/page.rs");
+    let settings_source = fs::read_to_string(&settings_path).unwrap();
+    fs::remove_file(&settings_path).unwrap();
+    running.address("Ruvane dev at");
+    let removed = interactive_wire(address, "/tasks/settings", true);
+    assert_eq!(
+        ruvane::NavigationPage::decode(response_body(&removed))
+            .unwrap()
+            .status(),
+        ruvane::StatusCode::BadRequest
+    );
+    fs::write(&settings_path, settings_source).unwrap();
+    running.address("Ruvane dev at");
+    let native_dir = root.join("src/routes/native");
+    fs::create_dir(&native_dir).unwrap();
+    fs::write(native_dir.join("page.rs"), "pub fn page() -> ruvane::FilePage { ruvane::FilePage::server(\"native\", ruvane::PageMode::fixed(), |_| Ok(ruvane::Page::new(\"Native file page\", \"Rendered from a file\"))) }\n").unwrap();
+    running.address("Ruvane dev at");
+    let native = String::from_utf8(interactive_wire(address, "/native/", false)).unwrap();
+    assert!(
+        native.starts_with("HTTP/1.1 200")
+            && native.contains("Rendered from a file")
+            && native.contains("script-src 'none'")
+            && !native.contains("<script")
+    );
+    fs::remove_file(native_dir.join("page.rs")).unwrap();
+    running.address("Ruvane dev at");
+    running.quit();
+    let built = cli(&root, &["build", "--offline"]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    assert!(root.join("dist/build-000001/complete").is_file());
+}

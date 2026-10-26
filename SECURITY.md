@@ -518,6 +518,16 @@ retired loads. Development-only asset handlers validate session/build/version
 tokens and origin metadata. CSS remains trusted application source. Production
 assets keep their embedded bytes and do not read development snapshot files.
 
+Alpha.35 file routes are discovered by trusted Cargo build scripts. Discovery
+rejects observed symlinks, unknown entries, ambiguous page patterns and bounded
+directory/source overflows. Generated imports use escaped absolute paths and
+fixed Rust module identifiers. Registration validates a private App clone and
+cannot commit a failed batch. Production contains compiled routes and does not
+serve or discover route sources. The generator does not parse or sandbox Rust;
+declaration functions and imported code remain trusted executable inputs. Source
+and output directories must be protected from concurrent hostile changes.
+See [file routes](docs/file-routes.md) for the exact format and limits.
+
 For reporting options, consult the repository's Security tab. If private
 vulnerability reporting is unavailable, contact a maintainer privately before
 sharing sensitive details. Do not include credentials or personal data.

@@ -76,7 +76,7 @@ fn page(tests: bool, scripts: bool) -> ruvane::Html {
         ruvane::Html::default()
     };
     Document::new(
-        "Ruvane alpha.34 — Typed controls and forms",
+        "Ruvane alpha.35 — Typed controls and forms",
         fragment([
             element(Tag::H1)
                 .child("Ruvane / Server HTML + Rust/Wasm")

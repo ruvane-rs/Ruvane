@@ -23,7 +23,7 @@ const BUILDS_MARKER: &str = "ruvane-cli-builds\t1\n";
 
 const HELP: &str = "Ruvane — zero third-party dependencies
 
-  ruvane new NAME [--interactive] [--framework-path PATH]
+  ruvane new NAME [--interactive [--file-routes]] [--framework-path PATH]
   ruvane dev [--port PORT] [--offline]
   ruvane build [--origin ORIGIN] [--out NAME] [--offline]
   ruvane preview DIRECTORY [--port PORT]
@@ -86,6 +86,7 @@ fn new(args: &[OsString]) -> Result<()> {
         .ok_or("new requires a project name")?;
     let mut framework = None;
     let mut interactive = false;
+    let mut file_routes = false;
     let mut index = 1;
     while index < args.len() {
         match args[index].to_str() {
@@ -93,11 +94,15 @@ fn new(args: &[OsString]) -> Result<()> {
                 framework = Some(PathBuf::from(option(args, &mut index)?))
             }
             Some("--interactive") if !interactive => interactive = true,
+            Some("--file-routes") if !file_routes => file_routes = true,
             _ => return Err("invalid new option".into()),
         }
         index += 1;
     }
-    scaffold::create(name, framework.as_deref(), interactive)?;
+    if file_routes && !interactive {
+        return Err("--file-routes requires --interactive".into());
+    }
+    scaffold::create(name, framework.as_deref(), interactive, file_routes)?;
     println!("Created {name}.\nNext: cd {name}\n      ruvane dev");
     Ok(())
 }
