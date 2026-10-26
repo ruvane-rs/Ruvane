@@ -164,6 +164,7 @@ impl App {
                 status,
             )
             .and_then(|page| page.with_failure(failed, seeds.into_iter().take(depth).collect()))
+            .and_then(|page| page.with_metadata(Metadata::new()))
             .map_err(|_| PageError::InternalServerError)?;
             self.client_finish(
                 &packet,
@@ -251,6 +252,7 @@ impl App {
             )
             .and_then(|page| page.with_layouts(seeds.clone()))
             .map_err(|_| PageError::InternalServerError)?;
+            let packet = self.packet_metadata(packet, page.client_metadata)?;
             let head = if !matches!(
                 request.header("accept"),
                 Some(crate::NAVIGATION_MEDIA_TYPE | crate::NAVIGATION_STREAM_MEDIA_TYPE)

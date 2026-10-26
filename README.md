@@ -65,6 +65,9 @@ route tree; unknown URLs use the root 404 without guessing parent layouts.
 Native-only [file endpoints](docs/file-endpoints.md) add `route.rs` GET/HEAD and
 POST handlers, sharing existing HTTP protections and atomic registration.
 
+Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
+URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
+
 Create an interactive project from a local checkout:
 
 ```sh

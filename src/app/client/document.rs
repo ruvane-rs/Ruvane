@@ -112,6 +112,14 @@ impl App {
             let props = self.client_props(&url)?;
             let client = self.pages[index].client.unwrap();
             let head = client.document.unwrap()(context)?;
+            if self.client_metadata_origin.is_some()
+                && (head.metadata.encode_wire().len() > crate::MAX_NAVIGATION_METADATA_BYTES
+                    || !head
+                        .metadata
+                        .accepts_origin(self.client_metadata_origin.as_ref()))
+            {
+                return Err(PageError::InternalServerError);
+            }
             NavigationPage::new(
                 url.clone(),
                 &head.title,
@@ -182,7 +190,7 @@ impl App {
             );
             let mut document = Document::new(&head.title, Html::rendered(body))
                 .language(head.language)
-                .metadata(head.metadata);
+                .metadata(head.metadata.clone());
             for stylesheet in &runtime.stylesheets {
                 document = document.stylesheet(stylesheet.clone());
             }
@@ -209,6 +217,7 @@ impl App {
                     inputs: inputs.clone(),
                     seeds: Vec::new(),
                     title: head.title.clone(),
+                    metadata: head.metadata.clone(),
                     tail: tail.clone(),
                     limits: head.limits,
                     pending: Vec::new(),
@@ -238,6 +247,7 @@ struct DocumentProducer {
     inputs: Vec<LayoutInput>,
     seeds: Vec<NavigationLayout>,
     title: String,
+    metadata: Metadata,
     tail: String,
     limits: StreamLimits,
     pending: Vec<u8>,
@@ -296,6 +306,14 @@ impl DocumentProducer {
             if page.title != self.title {
                 return Err(PageError::InternalServerError);
             }
+            if page
+                .client_metadata
+                .as_ref()
+                .is_some_and(|metadata| metadata != &self.metadata)
+            {
+                return Err(PageError::InternalServerError);
+            }
+            let metadata = page.client_metadata;
             let data = page.client_data.ok_or(PageError::InternalServerError)?;
             let own = App::client_view_inputs(factory, self.props, &data, false, true)?;
             let packet = NavigationPage::new(
@@ -307,6 +325,7 @@ impl DocumentProducer {
             )
             .and_then(|p| p.with_layouts(self.seeds.clone()))
             .map_err(|_| PageError::InternalServerError)?;
+            let packet = self.app.packet_metadata(packet, metadata)?;
             self.finish(packet, own, page.body)
         }
     }
@@ -331,6 +350,7 @@ impl DocumentProducer {
             status,
         )
         .and_then(|page| page.with_failure(failed, self.seeds[..depth].to_vec()))
+        .and_then(|page| page.with_metadata(Metadata::new()))
         .map_err(|_| PageError::InternalServerError)?;
         let own = App::client_view(self.app.client_factory.unwrap(), props, packet.data(), true)?;
         self.finish(packet, own, Html::default())

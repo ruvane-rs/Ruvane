@@ -560,6 +560,17 @@ and page loaders do not guard endpoints. Excluding route modules from Wasm does
 not automatically exclude arbitrary shared application modules. Production
 contains compiled handlers and never discovers route source from request paths.
 
+Alpha.39 metadata uses a closed typed schema inside bounded RVP5 packets.
+Unknown flags, malformed UTF-8/URLs, nested envelopes, oversized metadata and
+unsafe error canonicals/indexing hints are rejected. Canonicals must belong to
+the App's explicitly configured public origin, shared with Wasm; request headers
+never configure it. The browser mutates only supported head slots after complete
+packet/schema validation, without HTML parsing or changes to CSP, scripts,
+stylesheets, charset or viewport. Metadata is public content and grants no
+resource authorization. Cache privacy restrictions remain in force. Initial
+streamed heads are trusted declarations; late errors cannot rewrite committed
+HTTP bytes, and their final validated snapshots sanitize the browser head.
+
 For reporting options, consult the repository's Security tab. If private
 vulnerability reporting is unavailable, contact a maintainer privately before
 sharing sensitive details. Do not include credentials or personal data.

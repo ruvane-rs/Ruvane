@@ -12,7 +12,8 @@ pub fn page() -> FilePage {
             .title;
         Ok(
             ClientPageData::new(format!("{title} / Ruvane"), store::snapshot()?)
-                .fallback(pages::native_forms(Some(id))?),
+                .fallback(pages::native_forms(Some(id))?)
+                .metadata(pages::metadata(context, &format!("Task: {title}"))?),
         )
     })
 }

@@ -1,5 +1,6 @@
 use crate::html::escape_into;
 use crate::{InternalUrl, MAX_INTERNAL_URL_BYTES};
+mod wire;
 use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -235,7 +236,7 @@ impl std::error::Error for MetadataError {}
 /// responsive viewport, description, robots, canonical URL, PNG favicon.
 /// No raw metadata names, `http-equiv`, HTML, or event attributes are accepted.
 /// Title and language remain properties of [`crate::Document`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 #[must_use]
 pub struct Metadata {
     description: Option<String>,
@@ -247,7 +248,10 @@ pub struct Metadata {
 impl Metadata {
     pub(crate) fn for_error(mut self) -> Self {
         self.canonical = None;
-        self.robots = Some(Robots::NoIndexFollow);
+        self.robots = Some(match self.robots {
+            Some(Robots::IndexNoFollow | Robots::NoIndexNoFollow) => Robots::NoIndexNoFollow,
+            _ => Robots::NoIndexFollow,
+        });
         self
     }
 
@@ -293,6 +297,23 @@ impl Metadata {
     pub fn favicon_png(mut self, source: InternalUrl) -> Self {
         self.favicon_png = Some(source);
         self
+    }
+
+    /// Current description, before HTML escaping.
+    pub fn description_text(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+    /// Current typed robots policy.
+    pub fn robots_policy(&self) -> Option<Robots> {
+        self.robots
+    }
+    /// Current canonical URL.
+    pub fn canonical_url(&self) -> Option<&CanonicalUrl> {
+        self.canonical.as_ref()
+    }
+    /// Current internal PNG favicon URL.
+    pub fn favicon_url(&self) -> Option<&InternalUrl> {
+        self.favicon_png.as_ref()
     }
 
     pub(crate) fn render_into(self, markup: &mut String) {

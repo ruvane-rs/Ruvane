@@ -211,6 +211,9 @@ Alpha.38 [file endpoints](file-endpoints.md) add native-only `route.rs` handlers
 for GET/HEAD, native POST forms and typed POST actions. They use the same
 bounded scan and atomic registration, with independent HTTP method ownership.
 
+[Client page metadata](client-metadata.md) can be returned with `ClientPageData`
+from the same loader, without a second request or a new special filename.
+
 ## Build integration
 
 The starter adds only Ruvane itself as a first-party build dependency. Its

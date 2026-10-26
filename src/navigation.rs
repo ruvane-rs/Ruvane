@@ -1,7 +1,7 @@
 //! Shared client routes and bounded typed page descriptions.
 use crate::{
-    ActionData, ActionReply, ComponentProps, Html, InitialState, InternalUrl, PageRoute, Query,
-    StatusCode,
+    ActionData, ActionReply, ComponentProps, Html, InitialState, InternalUrl, Metadata, PageRoute,
+    Query, StatusCode,
 };
 use std::fmt;
 
@@ -13,6 +13,8 @@ pub const NAVIGATION_STREAM_MEDIA_TYPE: &str = "application/vnd.ruvane.page-stre
 pub const MAX_NAVIGATION_STREAM_BYTES: usize = 512 * 1024;
 /// Maximum bytes in a complete navigation packet, including layout seeds.
 pub const MAX_NAVIGATION_BYTES: usize = 64 * 1024;
+/// Maximum typed metadata bytes inside a navigation packet.
+pub const MAX_NAVIGATION_METADATA_BYTES: usize = 8 * 1024;
 /// Maximum explicitly compatible routes.
 pub const MAX_NAVIGATION_ROUTES: usize = 128;
 /// Maximum persistent layouts in one client branch.
@@ -258,6 +260,7 @@ pub struct NavigationPage {
     selected: usize,
     failed: Option<usize>,
     pending: Option<usize>,
+    metadata: Option<Metadata>,
 }
 impl NavigationPage {
     /// Constructs a bounded page. Supported statuses are 200, 400, 404 and 500.
@@ -290,12 +293,37 @@ impl NavigationPage {
             selected: 0,
             failed: None,
             pending: None,
+            metadata: None,
         };
         if page.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
             return Err(NavigationError::Limit);
         }
         Ok(page)
     }
+    /// Attaches a complete metadata replacement. Errors force noindex and remove canonical URLs.
+    pub fn with_metadata(mut self, metadata: Metadata) -> Result<Self, NavigationError> {
+        if self.pending.is_some() {
+            return Err(NavigationError::InvalidData);
+        }
+        let metadata = if self.status == StatusCode::Ok {
+            metadata
+        } else {
+            metadata.for_error()
+        };
+        if metadata.encode_wire().len() > MAX_NAVIGATION_METADATA_BYTES {
+            return Err(NavigationError::Limit);
+        }
+        self.metadata = Some(metadata);
+        if self.encode_unchecked().len() > MAX_NAVIGATION_BYTES {
+            return Err(NavigationError::Limit);
+        }
+        Ok(self)
+    }
+    /// Complete metadata replacement, or None for a legacy packet.
+    pub fn metadata(&self) -> Option<&Metadata> {
+        self.metadata.as_ref()
+    }
+
     /// Attaches root-first layouts within the complete packet byte budget.
     pub fn with_layouts(mut self, layouts: Vec<NavigationLayout>) -> Result<Self, NavigationError> {
         if layouts.len() > MAX_CLIENT_LAYOUT_DEPTH {
@@ -357,6 +385,7 @@ impl NavigationPage {
         layouts: Vec<NavigationLayout>,
     ) -> Result<Self, NavigationError> {
         if self.status != StatusCode::Ok
+            || self.metadata.is_some()
             || !self.data.is_empty()
             || expected > MAX_CLIENT_LAYOUT_DEPTH
             || layouts.len() > expected
@@ -459,9 +488,17 @@ impl NavigationPage {
                 bytes.extend(seed);
             }
         }
-        bytes
+        if let Some(metadata) = &self.metadata {
+            let mut wrapped = b"RVP5".to_vec();
+            wrapped.extend((bytes.len() as u32).to_le_bytes());
+            wrapped.extend(bytes);
+            wrapped.extend(metadata.encode_wire());
+            wrapped
+        } else {
+            bytes
+        }
     }
-    /// Encodes a leaf (RVP1), branch (RVP2), scoped error (RVP3) or pending prefix (RVP4).
+    /// Encodes RVP1-4, or wraps a complete packet and metadata in RVP5.
     pub fn encode(&self) -> Vec<u8> {
         self.encode_unchecked()
     }
@@ -469,6 +506,35 @@ impl NavigationPage {
     pub fn decode(bytes: &[u8]) -> Result<Self, NavigationError> {
         if bytes.len() > MAX_NAVIGATION_BYTES {
             return Err(NavigationError::Limit);
+        }
+        if bytes.starts_with(b"RVP5") {
+            let length = u32::from_le_bytes(
+                bytes
+                    .get(4..8)
+                    .ok_or(NavigationError::InvalidData)?
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let end = 8usize
+                .checked_add(length)
+                .ok_or(NavigationError::InvalidData)?;
+            let inner = bytes.get(8..end).ok_or(NavigationError::InvalidData)?;
+            if inner.starts_with(b"RVP5") {
+                return Err(NavigationError::InvalidData);
+            }
+            let mut page = Self::decode(inner)?;
+            let encoded = bytes.get(end..).ok_or(NavigationError::InvalidData)?;
+            if encoded.len() > MAX_NAVIGATION_METADATA_BYTES {
+                return Err(NavigationError::Limit);
+            }
+            let metadata = Metadata::decode_wire(encoded)?;
+            if page.pending.is_some()
+                || page.status != StatusCode::Ok && metadata != metadata.clone().for_error()
+            {
+                return Err(NavigationError::InvalidData);
+            }
+            page.metadata = Some(metadata);
+            return Ok(page);
         }
         struct Reader<'a> {
             bytes: &'a [u8],

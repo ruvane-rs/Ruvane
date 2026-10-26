@@ -21,10 +21,33 @@ export function internalTarget(target) {
   }
   return target;
 }
+function decodeMetadata(bytes){
+  if(!bytes.length||bytes.length>8192)throw invalid();
+  const decoder=new TextDecoder("utf-8",{fatal:true,ignoreBOM:true}),data=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);let pos=0;
+  const take=n=>{if(n>bytes.length-pos)throw invalid();const value=bytes.subarray(pos,pos+n);pos+=n;return value;};
+  const text=limit=>{take(4);const n=data.getUint32(pos-4,true);if(n>limit)throw invalid();return decoder.decode(take(n));};
+  const flags=take(1)[0];if(flags>15)throw invalid();
+  const description=flags&1?text(1024):null;
+  if(description!==null&&(!description.trim()||/[\u0000-\u001f\u007f-\u009f]/.test(description)))throw invalid();
+  let robots=null;if(flags&2){const code=take(1)[0];if(code<1||code>4)throw invalid();robots=[null,"index, follow","index, nofollow","noindex, follow","noindex, nofollow"][code];}
+  const canonical=flags&4?text(4416):null;
+  if(canonical!==null){const match=/^(https?:\/\/[A-Za-z0-9.:[\]-]+)(\/.*)$/.exec(canonical);if(!match||match[1].length>320)throw invalid();internalTarget(match[2]);}
+  const favicon=flags&8?internalTarget(text(4096)):null;
+  if(pos!==bytes.length)throw invalid();return Object.freeze({description,robots,canonical,favicon});
+}
+function selectPagePacket(bytes,index){const result=bytes.slice();if(index)result[bytes[3]===53?12:4]=index;return result;}
 /** Reads routing metadata. Rust validates the complete typed seed and application schema. */
 export function decodePage(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 34 || bytes.length > 65536) throw invalid();
-  const version = String.fromCharCode(...bytes.slice(0,4)); if (!["RVP1","RVP2","RVP3","RVP4"].includes(version)) throw invalid();
+  const version = String.fromCharCode(...bytes.slice(0,4));
+  if(version==="RVP5"){
+    const length=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(4,true),end=8+length;
+    if(length<34||end>=bytes.length||bytes[11]===53)throw invalid();
+    const page=decodePage(bytes.slice(8,end)),metadata=decodeMetadata(bytes.subarray(end));
+    if(page.pending!==null||page.status!==200&&(metadata.canonical!==null||!["noindex, follow","noindex, nofollow"].includes(metadata.robots)))throw invalid();
+    return Object.freeze({...page,metadata});
+  }
+  if (!["RVP1","RVP2","RVP3","RVP4"].includes(version)) throw invalid();
   const data = new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength), decoder = new TextDecoder("utf-8",{fatal:true,ignoreBOM:true}); let pos=4;
   const take = size => { if (size > bytes.length-pos) throw invalid(); const value=bytes.subarray(pos,pos+size);pos+=size;return value; };
   const u32 = () => {take(4);return data.getUint32(pos-4,true);};
@@ -870,7 +893,7 @@ export async function createRuntime(url, options = {}) {
         if(!root.isConnected||root.localName!=="div"||root.attributes.length!==3||props.component!==expected.component||props.kind!==expected.kind||props.value!==expected.value)throw new HydrationMismatch();
         if(departing.length)attest(departing[n],root,index,expected);
         else{
-          const selected=retirement.bytes.slice();selected[4]=index+1;
+          const selected=selectPagePacket(retirement.bytes,index+1);
           const temporary=start(root,null,true,selected,false,true);
           try{releaseNative(temporary.id);forget(temporary.id,true,false);}catch(error){stop(true);throw error;}
         }
@@ -881,7 +904,7 @@ export async function createRuntime(url, options = {}) {
         if(index<parents.length){
           const controller=parents[index];attest(controller,root,index,expected);controllers.push(controller);continue;
         }
-        const selected=bytes.slice();if(segment)selected[4]=segment;
+        const selected=selectPagePacket(bytes,segment);
         const controller=start(root,null,true,selected,false,true);controllers.push(controller);
         if(layoutOnly){const view=views.get(controller.id);view.gated=true;view.document={index:layoutIndex,expected:page.pending,url:page.url,title:page.title,descriptor:expected};}
       }
@@ -946,7 +969,7 @@ export async function createRuntime(url, options = {}) {
     mountPage(root, bytes) { const page=decodePage(bytes); if(page.selected!==0||page.pending!==null)throw invalid(); return start(root, null, false, bytes); },
     mountPageSegment(root, bytes, index) {
       const page=decodePage(bytes);if(page.selected!==0||!Number.isInteger(index)||index<1||index>page.layouts.length)throw invalid();
-      const selected=bytes.slice();selected[4]=index;return start(root,null,false,selected);
+      const selected=selectPagePacket(bytes,index);return start(root,null,false,selected);
     },
     mount(root, props) { return start(root, validateProps(props), false); },
     mountBoundary(root,props) {return start(root,validateProps(props),false,null,true);},

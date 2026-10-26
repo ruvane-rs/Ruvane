@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.39 — Unreleased
+
+- Add complete typed client metadata replacements shared by SSR, snapshots,
+  navigation, caching and history, using the existing Metadata API.
+- Add bounded RVP5 envelopes with native, Wasm and JavaScript validation while
+  preserving legacy packets, RVI1 snapshots and RVS1 stream framing.
+- Require an explicitly configured canonical origin shared by native and Wasm;
+  reject foreign origins and sanitize error canonicals/indexing hints.
+- Commit managed head slots only with a fully validated branch, clear stale
+  values, deduplicate slots and retain CSP, viewport, scripts and stylesheets.
+- Match initial streamed metadata to the prepared head and keep loading,
+  prefetching and abandoned responses from changing displayed page metadata.
+- Add file-starter descriptions and protocol, server, Wasm and browser coverage
+  with zero third-party dependencies. ABI v11 and four runtime assets remain.
+
 ## 0.1.0-alpha.38 — Unreleased
 
 - Add typed native-only route.rs endpoints for GET/HEAD, form queries, native

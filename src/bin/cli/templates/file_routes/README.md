@@ -50,3 +50,11 @@ presentations. All POST origin, MIME, revision and size checks remain in Router.
 Route modules and the starter server module are excluded from Wasm compilation.
 The starter registers health, streaming, typed task actions and native forms
 through route files. An API-only tree is also accepted.
+
+Client page loaders return complete typed metadata with their page data.
+`pages::metadata` uses PageContext and an explicitly configured public origin.
+Set `app.client_metadata_origin(Some(origin))` in the shared application when
+canonical URLs are needed; Host headers never configure it. Without an origin,
+the starter omits canonical URLs and requests no indexing. Navigation replaces
+supported head slots after validation; errors clear canonical/description and
+request no indexing. There are no additional requests for initial hydration.

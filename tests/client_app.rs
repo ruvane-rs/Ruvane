@@ -1503,3 +1503,174 @@ fn file_not_found_progressive_navigation_keeps_the_existing_final_packet_contrac
     assert_eq!(packet.props().component(), 7);
     assert_eq!(packet.layouts().len(), 2);
 }
+
+fn navigation_metadata(context: &ruvane::PageContext<'_>) -> ruvane::Metadata {
+    context
+        .metadata("Public <metadata> & Rust")
+        .unwrap()
+        .favicon_png(InternalUrl::new("/icon.png").unwrap())
+}
+fn metadata_app() -> App {
+    let mut app = App::new();
+    app.components(factory, 3).unwrap();
+    app.client_metadata_origin(Some(
+        ruvane::SiteOrigin::parse("https://public.example").unwrap(),
+    ));
+    app.client_boundary(Some(ruvane::ClientBoundary::new(5, 4).unwrap()))
+        .unwrap();
+    app.client_page(
+        PageRoute::new("metadata", "/meta").unwrap(),
+        1,
+        zero,
+        |context| {
+            let mode = context.request().unwrap().query_params().get("mode");
+            if mode == Some("missing") {
+                return Err(PageError::NotFound);
+            }
+            if mode == Some("error") {
+                return Err(PageError::InternalServerError);
+            }
+            let page = ClientPageData::new("Metadata page", data("Ready"));
+            Ok(match mode {
+                Some("legacy") => page,
+                Some("empty") => page.metadata(ruvane::Metadata::new()),
+                Some("foreign") => page.metadata(
+                    ruvane::Metadata::new().canonical(
+                        ruvane::SiteOrigin::parse("https://other.example")
+                            .unwrap()
+                            .canonical(&InternalUrl::new("/meta").unwrap()),
+                    ),
+                ),
+                _ => page.metadata(navigation_metadata(context)),
+            })
+        },
+    )
+    .unwrap();
+    app
+}
+#[test]
+fn metadata_matches_ssr_native_snapshots_and_typed_navigation_without_host_inference() {
+    let app = metadata_app();
+    let server = Running::new(app.clone());
+    let (headers, bytes) = server.get("GET", "/meta", true);
+    assert!(headers.starts_with("HTTP/1.1 200") && bytes.starts_with(b"RVP5"));
+    let packet = NavigationPage::decode(&bytes).unwrap();
+    assert!(app.validate_navigation(&packet));
+    let metadata = packet.metadata().unwrap();
+    assert_eq!(
+        metadata.description_text(),
+        Some("Public <metadata> & Rust")
+    );
+    assert_eq!(
+        metadata.canonical_url().unwrap().as_str(),
+        "https://public.example/meta"
+    );
+    let (_, body) = server.get("GET", "/meta", false);
+    let html = String::from_utf8(body).unwrap();
+    assert_eq!(initial_snapshot(&html).page().metadata(), Some(metadata));
+    assert!(
+        html.contains("Public &lt;metadata&gt; &amp; Rust")
+            && html.contains("https://public.example/meta")
+    );
+    assert_eq!(html.matches("name=\"description\"").count(), 1);
+    assert_eq!(html.matches("rel=\"canonical\"").count(), 1);
+    let (headers, body) = server.get_headers(
+        "GET",
+        "/meta?native=yes",
+        false,
+        None,
+        "Forwarded: host=other.example\r\n",
+    );
+    let html = String::from_utf8(body).unwrap();
+    assert!(
+        headers.contains("script-src 'none'")
+            && !html.contains("<script")
+            && html.contains("https://public.example/meta")
+    );
+    let mut no_origin = app.clone();
+    no_origin.client_metadata_origin(None);
+    assert!(!no_origin.validate_navigation(&packet));
+    let foreign = packet
+        .clone()
+        .with_metadata(
+            ruvane::Metadata::new().canonical(
+                ruvane::SiteOrigin::parse("https://other.example")
+                    .unwrap()
+                    .canonical(packet.url()),
+            ),
+        )
+        .unwrap();
+    assert!(!app.validate_navigation(&foreign));
+    let (_, body) = server.get("GET", "/meta?mode=foreign", true);
+    let rejected = NavigationPage::decode(&body).unwrap();
+    assert_eq!(rejected.status(), StatusCode::InternalServerError);
+    assert!(rejected.metadata().unwrap().canonical_url().is_none());
+}
+#[test]
+fn empty_legacy_and_error_metadata_have_explicit_replacement_semantics() {
+    let app = metadata_app();
+    let server = Running::new(app.clone());
+    for (url, metadata) in [("/meta?mode=empty", true), ("/meta?mode=legacy", false)] {
+        let (_, body) = server.get("GET", url, true);
+        let packet = NavigationPage::decode(&body).unwrap();
+        assert_eq!(packet.metadata().is_some(), metadata);
+        assert!(app.validate_navigation(&packet));
+        if metadata {
+            assert_eq!(packet.metadata(), Some(&ruvane::Metadata::new()));
+        }
+    }
+    for url in ["/meta?mode=missing", "/meta?mode=error", "/unknown"] {
+        let (_, body) = server.get("GET", url, true);
+        let packet = NavigationPage::decode(&body).unwrap();
+        assert!(app.validate_navigation(&packet));
+        let metadata = packet.metadata().unwrap();
+        assert_eq!(
+            metadata.robots_policy(),
+            Some(ruvane::Robots::NoIndexFollow)
+        );
+        assert!(metadata.canonical_url().is_none() && metadata.description_text().is_none());
+    }
+}
+#[test]
+fn streamed_initial_metadata_matches_the_predeclared_head_and_sanitizes_late_errors() {
+    fn head(context: &ruvane::PageContext<'_>) -> Result<ruvane::ClientDocument, PageError> {
+        Ok(ruvane::ClientDocument::new("Metadata page").metadata(navigation_metadata(context)))
+    }
+    let mut app = metadata_app();
+    app.client_page_document_streaming("metadata", Some(head))
+        .unwrap();
+    let server = Running::new(app.clone());
+    for (url, status) in [
+        ("/meta", StatusCode::Ok),
+        ("/meta?mode=empty", StatusCode::InternalServerError),
+    ] {
+        let (_, body) = server.get("GET", url, false);
+        let mut bytes = body.as_slice();
+        let mut html = Vec::new();
+        loop {
+            let end = bytes.windows(2).position(|w| w == b"\r\n").unwrap();
+            let count =
+                usize::from_str_radix(std::str::from_utf8(&bytes[..end]).unwrap(), 16).unwrap();
+            bytes = &bytes[end + 2..];
+            if count == 0 {
+                break;
+            }
+            html.extend_from_slice(&bytes[..count]);
+            bytes = &bytes[count + 2..];
+        }
+        let html = String::from_utf8(html).unwrap();
+        let snapshot = initial_snapshot(&html);
+        assert_eq!(snapshot.page().status(), status);
+        assert!(app.validate_navigation(snapshot.page()));
+        let metadata = snapshot.page().metadata().unwrap();
+        if status == StatusCode::Ok {
+            assert!(metadata.canonical_url().is_some());
+        } else {
+            assert!(metadata.canonical_url().is_none());
+            assert_eq!(
+                metadata.robots_policy(),
+                Some(ruvane::Robots::NoIndexFollow)
+            );
+        }
+    }
+}

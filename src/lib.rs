@@ -71,10 +71,10 @@ pub use metadata::{
 };
 pub use navigation::{
     BROWSER_NAVIGATION_MODULE, MAX_CLIENT_LAYOUT_DEPTH, MAX_NAVIGATION_BYTES,
-    MAX_NAVIGATION_CACHE_AGE_SECONDS, MAX_NAVIGATION_ROUTES, MAX_NAVIGATION_STREAM_BYTES,
-    NAVIGATION_MEDIA_TYPE, NAVIGATION_STREAM_MEDIA_TYPE, NavigationCachePolicy, NavigationError,
-    NavigationLayout, NavigationMatch, NavigationPage, NavigationRoutes, navigation_link,
-    prefetch_link,
+    MAX_NAVIGATION_CACHE_AGE_SECONDS, MAX_NAVIGATION_METADATA_BYTES, MAX_NAVIGATION_ROUTES,
+    MAX_NAVIGATION_STREAM_BYTES, NAVIGATION_MEDIA_TYPE, NAVIGATION_STREAM_MEDIA_TYPE,
+    NavigationCachePolicy, NavigationError, NavigationLayout, NavigationMatch, NavigationPage,
+    NavigationRoutes, navigation_link, prefetch_link,
 };
 pub use navigation_snapshot::{MAX_NAVIGATION_SNAPSHOT_BYTES, NavigationSnapshot};
 pub use page_route::{MAX_PAGE_NAME_BYTES, MAX_PAGE_SEGMENTS, PageParams, PageRoute};

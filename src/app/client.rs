@@ -6,6 +6,7 @@ use crate::{
 mod boundaries;
 mod document;
 mod layouts;
+mod metadata;
 mod not_found;
 mod progressive;
 pub use boundaries::ClientBoundary;
@@ -49,6 +50,7 @@ pub struct ClientPageData {
     data: ActionData,
     fallback: Html,
     no_store: bool,
+    metadata: Option<Metadata>,
 }
 impl ClientPageData {
     /// Creates a page seed. The component checks its schema before SSR and mounting.
@@ -58,8 +60,15 @@ impl ClientPageData {
             data,
             fallback: Html::default(),
             no_store: false,
+            metadata: None,
         }
     }
+    /// Replaces the page's complete public metadata in SSR and navigation.
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+
     /// Tightens a public route to no-store for this response.
     pub fn no_store(mut self) -> Self {
         self.no_store = true;
@@ -210,6 +219,7 @@ impl App {
                 let mut page = Page::new(data.title, data.fallback);
                 page.client_data = Some(data.data);
                 page.client_no_store = data.no_store;
+                page.client_metadata = data.metadata;
                 Ok(page)
             },
         )?;
@@ -277,7 +287,11 @@ impl App {
     /// Checks route ownership and props without executing loaders. The runtime then
     /// validates the complete seed with Component::page_data before preparing a view.
     pub fn validate_navigation(&self, page: &NavigationPage) -> bool {
-        if self.client_factory.is_none() {
+        if self.client_factory.is_none()
+            || page.metadata().is_some_and(|metadata| {
+                !metadata.accepts_origin(self.client_metadata_origin.as_ref())
+            })
+        {
             return false;
         }
         if let Some(expected) = page.pending_layouts() {
@@ -537,6 +551,7 @@ impl App {
             ActionData::default(),
             status,
         )
+        .and_then(|page| page.with_metadata(Metadata::new()))
         .unwrap();
         self.client_finish(
             &packet,
@@ -669,8 +684,12 @@ impl App {
             Some(head) => head.buffered(packet.title(), Html::rendered(body))?,
             None => Document::new(packet.title(), Html::rendered(body)),
         };
+        if let Some(metadata) = packet.metadata() {
+            document = document.metadata(metadata.clone());
+        }
         if packet.status() != StatusCode::Ok {
-            document = document.metadata(Metadata::new().robots(Robots::NoIndexFollow));
+            document =
+                document.metadata(packet.metadata().cloned().unwrap_or_default().for_error());
         }
         for stylesheet in &runtime.stylesheets {
             document = document.stylesheet(stylesheet.clone());

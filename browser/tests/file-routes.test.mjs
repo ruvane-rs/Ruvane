@@ -22,6 +22,10 @@ function failure(url, component, layouts, failed = layouts.length, status = 500)
 function missing(url, component) {
   return new Uint8Array([82,86,80,49,148,1,...text(url),...text("Missing"),...word(component),...word(1),...word(404),...word(empty.length),...empty]);
 }
+function withMetadata(packet, canonical = "https://public.example/", robots = 1) {
+  const fields=[7,...text("Public <metadata>"),robots,...text(canonical)];
+  return new Uint8Array([82,86,80,53,...word(packet.length),...packet,...fields]);
+}
 async function exportsFor(project, version) {
   const bundle = join(project, "dist", `build-${String(version).padStart(6,"0")}`);
   const manifest = await readFile(join(bundle, "Ruvane.bundle"), "utf8"), revision = manifest.match(/^revision\t([0-9]+)$/m)[1];
@@ -43,6 +47,8 @@ await test("generated file routes own the same Wasm registry across additions an
   try {
     run(["new","file-application","--interactive","--file-routes","--framework-path",root], directory);
     const project = join(directory,"file-application");
+    const pagesFile = join(project,"src/pages.rs");
+    await writeFile(pagesFile,(await readFile(pagesFile,"utf8")).replace("let mut app = App::new();",'let mut app = App::new(); app.client_metadata_origin(Some(ruvane::SiteOrigin::parse("https://public.example").unwrap()));'));
     const nativeRoute = '#[cfg(target_family = "wasm")] compile_error!("route.rs reached Wasm");\npub fn route() -> ruvane::FileEndpoint { ruvane::FileEndpoint::new().get(|_| ruvane::Response::text("SERVER_ROUTE_ONLY_ALPHA38")) }\n';
     await writeFile(join(project,"src/routes/api/health/route.rs"),nativeRoute);
     run(["build","--offline"],project);
@@ -55,6 +61,13 @@ await test("generated file routes own the same Wasm registry across additions an
     await t.test("native route modules are excluded from Wasm compilation and client page ownership", () => {
       assert.equal(probe(e,packet("/api/health",8)),0);
       assert.equal(probe(e,packet("/actions/tasks/create",8)),0);
+    });
+    await t.test("metadata envelopes validate the configured canonical origin and selected layouts in Wasm", () => {
+      assert.equal(probe(e,withMetadata(packet("/",8))),1);
+      assert.equal(probe(e,withMetadata(packet("/",8),"https://other.example/")),0);
+      const selected=withMetadata(packet("/tasks/settings",14,0,[["workspace","/tasks",12,0]]));selected[12]=1;
+      assert.equal(probe(e,selected),1);
+      const nested=withMetadata(withMetadata(packet("/",8)));assert.equal(probe(e,nested),0);
     });
     const parents = [["workspace","/tasks",12,0],["context","/tasks/999",13,999]];
     await t.test("inherited file errors validate their exact component and retained scope", () => {

@@ -19,6 +19,14 @@ pub fn task(route: &NavigationMatch) -> Result<InitialState, PageError> {
     }
     Ok(InitialState::Number(id))
 }
+pub fn metadata(
+    context: &ruvane::PageContext<'_>,
+    description: &str,
+) -> Result<ruvane::Metadata, PageError> {
+    context
+        .metadata(description)
+        .map_err(|_| PageError::InternalServerError)
+}
 pub fn application() -> App {
     let mut app = App::new();
     app.components(components::create_component, components::ERROR)

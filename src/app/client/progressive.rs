@@ -138,6 +138,7 @@ impl BranchProducer {
             status,
         )
         .and_then(|p| p.with_failure(failed, self.seeds[..depth].to_vec()))
+        .and_then(|page| page.with_metadata(Metadata::new()))
         .map_err(|_| PageError::InternalServerError)
     }
     fn pull(&mut self, context: &StreamContext) -> Result<NavigationPage, PageError> {
@@ -176,7 +177,8 @@ impl BranchProducer {
             let data = page.client_data.ok_or(PageError::InternalServerError)?;
             let _ = App::client_view(factory, self.props, &data, false)?;
             self.done = true;
-            NavigationPage::new(
+            let metadata = page.client_metadata;
+            let packet = NavigationPage::new(
                 self.url.clone(),
                 &page.title,
                 self.props,
@@ -184,7 +186,8 @@ impl BranchProducer {
                 StatusCode::Ok,
             )
             .and_then(|p| p.with_layouts(self.seeds.clone()))
-            .map_err(|_| PageError::InternalServerError)
+            .map_err(|_| PageError::InternalServerError)?;
+            self.app.packet_metadata(packet, metadata)
         }
     }
 }

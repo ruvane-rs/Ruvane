@@ -169,6 +169,7 @@ pub struct Page {
     bad_request: bool,
     client_data: Option<crate::ActionData>,
     client_no_store: bool,
+    client_metadata: Option<Metadata>,
 }
 impl Page {
     /// Creates a page. Titles are limited to 1024 control-free UTF-8 bytes at
@@ -183,6 +184,7 @@ impl Page {
             bad_request: false,
             client_data: None,
             client_no_store: false,
+            client_metadata: None,
         }
     }
     /// Marks a server-only validation page as HTTP 400 while retaining its
@@ -262,7 +264,7 @@ impl PageContext<'_> {
     }
     /// Borrows the explicitly configured public origin, if any.
     pub fn origin(&self) -> Option<&SiteOrigin> {
-        self.origin
+        self.origin.or(self.app.client_metadata_origin.as_ref())
     }
     /// Constructs a URL and checks that the named page owns its concrete path.
     pub fn url(&self, name: &str, params: &[(&str, &str)]) -> Result<InternalUrl, AppError> {
@@ -272,7 +274,7 @@ impl PageContext<'_> {
     /// Without an origin it requests no indexing and omits the canonical URL.
     pub fn metadata(&self, description: &str) -> Result<Metadata, MetadataError> {
         let metadata = Metadata::new().description(description)?;
-        Ok(match self.origin {
+        Ok(match self.origin() {
             Some(origin) => metadata
                 .canonical(origin.canonical(self.path))
                 .robots(Robots::IndexFollow),
@@ -330,6 +332,7 @@ pub struct App {
     client_error: u32,
     client_boundary: Option<ClientBoundary>,
     client_not_found: Option<u32>,
+    client_metadata_origin: Option<SiteOrigin>,
     client_runtime: Option<ClientRuntime>,
     client_layouts: Vec<client::ClientLayout>,
     endpoints: Vec<endpoints::Endpoint>,

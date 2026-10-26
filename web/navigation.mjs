@@ -97,6 +97,28 @@ function patternParts(pattern){
   internalTarget(pattern.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g,(_,name)=>{if(names.has(name))throw failure();names.add(name);return "1";}));
   return pattern==="/"?[]:pattern.slice(1).split("/").map(value=>/^\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)?null:decodeURIComponent(value));
 }
+const HEAD_FIELDS='title,meta[name="description" i]:not([http-equiv]),meta[name="robots" i]:not([http-equiv]),link[rel="canonical" i],link[rel="icon" i][type="image/png" i]';
+function preparePageHead(page,managed){
+  const metadata=page.metadata??(managed?{description:null,robots:page.status===200?null:"noindex, follow",canonical:null,favicon:null}:null);
+  if(metadata===null){
+    const canonical=page.status===200?[]:[...document.head.querySelectorAll('link[rel="canonical" i]')];if(canonical.length>32)throw failure();
+    return()=>{document.title=page.title;for(const node of canonical)node.remove();errorMetadata(page.status);};
+  }
+  const head=document.head,old=[...head.querySelectorAll(HEAD_FIELDS)];if(old.length>32)throw failure();
+  const original=old.map(node=>node.outerHTML),fresh=[];
+  const title=document.createElement("title");title.textContent=page.title;fresh.push(title);
+  for(const [name,value] of [["description",metadata.description],["robots",metadata.robots]])if(value!==null){
+    const node=document.createElement("meta");node.setAttribute("name",name);node.setAttribute("content",value);node.setAttribute("data-ruvane-head",name);fresh.push(node);
+  }
+  for(const [rel,value] of [["canonical",metadata.canonical],["icon",metadata.favicon]])if(value!==null){
+    const node=document.createElement("link");node.setAttribute("rel",rel);node.setAttribute("href",value);node.setAttribute("data-ruvane-head",rel);if(rel==="icon")node.setAttribute("type","image/png");fresh.push(node);
+  }
+  return()=>{
+    const current=[...head.querySelectorAll(HEAD_FIELDS)];
+    if(document.head!==head||current.length!==old.length||current.some((node,n)=>node!==old[n]||node.outerHTML!==original[n]))throw failure();
+    for(const node of old)node.remove();head.append(...fresh);
+  };
+}
 const ERROR_ROBOTS=new WeakMap();
 function errorMetadata(status){
   const head=document.head;
@@ -301,6 +323,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   const identity = `${location.origin}\n${runtime.applicationRevision ?? "unversioned"}\n`;
   let current = null, branch = [], pageHost = null, activeURL = target(), pending = null, disposed = false, started = false, frame = 0, idle = Promise.resolve("idle");
   let feedback=null, retryButton=null, lastFailure=null;
+  let metadataManaged=!!document.head.querySelector("[data-ruvane-head]");
   let generation = 0, bytesHeld = 0, blocked = false, pumpQueued = false, hits = 0, misses = 0;
   const key = url => identity + url;
   const eligible = () => !disposed && !blocked && generation !== null && maxCacheEntries > 0 && maxCacheBytes > 0 && runtime.actionState().state === "active" && runtime.actionState().epoch !== null && !runtime.actionState().uncertain && runtime.actionState().pending === 0;
@@ -490,6 +513,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         if (mode === "start" && accept && !accept()) { prepared.dispose(); prepared = null; releaseBranch(preparedLayouts);preparedLayouts=[]; status.textContent = "Native forms are ready."; return "native"; }
         const keepFocus=preserveLayoutFocus&&(source.slice(0,shared).some(item=>item.own.contains(document.activeElement))||scope.contains(document.activeElement)&&!outlet.contains(document.activeElement));
         if(keepFocus)point={x:scrollX,y:scrollY};
+        const commitHead=preparePageHead(page,metadataManaged);
         operation.committing = true;
         if (mode === "push") { save(); history.pushState({ [KEY]:entry(url,0,0) },"",url); }
         else if (mode === "start" || mode === "replace") history.replaceState({ ...stateObject(history.state), [KEY]:entry(mode === "start" ? url+location.hash : url,point.x,point.y) },"",mode === "start" ? location.href : url);
@@ -497,7 +521,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         operation.changed=true;current?.dispose();
         for(const item of [...previousBranch,...source].reverse())if(!retained.has(item.controller)&&!retired.has(item.controller)){item.controller.dispose();retired.add(item.controller);}
         mountPoint.replaceChildren(fragment); branch=source.slice(0,shared).concat(preparedLayouts);preparedLayouts=[];current=prepared;prepared=null;operation.preview=null;pageHost=host; activeURL = url; started = true; history.scrollRestoration = "manual";
-        document.title = page.title; errorMetadata(page.status); status.textContent = page.status === 200 ? "Ready." : `Page ${page.status}.`;
+        commitHead();metadataManaged ||= page.metadata!==undefined; status.textContent = page.status === 200 ? "Ready." : `Page ${page.status}.`;
         if (mode !== "start"&&!keepFocus) host.focus({ preventScroll:true }); restore(point);
         if (!cached) store(url,bytes,expires,version,epoch);
         if(page.failed!==null){lastFailure={url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(url,"error",false);}
@@ -596,10 +620,11 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
       const finalRetired=readRetiredBranch(root,page);
       if(retired&&(finalRetired?.node!==retired.node||finalRetired.text!==retired.text)||!sameInitialDOM(server,initialDOM(page,finalRetired))||disposed||pending||started||page.url!==target()||runtime.actionState().state!=="active"||runtime.actionState().epoch!==epoch||runtime.actionState().pending||runtime.actionState().uncertain)throw failure();
       const focusRemoved=server.departing?.contains(document.activeElement);
+      const commitHead=preparePageHead(page,metadataManaged);
       transaction.commit();transaction=null;server.departing?.remove();server.fallback.remove();retired?.node.remove();
       if(focusRemoved)server.host.focus({preventScroll:true});
       branch=server.layouts.map((item,n)=>({...item,controller:controllers[n]}));current=controllers.at(-1);pageHost=server.host;activeURL=page.url;started=true;history.scrollRestoration="manual";
-      errorMetadata(page.status);
+      commitHead();metadataManaged ||= page.metadata!==undefined;
       status.textContent=page.status===200?"Ready.":`Page ${page.status}.`;
       if(page.failed!==null){lastFailure={url:page.url,mode:"replace",point:{x:scrollX,y:scrollY},kind:"server",accept:null};showFeedback(page.url,"error",false);}
       return "success";
