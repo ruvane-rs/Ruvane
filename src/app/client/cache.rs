@@ -17,6 +17,7 @@ impl App {
         let request = request.background_get();
         let path = context.path.clone();
         let origin = context.origin.cloned();
+        let output = lease.is_output();
         let job = Box::new(move || {
             if !lease.is_current() {
                 return;
@@ -38,9 +39,14 @@ impl App {
                 Ok((_, false)) => {
                     let _ = lease.publish(None);
                 }
-                Ok((branch, true)) => {
+                Ok((mut branch, true)) => {
                     match Self::guarded(|| {
-                        app.cached_branch_finish(index, &context, &request, &branch, None)
+                        if output {
+                            app.prepare_regenerated_output(index, &context, &request, &mut branch)
+                        } else {
+                            app.cached_branch_finish(index, &context, &request, &branch, None)
+                                .map(|_| ())
+                        }
                     }) {
                         Ok(_) => {
                             let _ = lease.publish(Some(branch));

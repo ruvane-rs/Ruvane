@@ -636,3 +636,16 @@ applications must invalidate every replica after their committed mutation. There
 is no persistent invalidation journal or push revocation of adopted responses.
 The build artifact still contains public data and retains its existing trust
 requirements. Regeneration does not compile Rust/Wasm at runtime.
+
+Timed pre-render refreshing is explicitly opt-in for that same public output.
+Freshness and the additional stale window are bounded. Deadlines begin after
+validated publication and are never extended by reads or failed refreshes. A
+fixed worker pool coalesces refreshes; its queue/load budgets are shared with
+server data caching. Only complete validated HTML/snapshots/metadata replace an
+entry. Transient failures apply retry backoff within the original hard deadline;
+missing/no_store branches retire old output. Explicit invalidation and eviction
+fence both running and queued publication. Adopted responses cannot be revoked,
+so mutations needing immediate retirement must explicitly invalidate each replica.
+Hard expiry never adopts an old output, and exhausted wait/load budgets return
+no-store 503. Private/query/unlisted reads schedule no output refreshes. Existing
+public-data, build-artifact trust and cooperative shutdown constraints still apply.

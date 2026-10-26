@@ -286,12 +286,12 @@ impl ServerCache {
         namespace: Namespace,
         page: usize,
         url: &InternalUrl,
-        tags: &[String],
+        policy: &crate::PrerenderRevalidationPolicy,
     ) -> Result<Access, ServerCacheError> {
         let policy = ServerCachePolicy {
-            seconds: None,
-            tags: tags.to_vec(),
-            stale_seconds: 0,
+            seconds: policy.max_age_seconds(),
+            tags: policy.tags.clone(),
+            stale_seconds: policy.stale_seconds(),
         };
         self.access_inner(namespace, page, url, &policy, true)
     }
@@ -537,6 +537,9 @@ impl Lease {
     }
 }
 impl Lease {
+    pub fn is_output(&self) -> bool {
+        self.flight.key.output
+    }
     pub fn is_current(&self) -> bool {
         self.flight
             .result

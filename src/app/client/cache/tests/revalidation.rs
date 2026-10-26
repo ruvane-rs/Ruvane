@@ -1,6 +1,7 @@
 use super::*;
 use crate::{PageParams, PrerenderRevalidationPolicy};
 use std::sync::{Mutex, mpsc};
+mod timed;
 
 struct Fixture {
     app: App,

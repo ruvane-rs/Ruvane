@@ -9,6 +9,8 @@ for each response; the native fallback fragment is retained with its data.
 Listed pre-rendered URLs can instead opt into
 [on-demand output regeneration](prerender-revalidation.md). That separate policy
 shares this handle's budgets and invalidation while retaining the complete HTML.
+It also supports [timed output refresh](prerender-refresh.md) through the same
+fixed worker pool.
 
 ## Opt in
 

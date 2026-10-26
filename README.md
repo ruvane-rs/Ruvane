@@ -79,6 +79,8 @@ listed public URLs during production builds, with matching HTML, metadata and
 Wasm hydration snapshots embedded in the native executable.
 Listed URLs can opt into [on-demand regeneration](docs/prerender-revalidation.md):
 fresh output on first read, retained until path/tag invalidation or eviction.
+Optional [expiry and background refresh](docs/prerender-refresh.md) keeps an old
+generation available within a bounded window while preparing its full replacement.
 
 Create an interactive project from a local checkout:
 

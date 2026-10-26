@@ -12,16 +12,43 @@ pub const MAX_CLIENT_PRERENDER_BYTES: usize = 16 * 1024 * 1024;
 /// Project capability marker for the first-party two-stage native build.
 pub const CLIENT_PRERENDER_MARKER: &str = "ruvane-prerender\t1\n";
 
-/// Keeps regenerated public output until explicit invalidation or cache eviction.
+/// Caches regenerated public output, optionally with expiry and background refresh.
 /// The first request in each router namespace loads fresh data, including after restart.
 #[derive(Clone, Debug, Default)]
 pub struct PrerenderRevalidationPolicy {
     pub(crate) tags: Vec<String>,
+    seconds: Option<u32>,
+    stale_seconds: u32,
 }
 impl PrerenderRevalidationPolicy {
     /// Creates a policy without tags. Exact-path invalidation remains available.
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Expires fresh output after 1..=300 seconds. Without a stale window, reads wait.
+    pub fn revalidate_after(mut self, seconds: u32) -> Result<Self, PrerenderError> {
+        crate::ServerCachePolicy::public(seconds)
+            .map_err(|_| PrerenderError::InvalidDeclaration)?;
+        self.seconds = Some(seconds);
+        Ok(self)
+    }
+    /// Allows old output for 1..=300 additional seconds while one refresh runs.
+    /// Requires revalidate_after and a native cache handle with background workers.
+    pub fn stale_while_revalidate(mut self, seconds: u32) -> Result<Self, PrerenderError> {
+        if self.seconds.is_none() || !(1..=crate::MAX_SERVER_CACHE_STALE_SECONDS).contains(&seconds)
+        {
+            return Err(PrerenderError::InvalidDeclaration);
+        }
+        self.stale_seconds = seconds;
+        Ok(self)
+    }
+    /// Returns freshness in seconds, or None for explicit invalidation only.
+    pub fn max_age_seconds(&self) -> Option<u32> {
+        self.seconds
+    }
+    /// Returns the additional stale window, or zero for blocking expiry.
+    pub fn stale_seconds(&self) -> u32 {
+        self.stale_seconds
     }
     /// Adds a deduplicated ASCII page-name tag, up to MAX_SERVER_CACHE_TAGS.
     pub fn tag(mut self, tag: &str) -> Result<Self, PrerenderError> {

@@ -215,3 +215,7 @@ Alpha.43 adds [on-demand regeneration](prerender-revalidation.md) for explicitly
 listed public URLs. An opt-in policy loads fresh output on the first runtime
 request and retains it until path/tag invalidation or cache eviction, using the
 same build revision and an explicitly attached ServerCache handle.
+
+Alpha.44 adds [timed pre-render refreshing](prerender-refresh.md). Listed public
+URLs can expire and optionally serve a bounded old generation while one worker
+prepares the complete replacement. Explicit invalidation overrides that window.

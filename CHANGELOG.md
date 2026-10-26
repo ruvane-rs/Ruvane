@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-alpha.44 — Unreleased
+
+- Add optional bounded expiry and stale-while-revalidate policies to public
+  pre-render output, with App and FilePage declarations shared by native and Wasm.
+- Reuse the fixed server-cache workers, queue, load/wait budgets, LRU storage and
+  counters to refresh complete HTML, hydration/navigation data, metadata and fallback.
+- Coalesce stale readers, publish replacements atomically and block past the hard
+  deadline without extending old output on failed refreshes. Apply retry backoff.
+- Retire missing/no_store branches and fence running/queued output publication on
+  explicit invalidation, eviction and worker shutdown. Keep private/query/unlisted
+  reads dynamic and regenerated responses no-store.
+- Preserve immutable and explicit-invalidation defaults, fresh reads after restart,
+  the same build revision, ABI v11, 22 Wasm exports, four assets and zero dependencies.
+- Cover concurrent expiry, queue/load saturation, invalidation, failures and
+  source-free production refresh in native, Wasm and browser tests.
+
 ## 0.1.0-alpha.43 — Unreleased
 
 - Add explicit on-demand regeneration policies for listed public client pre-render

@@ -6,6 +6,10 @@ ServerCache handle to keep complete buffered HTML, RVI1 hydration data, typed
 navigation, metadata and native fallback together until invalidation or eviction.
 There are no new dependencies, runtime assets or Wasm exports.
 
+Alpha.44 adds optional [expiry and background refresh](prerender-refresh.md) through
+`revalidate_after(seconds)` and `stale_while_revalidate(seconds)`. The policy below
+continues to use explicit invalidation only.
+
 ## Declare and attach
 
 ```rust,no_run
@@ -54,8 +58,8 @@ fn after_commit(cache: &ruvane::ServerCache) -> Result<(), ruvane::ServerCacheEr
 }
 ```
 
-The next eligible request blocks on fresh generation. There is no time-based
-expiry, stale response or background worker in this mode. One owner runs per
+The next eligible request blocks on fresh generation. Without a timed policy,
+there is no expiry, stale response or background worker. One owner runs per
 URL; concurrent HTML/navigation requests wait within the handle's absolute
 deadline. Invalidation retires matching active loads, so a generation invalidated
 while running cannot publish its output. An already adopted response cannot be
@@ -102,6 +106,6 @@ Running synchronous loaders cannot be forcibly cancelled.
 
 Storage is in memory per process and router namespace. Each replica must receive
 its own invalidation; restart and eviction reload fresh. No persistent cache,
-cross-process invalidation, TTL-based regeneration, runtime compilation or new
+cross-process invalidation, runtime compilation or new
 build revision is supplied. Development stays dynamic. The
 [pre-render build contract](client-prerender.md) still applies.

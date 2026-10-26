@@ -34,11 +34,20 @@ impl App {
         };
         let access = Self::target(request).map_err(|_| ()).and_then(|url| {
             cache
-                .access_output(namespace, index, &url, &policy.tags)
+                .access_output(namespace, index, &url, policy)
                 .map_err(|_| ())
         });
         let lease = match access {
-            Ok(Access::Hit(branch, None)) => return Self::output_response(request, &branch),
+            Ok(Access::Hit(branch, _)) => return Self::output_response(request, &branch),
+            Ok(Access::Stale(branch, _, refresh)) => {
+                let response = Self::output_response(request, &branch);
+                if response.status() == StatusCode::Ok {
+                    if let Some(lease) = refresh {
+                        self.queue_refresh(index, context, request, lease);
+                    }
+                }
+                return response;
+            }
             Ok(Access::Load(lease)) => lease,
             _ => return Self::cache_busy(),
         };
@@ -56,23 +65,22 @@ impl App {
         match self.load_client_branch(index, &context, &fresh) {
             Ok((mut branch, public)) => {
                 let output = Self::guarded(|| {
-                    self.cached_branch_finish(index, &context, &fresh, &branch, None)
+                    self.prepare_regenerated_output(index, &context, &fresh, &mut branch)
                 });
                 match output {
-                    Ok(output) if output.status() == StatusCode::Ok && !output.is_streaming() => {
-                        branch.output = Some(Arc::from(output.body()));
+                    Ok(()) => {
                         let response = Self::output_response(request, &branch);
                         if lease.publish(public.then_some(branch)).is_err() {
                             return Self::cache_busy();
                         }
                         response
                     }
-                    output => self.boundary_failure(
+                    Err(error) => self.boundary_failure(
                         index,
                         branch.packet.layouts().len(),
                         branch.packet.layouts().to_vec(),
                         request,
-                        output.err().unwrap_or(PageError::InternalServerError),
+                        error,
                     ),
                 }
             }
@@ -83,6 +91,21 @@ impl App {
                 None => self.client_failure(request, failure.error),
             },
         }
+    }
+
+    pub(super) fn prepare_regenerated_output(
+        &self,
+        index: usize,
+        context: &PageContext<'_>,
+        request: &Request,
+        branch: &mut CachedBranch,
+    ) -> Result<(), PageError> {
+        let output = self.cached_branch_finish(index, context, request, branch, None)?;
+        if output.status() != StatusCode::Ok || output.is_streaming() {
+            return Err(PageError::InternalServerError);
+        }
+        branch.output = Some(Arc::from(output.body()));
+        Ok(())
     }
 
     fn output_response(request: &Request, branch: &CachedBranch) -> Response {

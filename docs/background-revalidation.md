@@ -5,6 +5,9 @@ native worker pool prepares a replacement. The default server cache still
 expires entries and loads synchronously, as in alpha.40. There are no new
 dependencies, browser assets, Wasm exports or protocol envelopes.
 
+Alpha.44 also uses these workers for [complete pre-render output
+refreshing](prerender-refresh.md), through a PrerenderRevalidationPolicy.
+
 ## Opt in explicitly
 
 Declare a fresh lifetime and an additional stale window on a client page:

@@ -638,14 +638,16 @@ impl App {
         {
             return Err(AppError::InvalidPage);
         }
-        if self
-            .pages
-            .iter()
-            .any(|page| page.server_cache.stale_seconds() > 0)
-            && !self
-                .server_cache
-                .as_ref()
-                .is_some_and(crate::ServerCache::has_background)
+        if self.pages.iter().any(|page| {
+            page.server_cache.stale_seconds() > 0
+                || page
+                    .revalidation
+                    .as_ref()
+                    .is_some_and(|policy| policy.stale_seconds() > 0)
+        }) && !self
+            .server_cache
+            .as_ref()
+            .is_some_and(crate::ServerCache::has_background)
         {
             return Err(AppError::InvalidPage);
         }

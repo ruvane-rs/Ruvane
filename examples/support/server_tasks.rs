@@ -64,7 +64,7 @@ fn page(
         );
     }
     Ok(Document::new(
-        "Ruvane alpha.43 — Server tasks",
+        "Ruvane alpha.44 — Server tasks",
         element(Tag::Main)
             .child(element(Tag::H1).child("Ruvane / Server tasks"))
             .child(
