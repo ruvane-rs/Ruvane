@@ -1,5 +1,6 @@
 use super::*;
 use crate::{ActionData, ComponentProps, InitialState, StatusCode};
+mod background;
 
 fn policy() -> ServerCachePolicy {
     ServerCachePolicy::public(30)
@@ -12,6 +13,7 @@ fn url(path: &str) -> InternalUrl {
 }
 fn branch(path: &str) -> CachedBranch {
     CachedBranch {
+        head: None,
         packet: NavigationPage::new(
             url(path),
             "Title",
@@ -135,7 +137,7 @@ fn lru_byte_budgets_expiry_and_clear_bound_retained_data() {
     let evicted = load(&cache, ns, "/b");
     drop(evicted);
     assert_eq!(cache.stats().unwrap().entries, 2);
-    cache.0.state.lock().unwrap().entries[0].expires = Instant::now();
+    cache.0.state.lock().unwrap().entries[0].stale_until = Instant::now();
     assert_eq!(cache.stats().unwrap().entries, 1);
     assert_eq!(cache.clear().unwrap(), 1);
     assert_eq!(cache.stats().unwrap().bytes, 0);

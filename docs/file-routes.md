@@ -255,7 +255,10 @@ tree; target-dependent declaration code remains the author's responsibility.
 
 Client `FilePage` declarations can opt an entire branch into the
 [public server cache](server-cache.md) with `.server_cache(policy)`. Attach a
-`ServerCache` handle to App before constructing its native router. Native-only
+`ServerCache` handle to App before constructing its native router. Policies can
+opt into [background revalidation](background-revalidation.md) with
+`.stale_while_revalidate(seconds)`; attach a native `with_background` handle for
+those policies. Wasm shares the policy declaration without starting workers. Native-only
 `FilePage::server` declarations reject an enabled policy. The generated Wasm
 registry accepts the same declaration without using a server cache at runtime.
 

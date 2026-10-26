@@ -71,6 +71,8 @@ URLs, robots and PNG icons aligned across SSR, hydration, navigation and history
 Opt-in [server data caching](docs/server-cache.md) shares validated public page
 branches between buffered SSR and navigation. Bounded storage, coalesced loads
 and explicit path/tag invalidation keep reuse under application control.
+Opt-in [background regeneration](docs/background-revalidation.md) serves public
+data within a bounded stale window while a fixed worker pool refreshes it.
 
 Create an interactive project from a local checkout:
 

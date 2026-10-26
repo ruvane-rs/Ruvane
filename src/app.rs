@@ -339,6 +339,7 @@ pub struct App {
     endpoints: Vec<endpoints::Endpoint>,
     server_cache: Option<crate::ServerCache>,
     cache_namespace: Option<crate::server_cache::Namespace>,
+    cache_owner: std::sync::Weak<App>,
 }
 impl App {
     /// Creates an empty application.
@@ -631,6 +632,17 @@ impl App {
         {
             return Err(AppError::InvalidPage);
         }
+        if self
+            .pages
+            .iter()
+            .any(|page| page.server_cache.stale_seconds() > 0)
+            && !self
+                .server_cache
+                .as_ref()
+                .is_some_and(crate::ServerCache::has_background)
+        {
+            return Err(AppError::InvalidPage);
+        }
         if self.pages.iter().any(|p| p.client.is_some()) && self.client_runtime.is_none() {
             return Err(AppError::InvalidPage);
         }
@@ -646,7 +658,10 @@ impl App {
             .map(crate::ServerCache::namespace)
             .transpose()
             .map_err(|_| AppError::RenderFailed)?;
-        let app = Arc::new(app);
+        let app = Arc::new_cyclic(|owner| {
+            app.cache_owner = owner.clone();
+            app
+        });
         let mut router = Router::new();
         router.page_errors(not_found.clone(), internal.clone());
         for (index, page) in self.pages.iter().enumerate() {

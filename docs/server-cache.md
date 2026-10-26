@@ -3,7 +3,7 @@
 Alpha.40 adds an explicit in-memory cache for complete client page branches,
 without third-party dependencies. Buffered SSR, native fallback rendering and
 typed navigation share validated layout/page seeds, title, metadata and fallback
-data. Complete HTML documents and live components are constructed separately
+data. Buffered custom document heads are retained with the validated branch. Complete HTML documents and live components are constructed separately
 for each response; the native fallback fragment is retained with its data.
 
 ## Opt in
@@ -54,7 +54,9 @@ remain distinct. SSR and typed navigation for the same URL share data. A native
 query variant such as `?native=yes` has its own key.
 
 Freshness is 1..=300 seconds, starting after successful response construction.
-Entries expire without stale fallback or background regeneration. Cache hits
+By default entries expire without stale fallback or background regeneration.
+Alpha.41 optionally adds [background revalidation](background-revalidation.md)
+with a bounded stale window and explicit native worker pool. Cache hits
 move entries to the most recently used position; insertion evicts the least
 recently used entries when a storage budget is reached. An entry larger than
 the payload budget is returned normally but is neither retained nor shared.
@@ -135,7 +137,7 @@ budgets to lower limits, then `ServerCache::new(limits)`. `stats()` sweeps expir
 and returns aggregate entry, byte, load, waiter, hit, miss and wait counts. It
 does not expose paths, tags or cached data. Counters saturate rather than wrap.
 
-The byte budget accounts for encoded packet, fallback, URL and tag bytes, not
+The byte budget accounts for encoded packet, fallback, buffered head, URL and tag bytes, not
 exact allocator overhead or total process memory. Fixed count bounds constrain
 structural overhead; active responses and waiters can retain bounded shared
 payloads after eviction. Existing packet, HTML, view and server worker limits

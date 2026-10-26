@@ -1,7 +1,9 @@
 //! Bounded public server data caching, shared through explicit application handles.
+mod background;
 mod store;
+use background::{Job, Pool};
 use std::fmt;
-pub(crate) use store::{Access, CachedBranch, Namespace};
+pub(crate) use store::{Access, CachedBranch, Lease, Namespace};
 pub use store::{ServerCache, ServerCacheStats};
 
 /// Maximum retained entries in a server cache.
@@ -16,6 +18,38 @@ pub const MAX_SERVER_CACHE_WAITERS: usize = 64;
 pub const MAX_SERVER_CACHE_WAIT_MS: u64 = 1000;
 /// Maximum tags attached to one cached branch.
 pub const MAX_SERVER_CACHE_TAGS: usize = 8;
+/// Maximum background workers per cache handle.
+pub const MAX_SERVER_CACHE_WORKERS: usize = 4;
+/// Maximum queued background refreshes per cache handle.
+pub const MAX_SERVER_CACHE_QUEUE: usize = 32;
+/// Maximum additional time public data may be served after freshness expires.
+pub const MAX_SERVER_CACHE_STALE_SECONDS: u32 = 300;
+
+/// Validated fixed worker and queue budgets for opt-in background refreshing.
+#[derive(Clone, Copy, Debug)]
+pub struct ServerCacheBackgroundLimits {
+    workers: usize,
+    queue: usize,
+}
+impl ServerCacheBackgroundLimits {
+    /// Sets positive worker and queue budgets below the exported maxima.
+    pub fn new(workers: usize, queue: usize) -> Result<Self, ServerCacheError> {
+        if !(1..=MAX_SERVER_CACHE_WORKERS).contains(&workers)
+            || !(1..=MAX_SERVER_CACHE_QUEUE).contains(&queue)
+        {
+            return Err(ServerCacheError::InvalidLimits);
+        }
+        Ok(Self { workers, queue })
+    }
+}
+impl Default for ServerCacheBackgroundLimits {
+    fn default() -> Self {
+        Self {
+            workers: 1,
+            queue: 8,
+        }
+    }
+}
 
 /// Invalid configuration/input, or a cache operation that cannot proceed safely.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,6 +123,7 @@ impl Default for ServerCacheLimits {
 pub struct ServerCachePolicy {
     seconds: Option<u32>,
     tags: Vec<String>,
+    stale_seconds: u32,
 }
 impl ServerCachePolicy {
     /// Keeps server data caching disabled.
@@ -103,7 +138,21 @@ impl ServerCachePolicy {
         Ok(Self {
             seconds: Some(seconds),
             tags: Vec::new(),
+            stale_seconds: 0,
         })
+    }
+    /// Allows stale public data for 1..=300 additional seconds while one refresh runs.
+    /// Requires a native cache handle constructed with background workers.
+    pub fn stale_while_revalidate(mut self, seconds: u32) -> Result<Self, ServerCacheError> {
+        if self.seconds.is_none() || !(1..=MAX_SERVER_CACHE_STALE_SECONDS).contains(&seconds) {
+            return Err(ServerCacheError::InvalidLimits);
+        }
+        self.stale_seconds = seconds;
+        Ok(self)
+    }
+    /// Returns the additional stale window, or zero when refreshing is disabled.
+    pub fn stale_seconds(&self) -> u32 {
+        self.stale_seconds
     }
     /// Adds a unique invalidation tag. Tags use the page-name identifier profile.
     pub fn tag(mut self, tag: &str) -> Result<Self, ServerCacheError> {

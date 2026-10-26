@@ -179,3 +179,8 @@ the remaining whole seconds of server freshness; less than one second produces
 no-store. Server path/tag invalidation does not purge another document's browser
 cache. Existing action notifications still invalidate the requesting document;
 other documents refresh explicitly or wait for their bounded freshness to end.
+
+Opt-in server background revalidation returns permitted stale data with
+no-store navigation headers. The browser cannot extend its stale lifetime.
+A completed refresh replaces the typed seed and metadata together for later
+GETs; it does not push a replacement into an already displayed browser page.

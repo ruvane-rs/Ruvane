@@ -48,14 +48,14 @@ await test("generated file routes own the same Wasm registry across additions an
     run(["new","file-application","--interactive","--file-routes","--framework-path",root], directory);
     const project = join(directory,"file-application");
     const pagesFile = join(project,"src/pages.rs");
-    await writeFile(pagesFile,(await readFile(pagesFile,"utf8")).replace("let mut app = App::new();",'let mut app = App::new(); app.server_cache(ruvane::ServerCache::default()); app.client_metadata_origin(Some(ruvane::SiteOrigin::parse("https://public.example").unwrap()));'));
+    await writeFile(pagesFile,(await readFile(pagesFile,"utf8")).replace("let mut app = App::new();",'let mut app = App::new(); #[cfg(not(target_family = "wasm"))] app.server_cache(ruvane::ServerCache::with_background(Default::default(), Default::default()).unwrap()); app.client_metadata_origin(Some(ruvane::SiteOrigin::parse("https://public.example").unwrap()));'));
     const homeFile=join(project,"src/routes/page.rs");
-    await writeFile(homeFile,(await readFile(homeFile,"utf8")).replace('    })','    }).server_cache(ruvane::ServerCachePolicy::public(30).unwrap().tag("home").unwrap())'));
+    await writeFile(homeFile,(await readFile(homeFile,"utf8")).replace('    })','    }).server_cache(ruvane::ServerCachePolicy::public(30).unwrap().stale_while_revalidate(60).unwrap().tag("home").unwrap())'));
     const nativeRoute = '#[cfg(target_family = "wasm")] compile_error!("route.rs reached Wasm");\npub fn route() -> ruvane::FileEndpoint { ruvane::FileEndpoint::new().get(|_| ruvane::Response::text("SERVER_ROUTE_ONLY_ALPHA38")) }\n';
     await writeFile(join(project,"src/routes/api/health/route.rs"),nativeRoute);
     run(["build","--offline"],project);
     const e = await exportsFor(project,1);
-    await t.test("server cache declarations retain the import-free Wasm registry", () => {
+    await t.test("background cache policy declarations retain the import-free Wasm registry", () => {
       assert.equal(probe(e,packet("/",8)),1);
       assert.equal(e.ruvane_live_instances(),0);
     });

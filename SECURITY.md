@@ -591,3 +591,19 @@ running synchronous loader cannot be forcibly cancelled. A busy, timed-out or
 retired cache request returns a fixed no-store 503. Public cache invalidation
 does not replace authorization, transaction durability or remote-browser cache
 invalidation. No cross-process or persistent cache is provided.
+
+Background server revalidation is separately opt-in, for public URL-only data.
+Its stale window, queue, worker and shared active-load budgets are bounded.
+Private requests and actual streams never schedule a refresh. Jobs retain only
+a reconstructed GET URL/query/capture context and trusted public origin, not
+request headers or bodies. Existing public-data and loader purity obligations
+continue to apply. An old entry is adopted only inside its hard stale window;
+failed refreshes never extend that deadline, and stale navigation is no-store.
+No-store or missing-page results retire old entries. Invalidation and LRU eviction
+fence late refresh publication; queued invalid jobs are skipped before loading.
+Workers catch unwinding callbacks and stop cooperatively. Running synchronous
+code cannot be forcibly interrupted. Queue jobs hold weak router ownership;
+explicit stop retires running refreshes and discards queued work. Cache policy
+is not authorization or a mechanism for revoking data already adopted by a
+request/browser. Call invalidation when committing changes that must not use
+the optional stale window.

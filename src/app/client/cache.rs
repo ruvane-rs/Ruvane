@@ -6,6 +6,58 @@ use std::time::Instant;
 mod tests;
 
 impl App {
+    pub(super) fn queue_refresh(
+        &self,
+        index: usize,
+        context: &PageContext<'_>,
+        request: &Request,
+        lease: crate::server_cache::Lease,
+    ) {
+        let owner = self.cache_owner.clone();
+        let request = request.background_get();
+        let path = context.path.clone();
+        let origin = context.origin.cloned();
+        let job = Box::new(move || {
+            if !lease.is_current() {
+                return;
+            }
+            let Some(app) = owner.upgrade() else {
+                return;
+            };
+            let context = PageContext {
+                app: &app,
+                route: Some(&app.pages[index].route),
+                path: &path,
+                params: &request.params,
+                request: Some(&request),
+                origin: origin.as_ref(),
+                exporting: false,
+                stream: None,
+            };
+            match app.load_client_branch(index, &context, &request) {
+                Ok((_, false)) => {
+                    let _ = lease.publish(None);
+                }
+                Ok((branch, true)) => {
+                    match Self::guarded(|| {
+                        app.cached_branch_finish(index, &context, &request, &branch, None)
+                    }) {
+                        Ok(_) => {
+                            let _ = lease.publish(Some(branch));
+                        }
+                        Err(error) => lease.fail(error),
+                    }
+                }
+                Err(failure) if failure.retire => {
+                    let _ = lease.publish(None);
+                }
+                Err(failure) => lease.fail(failure.error),
+            }
+        });
+        if let Some(cache) = &self.server_cache {
+            let _ = cache.submit(job);
+        }
+    }
     /// Attaches an explicit cache/invalidation handle to subsequently constructed routers.
     /// Existing routers keep their handle. Each new router has a fresh cache namespace.
     pub fn server_cache(&mut self, cache: ServerCache) {
@@ -72,12 +124,15 @@ impl App {
         ) && request.query_params().get("native") != Some("yes")
             && self.has_not_found(index)
         {
-            self.pages[index]
-                .client
-                .unwrap()
-                .document
-                .map(|head| head(context))
-                .transpose()?
+            match &branch.head {
+                Some(head) => Some(head.clone()),
+                None => self.pages[index]
+                    .client
+                    .unwrap()
+                    .document
+                    .map(|head| head(context))
+                    .transpose()?,
+            }
         } else {
             None
         };

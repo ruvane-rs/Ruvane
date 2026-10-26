@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-alpha.41 — Unreleased
+
+- Add opt-in bounded stale-while-revalidate server data policies, with a fixed
+  native worker pool and refresh queue. Default cache behavior stays unchanged.
+- Serve eligible stale branches without waiting, coalesce refreshes per key,
+  and atomically replace validated data, metadata and buffered custom heads.
+- Keep the original hard stale deadline after failed refreshes; apply a one-second
+  retry backoff and retire entries on no_store, bad requests or missing pages.
+- Fence active/queued refreshes on invalidation and eviction, skip abandoned
+  routers, and expose aggregate refresh/worker counters plus cooperative stop.
+- Reconstruct background GET context from URL/captures and trusted origin,
+  without retaining request headers, credentials or body. Private and actual
+  progressive responses continue to bypass caching and background scheduling.
+- Cover expiry, overload, shutdown and mutation races in native tests and compile
+  the same policies into import-free Wasm, without new dependencies or assets.
+
 ## 0.1.0-alpha.40 — Unreleased
 
 - Add explicit public server data caching for complete client page branches,

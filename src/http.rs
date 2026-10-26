@@ -47,6 +47,17 @@ pub struct Request {
 }
 
 impl Request {
+    pub(crate) fn background_get(&self) -> Self {
+        Self {
+            method: Method::Get,
+            target: self.target.clone(),
+            headers: Vec::new(),
+            params: self.params.clone(),
+            query_params: self.query_params.clone(),
+            content_length: None,
+            form: None,
+        }
+    }
     /// Returns the request method. GET handlers also receive HEAD requests.
     pub fn method(&self) -> Method {
         self.method

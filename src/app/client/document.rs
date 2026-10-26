@@ -9,6 +9,7 @@ pub type ClientDocumentHead = fn(&PageContext<'_>) -> Result<ClientDocument, Pag
 
 /// Head and budgets known before an initial App document starts streaming.
 /// The page loader must return the same title. A leaf boundary can recover late errors.
+#[derive(Clone)]
 pub struct ClientDocument {
     title: String,
     language: String,
@@ -18,6 +19,15 @@ pub struct ClientDocument {
     hydrate_shell: bool,
 }
 impl ClientDocument {
+    pub(crate) fn cache_bytes(&self) -> usize {
+        self.title.len() + self.language.len() + self.metadata.encode_wire().len()
+    }
+    pub(super) fn cache_metadata(&self, title: &str) -> Result<Metadata, PageError> {
+        if self.title != title {
+            return Err(PageError::InternalServerError);
+        }
+        Ok(self.metadata.clone())
+    }
     /// Creates a fixed head with English language and the default stream budgets.
     pub fn new(title: impl Into<String>) -> Self {
         Self {

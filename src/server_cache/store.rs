@@ -7,6 +7,7 @@ mod tests;
 
 #[derive(Clone)]
 pub(crate) struct CachedBranch {
+    pub head: Option<crate::ClientDocument>,
     pub packet: NavigationPage,
     pub fallback: Html,
     pub policy: NavigationCachePolicy,
@@ -24,9 +25,12 @@ struct Entry {
     tags: Vec<String>,
     branch: Arc<CachedBranch>,
     expires: Instant,
+    stale_until: Instant,
+    retry_at: Instant,
     bytes: usize,
 }
 struct Flight {
+    background: bool,
     key: Key,
     tags: Vec<String>,
     result: Mutex<FlightResult>,
@@ -48,6 +52,9 @@ struct State {
     hits: u64,
     misses: u64,
     waits: u64,
+    stale_hits: u64,
+    refresh_attempts: u64,
+    refresh_failures: u64,
 }
 struct Inner {
     limits: ServerCacheLimits,
@@ -57,13 +64,27 @@ struct Inner {
 /// An explicit in-memory public cache and invalidation handle. Clones share state.
 /// Each constructed App router gets a separate namespace, including its revision/origin.
 #[derive(Clone)]
-pub struct ServerCache(Arc<Inner>);
+pub struct ServerCache(Arc<Inner>, Option<Arc<Pool>>);
 /// Bounded cache counts; no URLs, tags, headers or page data are exposed.
 #[derive(Clone, Copy, Debug)]
 pub struct ServerCacheStats {
-    /// Fresh retained entries.
+    /// Retained entries past freshness but within their allowed stale window.
+    pub stale_entries: usize,
+    /// Requests served permitted stale data without waiting for a refresh.
+    pub stale_hits: u64,
+    /// Background refresh reservations, including attempts declined by the queue.
+    pub refresh_attempts: u64,
+    /// Failed or declined refreshes, excluding explicit invalidation.
+    pub refresh_failures: u64,
+    /// Background jobs waiting in the fixed queue.
+    pub background_queued: usize,
+    /// Background jobs currently executing.
+    pub background_running: usize,
+    /// Background worker threads still alive, including workers stopping cooperatively.
+    pub background_workers: usize,
+    /// Retained fresh and permitted stale entries.
     pub entries: usize,
-    /// Accounted encoded packet, fallback, key and tag bytes.
+    /// Accounted encoded packet, fallback, buffered head, key and tag bytes.
     pub bytes: usize,
     /// Loaders still running, including invalidated ones awaiting completion.
     pub active_loads: usize,
@@ -82,12 +103,71 @@ impl Default for ServerCache {
     }
 }
 impl ServerCache {
+    #[cfg(test)]
+    pub(crate) fn expire_for_test(&self, hard: bool) {
+        let mut state = self.0.state.lock().unwrap();
+        for entry in &mut state.entries {
+            entry.expires = Instant::now();
+            entry.retry_at = entry.expires;
+            if hard {
+                entry.stale_until = entry.expires;
+            }
+        }
+    }
     /// Creates an empty handle with validated limits. No worker or timer is started.
     pub fn new(limits: ServerCacheLimits) -> Self {
-        Self(Arc::new(Inner {
-            limits,
-            state: Mutex::new(State::default()),
-        }))
+        Self(
+            Arc::new(Inner {
+                limits,
+                state: Mutex::new(State::default()),
+            }),
+            None,
+        )
+    }
+    /// Starts a fixed native worker pool with a bounded refresh queue.
+    /// Worker creation failure is reported; Wasm cannot start server workers.
+    pub fn with_background(
+        limits: ServerCacheLimits,
+        background: ServerCacheBackgroundLimits,
+    ) -> Result<Self, ServerCacheError> {
+        let mut cache = Self::new(limits);
+        cache.1 = Some(Arc::new(Pool::new(background)?));
+        Ok(cache)
+    }
+    /// Stops queuing refreshes, drops queued jobs and retires active background loads.
+    /// Running synchronous callbacks finish cooperatively; this call does not join them.
+    /// Fresh lookup and foreground loading remain available.
+    pub fn stop_background(&self) -> Result<(), ServerCacheError> {
+        if let Some(pool) = &self.1 {
+            pool.stop();
+        }
+        let state = self
+            .0
+            .state
+            .lock()
+            .map_err(|_| ServerCacheError::Unavailable)?;
+        for flight in &state.flights {
+            if flight.background {
+                *flight
+                    .result
+                    .lock()
+                    .map_err(|_| ServerCacheError::Unavailable)? = FlightResult::Invalidated;
+                flight.ready.notify_all();
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn has_background(&self) -> bool {
+        self.1.is_some()
+    }
+    pub(crate) fn detached(&self) -> Self {
+        Self(Arc::clone(&self.0), None)
+    }
+    pub(crate) fn submit(&self, job: Job) -> Result<(), ServerCacheError> {
+        self.1
+            .as_ref()
+            .ok_or(ServerCacheError::Unavailable)?
+            .submit(job)
     }
     pub(crate) fn namespace(&self) -> Result<Namespace, ServerCacheError> {
         let mut state = self
@@ -151,8 +231,9 @@ impl ServerCache {
             .state
             .lock()
             .map_err(|_| ServerCacheError::Unavailable)?;
-        state.sweep(Instant::now());
-        Ok(ServerCacheStats {
+        let now = Instant::now();
+        state.sweep(now);
+        let mut stats = ServerCacheStats {
             entries: state.entries.len(),
             bytes: state.bytes,
             active_loads: state.flights.len(),
@@ -160,8 +241,29 @@ impl ServerCache {
             hits: state.hits,
             misses: state.misses,
             waits: state.waits,
-        })
+            stale_entries: state
+                .entries
+                .iter()
+                .filter(|entry| entry.expires <= Instant::now())
+                .count(),
+            stale_hits: state.stale_hits,
+            refresh_attempts: state.refresh_attempts,
+            refresh_failures: state.refresh_failures,
+            background_queued: 0,
+            background_running: 0,
+            background_workers: 0,
+        };
+        drop(state);
+        if let Some(pool) = &self.1 {
+            (
+                stats.background_queued,
+                stats.background_running,
+                stats.background_workers,
+            ) = pool.stats()?;
+        }
+        Ok(stats)
     }
+
     pub(crate) fn access(
         &self,
         namespace: Namespace,
@@ -179,13 +281,42 @@ impl ServerCache {
             .state
             .lock()
             .map_err(|_| ServerCacheError::Unavailable)?;
-        state.sweep(Instant::now());
+        let now = Instant::now();
+        state.sweep(now);
         if let Some(index) = state.entries.iter().position(|entry| entry.key == key) {
             let entry = state.entries.remove(index);
-            let access = Access::Hit(Arc::clone(&entry.branch), entry.expires);
+            if entry.expires > now {
+                let access = Access::Hit(Arc::clone(&entry.branch), entry.expires);
+                state.entries.push(entry);
+                state.hits = state.hits.saturating_add(1);
+                return Ok(access);
+            }
+            state.stale_hits = state.stale_hits.saturating_add(1);
+            let access = (Arc::clone(&entry.branch), entry.expires);
+            let reserve = self.1.is_some()
+                && entry.retry_at <= now
+                && state.flights.len() < self.0.limits.loads
+                && !state.flights.iter().any(|flight| flight.key == key);
             state.entries.push(entry);
-            state.hits = state.hits.saturating_add(1);
-            return Ok(access);
+            let lease = reserve.then(|| {
+                let flight = Arc::new(Flight {
+                    background: true,
+                    key,
+                    tags: policy.tags.clone(),
+                    result: Mutex::new(FlightResult::Pending),
+                    ready: Condvar::new(),
+                });
+                state.flights.push(Arc::clone(&flight));
+                state.refresh_attempts = state.refresh_attempts.saturating_add(1);
+                Lease {
+                    cache: self.detached(),
+                    flight,
+                    seconds: policy.seconds.unwrap(),
+                    stale_seconds: policy.stale_seconds,
+                    finished: false,
+                }
+            });
+            return Ok(Access::Stale(access.0, access.1, lease));
         }
         if let Some(flight) = state
             .flights
@@ -248,6 +379,7 @@ impl ServerCache {
             return Err(ServerCacheError::Unavailable);
         }
         let flight = Arc::new(Flight {
+            background: false,
             key,
             tags: policy.tags.clone(),
             result: Mutex::new(FlightResult::Pending),
@@ -259,13 +391,14 @@ impl ServerCache {
             cache: self.clone(),
             flight,
             seconds: policy.seconds.unwrap(),
+            stale_seconds: policy.stale_seconds,
             finished: false,
         }))
     }
 }
 impl State {
     fn sweep(&mut self, now: Instant) {
-        self.entries.retain(|entry| entry.expires > now);
+        self.entries.retain(|entry| entry.stale_until > now);
         self.bytes = self.entries.iter().map(|entry| entry.bytes).sum();
     }
 }
@@ -279,6 +412,7 @@ impl Drop for Waiting {
 }
 pub(crate) enum Access {
     Hit(Arc<CachedBranch>, Instant),
+    Stale(Arc<CachedBranch>, Instant, Option<Lease>),
     Load(Lease),
     Bypass,
 }
@@ -286,6 +420,7 @@ pub(crate) struct Lease {
     cache: ServerCache,
     flight: Arc<Flight>,
     seconds: u32,
+    stale_seconds: u32,
     finished: bool,
 }
 impl Lease {
@@ -310,8 +445,14 @@ impl Lease {
             return Err(ServerCacheError::Unavailable);
         }
         *result = FlightResult::Retry;
+        state.entries.retain(|entry| entry.key != self.flight.key);
+        state.bytes = state.entries.iter().map(|entry| entry.bytes).sum();
         if let Some(branch) = branch {
             let bytes = branch.packet.encode().len()
+                + branch
+                    .head
+                    .as_ref()
+                    .map_or(0, crate::ClientDocument::cache_bytes)
                 + branch.fallback.as_str().len()
                 + self.flight.key.url.len()
                 + self.flight.tags.iter().map(String::len).sum::<usize>();
@@ -322,6 +463,14 @@ impl Lease {
                 {
                     let removed = state.entries.remove(0);
                     state.bytes -= removed.bytes;
+                    for flight in &state.flights {
+                        if flight.key == removed.key {
+                            if let Ok(mut result) = flight.result.lock() {
+                                *result = FlightResult::Invalidated;
+                            }
+                            flight.ready.notify_all();
+                        }
+                    }
                 }
                 let branch = Arc::new(branch);
                 let expires = Instant::now() + Duration::from_secs(u64::from(self.seconds));
@@ -330,6 +479,8 @@ impl Lease {
                     tags: self.flight.tags.clone(),
                     branch: Arc::clone(&branch),
                     expires,
+                    stale_until: expires + Duration::from_secs(u64::from(self.stale_seconds)),
+                    retry_at: expires,
                     bytes,
                 });
                 state.bytes += bytes;
@@ -340,8 +491,20 @@ impl Lease {
         Ok(())
     }
 }
-impl Drop for Lease {
-    fn drop(&mut self) {
+impl Lease {
+    pub fn is_current(&self) -> bool {
+        self.flight
+            .result
+            .lock()
+            .is_ok_and(|result| matches!(*result, FlightResult::Pending))
+    }
+    pub fn fail(mut self, error: crate::PageError) {
+        self.release(matches!(
+            error,
+            crate::PageError::NotFound | crate::PageError::BadRequest
+        ));
+    }
+    fn release(&mut self, retire: bool) {
         if self.finished {
             return;
         }
@@ -351,10 +514,30 @@ impl Drop for Lease {
                 .retain(|flight| !Arc::ptr_eq(flight, &self.flight));
             if let Ok(mut result) = self.flight.result.lock() {
                 if matches!(*result, FlightResult::Pending) {
+                    if self.flight.background {
+                        state.refresh_failures = state.refresh_failures.saturating_add(1);
+                        if retire {
+                            state.entries.retain(|entry| entry.key != self.flight.key);
+                        } else if let Some(entry) = state
+                            .entries
+                            .iter_mut()
+                            .find(|entry| entry.key == self.flight.key)
+                        {
+                            entry.retry_at =
+                                (Instant::now() + Duration::from_secs(1)).min(entry.stale_until);
+                        }
+                        state.bytes = state.entries.iter().map(|entry| entry.bytes).sum();
+                    }
                     *result = FlightResult::Retry;
                 }
             }
             self.flight.ready.notify_all();
+            self.finished = true;
         }
+    }
+}
+impl Drop for Lease {
+    fn drop(&mut self) {
+        self.release(false);
     }
 }
