@@ -142,7 +142,10 @@ try {
 }
 ```
 
-`ready` returns the complete snapshot and attested parent controllers. The
+`ready` returns the complete snapshot, attested parent controllers and an `accept`
+guard. Pass the whole result to `navigator.start`. Custom guards must compose with
+`initial.accept()`; the application bootstrap does this before its native-form
+guard. Retirement invalidates this guard even when no layout was hydrated. The
 navigator must use both. `retire()` preserves received HTML and frees owners;
 `commit()` finishes the handoff only after successful navigator startup.
 Callers must settle the session. `runtime.hydrateLayout` and `retireLayout` are
@@ -164,3 +167,5 @@ the generated demo after verification. No third-party Cargo/npm/test package is
 used.
 
 Alpha.30 supports [ancestor boundary recovery](streamed-leaf-errors.md#ancestor-boundary-recovery-alpha30) after descendants have already been emitted. Removal happens only after validating the complete error branch.
+
+Alpha.31 adds an explicit [App boundary](streamed-leaf-errors.md#app-boundary-recovery-alpha31) for root and unhandled branch errors while retaining the independent shell.

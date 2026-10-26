@@ -1,7 +1,7 @@
 use super::*;
 use crate::{NavigationCachePolicy, NavigationLayout};
 
-/// Read-only loading and error components for one page or layout's children.
+/// Read-only loading and error components for an App, page or layout's children.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ClientBoundary {
     pub(super) loading: u32,
@@ -18,6 +18,15 @@ impl ClientBoundary {
     }
 }
 impl App {
+    /// Configures the App boundary used when no page or parent boundary applies.
+    /// It can catch a root layout failure. Registration runs no components.
+    pub fn client_boundary(&mut self, boundary: Option<ClientBoundary>) -> Result<(), AppError> {
+        if self.client_factory.is_none() {
+            return Err(AppError::InvalidPage);
+        }
+        self.client_boundary = boundary;
+        Ok(())
+    }
     /// Configures presentation for a page, or removes its boundary.
     pub fn client_page_boundary(
         &mut self,
@@ -67,6 +76,7 @@ impl App {
                     .boundary
                     .map(|boundary| (depth + 1, boundary))
             })
+            .or_else(|| self.client_boundary.map(|boundary| (0, boundary)))
     }
     pub(super) fn validate_boundary_page(&self, packet: &NavigationPage) -> bool {
         let Some(failed) = packet.failed_segment() else {
@@ -255,6 +265,14 @@ impl App {
                 }
                 output.push_str("></span>");
             };
+        if let Some(boundary) = self.client_boundary {
+            record(
+                "app",
+                &PageRoute::new("app", "/").unwrap(),
+                Vec::new(),
+                Some(boundary),
+            );
+        }
         for (index, layout) in self.client_layouts.iter().enumerate() {
             record(
                 "layout",

@@ -988,3 +988,155 @@ fn leaf_boundaries_do_not_bypass_deadlines_or_transport_limits() {
     }
     assert!(server.get("/work/page").2);
 }
+
+#[test]
+fn app_boundary_registration_is_explicit_and_removable() {
+    let boundary = ClientBoundary::new(3, 3).unwrap();
+    assert!(App::new().client_boundary(Some(boundary)).is_err());
+    let (mut app, loads, _) = fixture();
+    let packet = NavigationPage::new(
+        InternalUrl::new("/work/page").unwrap(),
+        "Error",
+        ComponentProps::new(3, InitialState::Number(500)).unwrap(),
+        ActionData::default(),
+        StatusCode::InternalServerError,
+    )
+    .unwrap()
+    .with_failure(0, Vec::new())
+    .unwrap();
+    assert!(!app.validate_navigation(&packet));
+    app.client_boundary(Some(boundary)).unwrap();
+    assert!(app.validate_navigation(&packet));
+    app.client_boundary(None).unwrap();
+    assert!(!app.validate_navigation(&packet));
+    assert_eq!(loads.load(Ordering::SeqCst), 0);
+}
+#[test]
+fn app_boundaries_recover_root_and_unhandled_branch_errors_in_both_document_profiles() {
+    let (mut app, loads, _) = fixture();
+    app.client_boundary(Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    let server = Running::new(&app, ServerConfig::default());
+    for mode in ["", "&hydrate=yes"] {
+        for (fail, failed, status) in [
+            ("root", 0, 500),
+            ("inner", 1, 500),
+            ("inner-bad", 1, 400),
+            ("inner-missing", 1, 404),
+            ("inner-schema", 1, 500),
+            ("inner-panic", 1, 500),
+            ("page", 2, 404),
+            ("panic", 2, 500),
+            ("record", 1, 500),
+        ] {
+            let before = loads.load(Ordering::SeqCst);
+            let (_, body, complete) = server.get(&format!("/work/page?fail={fail}{mode}"));
+            assert!(
+                complete && !body.contains("private") && !body.contains("data-ruvane-stream-error")
+            );
+            let final_page = snapshot(&body);
+            let page = final_page.page();
+            assert!(page.layouts().is_empty());
+            assert_eq!(page.failed_segment(), Some(failed));
+            assert_eq!(page.status().as_u16(), status);
+            assert_eq!(page.title(), "Report <&🦀");
+            assert!(body.contains("data-rvn-kind=\"app\""));
+            assert_eq!(loads.load(Ordering::SeqCst) - before, failed + 1);
+            if failed == 0 {
+                assert!(
+                    !body.contains("ruvane-retired")
+                        && !body.contains("data-ruvane-layout=\"root\"")
+                );
+            } else {
+                let prefix = retired_snapshot(&body);
+                assert_eq!(prefix.page().layouts().len(), failed);
+                assert_eq!(prefix.page().pending_layouts(), Some(2));
+            }
+        }
+    }
+    let (headers, body, complete) = server.get("/work/page?native=yes&fail=root");
+    assert!(
+        complete
+            && headers.starts_with("HTTP/1.1 500")
+            && headers.contains("script-src 'none'")
+            && !body.contains("ruvane-initial")
+    );
+}
+#[test]
+fn local_boundaries_keep_precedence_over_the_app_boundary() {
+    let (mut app, _, _) = fixture();
+    app.client_boundary(Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    app.client_layout_boundary("root", Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    let forged = NavigationPage::new(
+        InternalUrl::new("/work/page").unwrap(),
+        "Error",
+        ComponentProps::new(3, InitialState::Number(500)).unwrap(),
+        ActionData::default(),
+        StatusCode::InternalServerError,
+    )
+    .unwrap()
+    .with_failure(2, Vec::new())
+    .unwrap();
+    assert!(!app.validate_navigation(&forged));
+    let server = Running::new(&app, ServerConfig::default());
+    let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=page");
+    assert!(complete);
+    assert_eq!(snapshot(&body).page().layouts().len(), 1);
+    assert_eq!(snapshot(&body).page().failed_segment(), Some(2));
+}
+#[test]
+fn invalid_app_error_components_use_the_minimal_fallback() {
+    for component in 4..=6 {
+        let (mut app, _, _) = fixture();
+        app.client_boundary(Some(ClientBoundary::new(3, component).unwrap()))
+            .unwrap();
+        let server = Running::new(&app, ServerConfig::default());
+        let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=root");
+        assert!(
+            complete
+                && body.contains("data-ruvane-stream-error")
+                && !body.contains("ruvane-initial")
+                && !body.contains("private")
+        );
+        let (_, body, complete) = server.get("/work/page?fail=root");
+        assert!(!complete && !body.contains("ruvane-initial") && !body.contains("private"));
+        let (headers, body, complete) = server.get("/work/page?native=yes&fail=root");
+        assert!(
+            complete
+                && headers.starts_with("HTTP/1.1 500")
+                && !body.contains("ruvane-initial")
+                && !body.contains("private")
+        );
+    }
+}
+#[test]
+fn app_boundaries_also_cover_pages_without_layouts() {
+    let (mut app, _, _) = fixture();
+    app.client_boundary(Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    app.client_page_layout("page", None).unwrap();
+    let server = Running::new(&app, ServerConfig::default());
+    let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=bad");
+    assert!(complete);
+    let page = snapshot(&body);
+    assert_eq!(page.page().failed_segment(), Some(0));
+    assert!(page.page().layouts().is_empty());
+    assert!(!body.contains("ruvane-retired"));
+}
+#[test]
+fn app_boundaries_do_not_bypass_transport_limits_or_cancellation() {
+    let (mut app, _, _) = fixture();
+    app.client_boundary(Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    let server = Running::new(&app, ServerConfig::default());
+    for query in [
+        "limit=deadline&pause=yes&hydrate=yes",
+        "limit=chunks&fail=page&hydrate=yes",
+    ] {
+        let (_, body, complete) = server.get(&format!("/work/page?{query}"));
+        assert!(!complete && !body.contains("ruvane-complete"));
+    }
+    assert!(server.get("/work/page").2);
+}

@@ -319,6 +319,7 @@ pub struct App {
     internal_error: Option<ErrorPage>,
     client_factory: Option<ComponentFactory>,
     client_error: u32,
+    client_boundary: Option<ClientBoundary>,
     client_runtime: Option<ClientRuntime>,
     client_layouts: Vec<client::ClientLayout>,
 }

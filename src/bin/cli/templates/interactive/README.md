@@ -71,6 +71,15 @@ survives, and **Try again** reconstructs the context and page. Descendants are
 removed only after the complete error branch is validated. Without JavaScript,
 the received descendants and the error remain visible.
 
+Open **Recover a root layout** for `/tasks/global?recover=root`, or
+**Recover an application error** for `/tasks/global?recover=page&delay=yes`.
+The App boundary catches a root failure or an error with no local boundary.
+It retains the shell and retires the entire outlet branch after validation.
+Increment the shell counter, then choose **Try again** to reconstruct the branch.
+The counter keeps its value. Each failure resets on server restart.
+`app.client_boundary(None)` disables this fallback. An invalid global error
+component keeps the minimal fallback; no POST is replayed.
+
 Open **Streaming SSR** for `/stream`, a native progressive report. Its header
 arrives before the deferred content. Edit `progressive_report` in `src/main.rs`;
 typed fragments use `HtmlStream` with the default byte, yield and time budgets.

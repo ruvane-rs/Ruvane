@@ -137,3 +137,12 @@ remain separate work.
 Initial document streams can also [recover leaf errors](streamed-leaf-errors.md)
 when their boundary retains the full emitted chain. Recovery of a failed layout
 or removal of already emitted descendants remains separate work.
+
+
+## App-wide fallback
+
+`app.client_boundary(Some(ClientBoundary::new(LOADING, GLOBAL_ERROR)?))?` explicitly
+adds a fallback after page and parent layout boundaries. It can handle a root
+layout failure and retains zero layouts. `None` removes it. The component must
+accept an empty seed and read-only error props. Unknown routes and document head
+preflight errors keep their existing paths. See [App boundary recovery](streamed-leaf-errors.md#app-boundary-recovery-alpha31).

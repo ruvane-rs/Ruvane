@@ -98,15 +98,16 @@ function patternParts(pattern){
   return pattern==="/"?[]:pattern.slice(1).split("/").map(value=>/^\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)?null:decodeURIComponent(value));
 }
 function boundaryConfig(entries){
-  if(!Array.isArray(entries)||entries.length>160)throw failure();
+  if(!Array.isArray(entries)||entries.length>161)throw failure();
   const used=new Set(),records=entries.map(item=>{
-    if(!item||!["page","layout"].includes(item.kind)||!identifier(item.name)||!Array.isArray(item.chain)||item.chain.length>6||new Set(item.chain).size!==item.chain.length||!item.chain.every(identifier))throw failure();
+    if(!item||!["app","page","layout"].includes(item.kind)||!identifier(item.name)||!Array.isArray(item.chain)||item.chain.length>6||new Set(item.chain).size!==item.chain.length||!item.chain.every(identifier))throw failure();
     for(const id of [item.loading,item.error])if(!Number.isInteger(id)||id<0||id>0xffffffff)throw failure();
-    if((item.loading===0)!==(item.error===0))throw failure();
+    if((item.loading===0)!==(item.error===0)||item.kind==="app"&&(item.name!=="app"||item.pattern!=="/"||item.chain.length||!item.loading))throw failure();
     const key=item.kind+":"+item.name;if(used.has(key))throw failure();used.add(key);
     const parts=patternParts(item.pattern);if(parts.length>17)throw failure();
     return Object.freeze({kind:item.kind,name:item.name,pattern:item.pattern,chain:Object.freeze([...item.chain]),parts:Object.freeze(parts),loading:item.loading,error:item.error});
   });
+  if(records.filter(item=>item.kind!=="app").length>160)throw failure();
   const layouts=new Map(records.filter(item=>item.kind==="layout").map(item=>[item.name,item]));
   for(const item of records){
     if(item.kind==="layout"&&item.chain.at(-1)!==item.name)throw failure();
@@ -116,10 +117,14 @@ function boundaryConfig(entries){
   }
   return Object.freeze(records);
 }
+function clientDeclaration(entries,url){
+  const parts=pathParts(url),matches=entries.filter(item=>item.kind==="page"&&item.parts.length===parts.length&&item.parts.every((part,n)=>part===null||part===parts[n]));
+  matches.sort((a,b)=>Number(a.parts.includes(null))-Number(b.parts.includes(null)));return matches[0]??null;
+}
 /** Reads the application's bounded public presentation declarations. */
 export function readBoundaries(root){
   const manifests=root.querySelectorAll("#ruvane-boundaries");if(!manifests.length)return [];
-  if(manifests.length!==1||manifests[0].children.length>160)throw failure();
+  if(manifests.length!==1||manifests[0].children.length>161)throw failure();
   const items=[...manifests[0].children].map(node=>{
     if(node.localName!=="span")throw failure();
     const value=name=>node.getAttribute("data-rvn-"+name);
@@ -152,7 +157,7 @@ function readRetiredBranch(root,page){
   const items=root.querySelectorAll("#ruvane-retired"),profile=root.getAttribute?.("data-ruvane-document"),short=page.failed!==null&&page.failed>page.layouts.length;
   if(!items.length){if(short&&["stream","segments"].includes(profile))throw failure();return null;}
   const node=items[0],initial=root.querySelector("#ruvane-initial");
-  if(!short||!page.layouts.length||!["stream","segments"].includes(profile)||items.length!==1||document.querySelectorAll("#ruvane-retired").length!==1||node.parentNode!==root||node.nextElementSibling!==initial||node.localName!=="div"||node.attributes.length!==2||!node.hasAttribute("hidden")||node.childNodes.length!==1||node.firstChild.nodeType!==3)throw failure();
+  if(!short||!["stream","segments"].includes(profile)||items.length!==1||document.querySelectorAll("#ruvane-retired").length!==1||node.parentNode!==root||node.nextElementSibling!==initial||node.localName!=="div"||node.attributes.length!==2||!node.hasAttribute("hidden")||node.childNodes.length!==1||node.firstChild.nodeType!==3)throw failure();
   const text=node.textContent;
   if(text.length>131104||text.length%2||!/^[0-9a-f]+$/.test(text))throw failure();
   const raw=new Uint8Array(text.length/2);for(let n=0;n<raw.length;n++)raw[n]=parseInt(text.slice(n*2,n*2+2),16);
@@ -218,14 +223,15 @@ export function createDocumentHydration(runtime,root,{timeoutMs}={}){
       if(added)status.textContent="Layouts ready. Loading page…";
       if(document.readyState!=="loading"){
         const snapshot=readInitialSnapshot(root),page=decodeNavigationSnapshot(snapshot).page;
-        const retired=readRetiredBranch(root,page),shorter=rows.length>0&&rows.length<expected&&page.failed===rows.length;
+        const retired=readRetiredBranch(root,page),shorter=rows.length<expected&&page.failed===rows.length;
+        if(!rows.length&&page.failed===0){const declaration=clientDeclaration(readBoundaries(root),page.url);if(!declaration||declaration.chain.length!==expected)throw failure();}
         if((rows.length!==expected&&!shorter)||title!==null&&title!==page.title||root.querySelector("[data-ruvane-segment]"))throw failure();
         if(retired){
           if(retired.page.pending!==expected||rows.length!==page.failed||!retired.page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor)))throw failure();
           runtime.validatePage(retired.bytes);
         }else if(page.layouts.length!==rows.length||!page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor)))throw failure();
         runtime.validatePage(decodeNavigationSnapshot(snapshot).bytes);
-        state="ready";resolve(Object.freeze({snapshot,parents:Object.freeze(rows.map(row=>row.controller))}));
+        state="ready";resolve(Object.freeze({snapshot,parents:Object.freeze(rows.map(row=>row.controller)),accept(){if(state!=="ready")return false;try{shape();return true;}catch{retire();return false;}}}));
       }
     }catch{retire();}
   }
@@ -334,11 +340,10 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   }
   function releaseBranch(items) { for(const item of [...items].reverse())item.controller.dispose(); }
   function feedbackConfig(url){
-    const parts=pathParts(url),matches=item=>item.kind==="page"&&item.parts.length===parts.length&&item.parts.every((part,n)=>part===null||part===parts[n]);
-    const pages=presentation.filter(matches);pages.sort((a,b)=>Number(a.parts.includes(null))-Number(b.parts.includes(null)));
-    const page=pages[0];if(!page)return null;
+    const parts=pathParts(url),page=clientDeclaration(presentation,url);if(!page)return null;
     let declaration=page.loading?page:null,depth=page.chain.length;
     if(!declaration)for(let n=page.chain.length-1;n>=0;n--){const parent=layoutPresentation.get(page.chain[n]);if(parent.loading){declaration=parent;depth=n+1;break;}}
+    if(!declaration){declaration=presentation.find(item=>item.kind==="app");depth=0;}
     if(!declaration)return null;
     let shared=0;
     while(shared<depth&&shared<branch.length&&branch[shared].descriptor.name===page.chain[shared]){
@@ -435,7 +440,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
         }
         const host = document.createElement("div"); host.tabIndex = -1; prepared = runtime.mountPage(host,bytes);slot.append(host);
         if (mode === "start" && accept && !accept()) { prepared.dispose(); prepared = null; releaseBranch(preparedLayouts);preparedLayouts=[]; status.textContent = "Native forms are ready."; return "native"; }
-        const keepFocus=preserveLayoutFocus&&source.slice(0,shared).some(item=>item.own.contains(document.activeElement));
+        const keepFocus=preserveLayoutFocus&&(source.slice(0,shared).some(item=>item.own.contains(document.activeElement))||scope.contains(document.activeElement)&&!outlet.contains(document.activeElement));
         if(keepFocus)point={x:scrollX,y:scrollY};
         operation.committing = true;
         if (mode === "push") { save(); history.pushState({ [KEY]:entry(url,0,0) },"",url); }
@@ -486,8 +491,15 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
   }
   function initialDOM(page,retired=null){
     if(!outlet.isConnected||!scope.contains(outlet))throw failure();
+    const documentRoot=outlet.closest("#ruvane-application");
+    if(page.failed!==null&&!page.layouts.length&&documentRoot){
+      const declarations=readBoundaries(documentRoot),declaration=clientDeclaration(declarations,page.url);
+      const localZero=declaration?.chain.length===0&&page.failed===0&&declaration.error===page.component;
+      if(!declaration||!localZero&&!declarations.some(item=>item.kind==="app"&&item.error===page.component))throw failure();
+      if(documentRoot.getAttribute("data-ruvane-document")==="segments"&&documentRoot.getAttribute("data-ruvane-layouts")!==String(declaration.chain.length))throw failure();
+    }
     const fallback=outlet.lastChild,layouts=[],roots=[],retiringRoots=[];
-    if(outlet.childNodes.length!==2||fallback.nodeType!==1||fallback.localName!=="div"||fallback.id!=="ruvane-fallback"||fallback.attributes.length!==1||outlet.querySelectorAll("#ruvane-fallback").length!==1)throw failure();
+    if(outlet.childNodes.length!==(retired&&!page.layouts.length?3:2)||fallback.nodeType!==1||fallback.localName!=="div"||fallback.id!=="ruvane-fallback"||fallback.attributes.length!==1||outlet.querySelectorAll("#ruvane-fallback").length!==1)throw failure();
     function layout(host,descriptor){
       const own=host?.firstChild,child=host?.lastChild;
       if(host?.nodeType!==1||host.localName!=="section"||host.attributes.length!==1||host.getAttribute("data-ruvane-layout")!==descriptor.name||host.childNodes.length!==2||own.localName!=="div"||own.attributes.length!==1||!own.hasAttribute("data-ruvane-layout-view")||own.childNodes.length!==1||child.localName!=="div"||child.attributes.length!==1||!child.hasAttribute("data-ruvane-child-outlet"))throw failure();
@@ -500,7 +512,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     }
     let departing=null,host=slot.firstChild;
     if(retired){
-      if(slot===outlet||slot.childNodes.length!==2)throw failure();
+      if(slot.childNodes.length!==(slot===outlet?3:2))throw failure();
       departing=host;host=departing.nextSibling;let child=departing;
       for(const descriptor of retired.page.layouts.slice(page.layouts.length)){
         const row=layout(child,descriptor);retiringRoots.push(row.own.firstChild);

@@ -125,7 +125,7 @@ An explicit retry fetches the full route and builds the missing layout and page.
 Compatible ancestors keep their live state and DOM, including fields, focus and
 selection. Repeated errors stay retryable and uncached. No GET or POST is retried
 automatically. Alpha.30 adds removal of already emitted descendants to reach a higher boundary.
-Recovery without a surviving parent for a root failure remains unsupported.
+Alpha.31 adds an explicit App boundary for failures without a surviving parent.
 
 The generated **Recover a failed layout** link opens
 `/tasks/resilient?recover=yes`. Its context fails once per server process. Increment
@@ -171,8 +171,7 @@ gates are released only on a successful complete commit.
 
 Retries remain explicit, uncached GETs for errors. New navigation, departure,
 disposal, deadlines, exhausted quotas and invalid data cannot commit stale replies.
-No POST is automatically sent or replayed. A root layout still has no surviving
-parent boundary and uses the existing fallback.
+No POST is automatically sent or replayed. Without an explicit App boundary, a root layout still uses the existing fallback.
 
 The generated **Recover through a parent boundary** link opens
 `/tasks/resilient?recover=page&delay=yes`. Its context becomes interactive before
@@ -184,3 +183,64 @@ nearest boundaries, early/default activation, retained drafts and selection, foc
 inside removed views, explicit retries, malformed or unnecessary records, native
 guards, history refusal, stale owners/destinations, cancellation, budgets and one
 hundred startup/cleanup cycles. Fixture routes and controls are removed from the demo.
+
+
+## App boundary recovery (alpha.31)
+
+Register an App boundary after `components` to catch failures which have no page
+or ancestor boundary. Registration executes no component or loader. The existing
+`components(factory, error_component)` registration still handles ordinary unscoped
+400/404 responses. The App boundary is a separate opt-in for owned client routes.
+
+```rust,ignore
+app.client_boundary(Some(ClientBoundary::new(LOADING, GLOBAL_ERROR)?))?;
+// Use None to restore the default behavior.
+```
+
+A page boundary takes precedence, followed by the nearest parent layout boundary,
+then the App boundary. A layout's child boundary still cannot catch its own loader
+failure. Unknown routes, invalid route props and failures during document/head
+preflight keep their existing response paths. Invalid selected local presentations
+also retain the existing minimal fallback; this does not recursively rerun boundaries.
+
+A root failure emits an RVP3 error with failed index zero and no retained layouts.
+If other layouts were already emitted, the existing `ruvane-retired` RVH1 record
+attests the full received prefix. The browser validates that prefix, error packet,
+DOM, revision, URL, seeds and view owners before removing the entire outlet branch.
+The root completion also checks the declared chain depth against the public route
+manifest. Rust/Wasm authorizes zero retained layouts only when the selected App
+boundary permits that exact error component and logical status.
+
+The manifest adds at most one `app` declaration, in addition to the existing
+160-page/layout bound. Loading and transport feedback use it only for matching
+client routes without a more specific presentation. The formats, ABI and four
+runtime assets are unchanged.
+
+The App shell is outside the outlet and is retained. Independent counters, field
+values and nodes survive error activation and retry. Same-URL explicit retries
+preserve focus and selection in surviving shell fields; focus inside a retired
+branch moves to the error host. Retired controls lose their listeners and owners.
+The retry is a fresh GET and can reconstruct the full branch. Errors remain
+uncached; no POST is retried or replayed.
+
+Global error components receive Number(400/404/500) and an empty public seed. They
+must be read-only and cannot queue actions. Render failures, panics, event bindings,
+initial actions or schema rejection use the minimal existing fallback without
+internal diagnostics. Transport failures, exhausted quotas and expired deadlines
+cannot be converted into a successful error completion. Without JavaScript, HTML
+already sent remains visible alongside the error; native-only SSR remains buffered
+and keeps actual HTTP statuses. Early shell activation timing is unchanged.
+
+The generated **Recover a root layout** and **Recover an application error** links
+use `/tasks/global?recover=root` and `/tasks/global?recover=page&delay=yes`.
+Each demo failure happens once per server process. After the error, increment the
+shell counter and choose **Try again**; the branch returns without resetting it.
+
+
+`web/global-recovery-tests.mjs` covers real gated root/branch failures, both
+initial document profiles, local boundary precedence, full-branch retirement,
+independent shell drafts, explicit buffered/progressive retries, forged metadata,
+foreign owners, history refusal, cancellation, mutation invalidation, invalid
+global presentations and one hundred cleanup cycles per document profile.
+The early session hands off an `accept` guard, including when no layout owner was
+created. Bootstrap composes this guard with the native-form guard before commit.

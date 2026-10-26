@@ -27,6 +27,7 @@ try{
   if(!segments)shell();
   navigator=createNavigator(runtime,{outlet,scope:root,status,boundaries:readBoundaries(root),progressive:true});
   const result=await navigator.start({...initial,accept:()=>{
+    if(initial.accept&&!initial.accept())return false;
     const fallback=root.querySelector("#ruvane-fallback");
     return !fallback||!fallback.contains(document.activeElement)&&![...fallback.querySelectorAll("input,textarea")].some(field=>field.type==="checkbox"?field.checked!==field.defaultChecked:field.value!==field.defaultValue);
   }});

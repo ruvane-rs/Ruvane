@@ -81,8 +81,10 @@ impl Component for Workspace {
 pub const LOADING: u32 = 15;
 pub const BOUNDARY_ERROR: u32 = 16;
 pub const PROJECT: u32 = 17;
+pub const GLOBAL_ERROR: u32 = 19;
 struct Presentation {
     loading: bool,
+    global: bool,
     code: u32,
 }
 impl Component for Presentation {
@@ -102,6 +104,7 @@ impl Component for Presentation {
             match self.code {
                 404 => "Page not found",
                 400 => "Invalid page request",
+                500 if self.global => "Application unavailable",
                 500 => "Page unavailable",
                 408 => "Loading timed out",
                 _ => "Could not load this page",
@@ -112,13 +115,17 @@ impl Component for Presentation {
             view.leaf(
                 root,
                 Span,
-                "You can keep using the workspace or try the request again.",
+                if self.global {
+                    "You can try this request again."
+                } else {
+                    "You can keep using the workspace or try the request again."
+                },
             )?;
             view.link(
                 root,
                 1,
-                &InternalUrl::new("/tasks").unwrap(),
-                "Back to tasks",
+                &InternalUrl::new(if self.global { "/" } else { "/tasks" }).unwrap(),
+                if self.global { "Home" } else { "Back to tasks" },
             )?;
         }
         Ok(view)
@@ -131,14 +138,18 @@ pub fn create_component(props: ComponentProps) -> Result<Box<dyn Component>, Com
     if let (LOADING, InitialState::Number(0)) = (props.component(), props.state()) {
         return Ok(Box::new(Presentation {
             loading: true,
+            global: false,
             code: 0,
         }));
     }
-    if let (BOUNDARY_ERROR, InitialState::Number(code @ (0 | 408 | 400 | 404 | 500))) =
-        (props.component(), props.state())
+    if let (
+        BOUNDARY_ERROR | GLOBAL_ERROR,
+        InitialState::Number(code @ (0 | 408 | 400 | 404 | 500)),
+    ) = (props.component(), props.state())
     {
         return Ok(Box::new(Presentation {
             loading: false,
+            global: props.component() == GLOBAL_ERROR,
             code,
         }));
     }

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-alpha.31 — Unreleased
+
+- Add an explicit App client boundary for root layout and unhandled branch errors,
+  with page and layout boundaries retaining precedence.
+- Recover typed 400/404/500 errors with no retained layouts through buffered SSR,
+  progressive navigation and both initial document profiles.
+- Validate complete-branch retirement before releasing owners or removing DOM;
+  preserve independent shell state and focused shell fields on same-URL retry.
+- Keep minimal fallback when the global error component is invalid, panics or
+  queues an action; preserve transport limits and POST replay protections.
+- Add global root/branch demos and native/Wasm/browser checks without dependencies.
+  ABI v11, 22 exports, four runtime assets and two first-party crates remain.
+
 ## 0.1.0-alpha.30 — Unreleased
 
 - Recover through an ancestor child boundary after descendants have been emitted,

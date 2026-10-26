@@ -128,11 +128,59 @@ pub fn application() -> App {
     }
     let boundary =
         ruvane::ClientBoundary::new(components::LOADING, components::BOUNDARY_ERROR).unwrap();
+    app.client_boundary(Some(
+        ruvane::ClientBoundary::new(components::LOADING, components::GLOBAL_ERROR).unwrap(),
+    ))
+    .unwrap();
     app.client_layout_boundary("workspace", Some(boundary))
         .unwrap();
     app.client_page_boundary("task", Some(boundary)).unwrap();
     app.client_page_boundary("project", Some(boundary)).unwrap();
     app.client_page_streaming("project", true).unwrap();
+    app.client_layout(
+        PageRoute::new("globalWorkspace", "/tasks/global").unwrap(),
+        None,
+        components::WORKSPACE,
+        zero,
+        |context| {
+            if context.request().unwrap().query_params().get("recover") == Some("root")
+                && !GLOBAL_ROOT_READY.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                if let Some(stream) = context.stream_context() {
+                    stream
+                        .wait(std::time::Duration::from_millis(500))
+                        .map_err(|_| PageError::InternalServerError)?;
+                }
+                return Err(PageError::InternalServerError);
+            }
+            Ok(ruvane::ClientLayoutData::new(ruvane::ActionData::default()))
+        },
+    )
+    .unwrap();
+    app.client_layout(
+        PageRoute::new("globalContext", "/tasks/global").unwrap(),
+        Some("globalWorkspace"),
+        components::CONTEXT,
+        zero,
+        |_| Ok(ruvane::ClientLayoutData::new(ruvane::ActionData::default())),
+    )
+    .unwrap();
+    app.client_page(
+        PageRoute::new("global", "/tasks/global").unwrap(),
+        components::PROJECT,
+        zero,
+        project_page,
+    )
+    .unwrap();
+    app.client_page_layout("global", Some("globalContext"))
+        .unwrap();
+    app.client_page_streaming("global", true).unwrap();
+    app.client_page_document_streaming(
+        "global",
+        Some(|_| Ok(ruvane::ClientDocument::new("Project / Ruvane").hydrate_layouts(true))),
+    )
+    .unwrap();
+
     app.client_page(
         PageRoute::new("resilient", "/tasks/resilient").unwrap(),
         components::PROJECT,
@@ -171,6 +219,8 @@ pub fn application() -> App {
 
     app
 }
+static GLOBAL_ROOT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static GLOBAL_PAGE_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static PARENT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LAYOUT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static RECOVERY_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -201,6 +251,12 @@ fn project_page(context: &PageContext<'_>) -> Result<ClientPageData, PageError> 
     if context.request().unwrap().path() == "/tasks/resilient"
         && query.get("recover") == Some("page")
         && !PARENT_READY.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        return Err(PageError::InternalServerError);
+    }
+    if context.request().unwrap().path() == "/tasks/global"
+        && query.get("recover") == Some("page")
+        && !GLOBAL_PAGE_READY.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         return Err(PageError::InternalServerError);
     }
@@ -273,6 +329,26 @@ pub fn shell(children: Html) -> Html {
                     .query("delay", "yes")
                     .unwrap(),
                 "Recover through a parent boundary",
+            )),
+        )
+        .child(
+            element(Tag::P).child(ruvane::link(
+                &InternalUrl::new("/tasks/global")
+                    .unwrap()
+                    .query("recover", "root")
+                    .unwrap(),
+                "Recover a root layout",
+            )),
+        )
+        .child(
+            element(Tag::P).child(ruvane::link(
+                &InternalUrl::new("/tasks/global")
+                    .unwrap()
+                    .query("recover", "page")
+                    .unwrap()
+                    .query("delay", "yes")
+                    .unwrap(),
+                "Recover an application error",
             )),
         )
         .child(children)

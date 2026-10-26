@@ -101,6 +101,13 @@ run.addEventListener("click",async()=>{
   await test("a successful branch rejects unnecessary retirement metadata",async()=>{
     await mode(500);const record=(await source(path)).querySelector("#ruvane-retired"),ctx=await setup({start:false,status:0});try{const middle=layout(ctx.root,"propMiddle");ctx.root.querySelector("#ruvane-initial").before(document.importNode(record,true));equal(await ctx.start(),"native","unexpected retirement refused");assert(middle.isConnected,"healthy subtree retained");equal(ctx.posts(),0,"no POST");}finally{ctx.close();}
   });
+  await test("an absent App boundary cannot authorize a zero-layout error",async()=>{
+    const runtime=await createRuntime(moduleURL,{applicationRevision:revision}),host=document.createElement("div");document.body.append(host);
+    try{assert(!readBoundaries(configuration).some(item=>item.kind==="app"),"fixture has no App boundary");const owner=runtime.mountBoundary(host,{component:19,state:{kind:"number",value:500}});assert(host.textContent.includes("Application unavailable"),"error component exists");owner.dispose();
+      const word=value=>[value&255,value>>>8&255,value>>>16&255,value>>>24&255],text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];},empty=[82,86,65,49,0,0,0],bytes=new Uint8Array([82,86,80,51,0,0,244,1,...text("/tasks/global"),...text("Project / Ruvane"),...word(19),...word(1),...word(500),...word(empty.length),...empty,0]);
+      let rejected=false;try{runtime.validatePage(bytes);}catch{rejected=true;}assert(rejected,"global retirement requires explicit declaration");equal(runtime.stats().views,0,"no retained view");
+    }finally{runtime.dispose();host.remove();}
+  });
   await test("one hundred startups of each document profile return runtime counts to baseline",async()=>{
     await mode(500);const templates=[await source(path),await source(path+"?hydrate=no")],runtime=await createRuntime(moduleURL,{applicationRevision:revision}),baseline=runtime.stats(),replace=history.replaceState;window.fetch=()=>{throw new Error("Unexpected data request");};
     // Skip redundant history writes in the cleanup loop.

@@ -93,6 +93,19 @@ await test("a generated application ships an independent, revision-matched Wasm 
       const owner=stage(final);assert.ok(owner);drain();assert.equal(e.ruvane_dispose(owner),1);drain();
       final[4]=2;assert.equal(stage(final),0);assert.equal(e.ruvane_live_instances(),0);drain();
     });
+    await t.test("the explicit App boundary validates root errors without any retained layout",()=>{
+      const error=(url="/tasks/global",component=19,failed=0)=>{const leaf=packet(url,component,500,500,true);return new Uint8Array([82,86,80,51,0,failed,...leaf.slice(4),0]);};
+      const bytes=error();assert.equal(stage(bytes,true),1);assert.equal(e.ruvane_live_instances(),0);drain();
+      const owner=stage(bytes);assert.ok(owner);const commands=drain();assert.ok(commands.some(c=>c.op===2&&c.text==="Application unavailable"));assert.ok(!commands.some(c=>c.op===3||c.op===11));assert.equal(e.ruvane_dispose(owner),1);drain();
+      for(const bad of [error("/missing"),error("/tasks/global",16),error("/tasks/global",19,3),error("/tasks/project",19,1)]){assert.equal(stage(bad,true),0);assert.equal(e.ruvane_live_instances(),0);drain();}
+    });
+    await t.test("global branch errors pair with the complete owned retired prefix",()=>{
+      const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
+      const empty=[82,86,65,49,0,0,0],layout=(name,id)=>[...text(name),...text("/tasks/global"),...word(id),...word(1),...word(0),...word(empty.length),...empty],leaf=packet("/tasks/global",17,0,200,true);
+      const prefix=new Uint8Array([82,86,80,52,0,2,...leaf.slice(4),2,...layout("globalWorkspace",12),...layout("globalContext",13)]),error=packet("/tasks/global",19,500,500,true),final=new Uint8Array([82,86,80,51,0,2,...error.slice(4),0]);
+      for(const bytes of [prefix,final]){assert.equal(stage(bytes,true),1);assert.equal(e.ruvane_live_instances(),0);drain();}
+      final[4]=1;assert.equal(stage(final),0);assert.equal(e.ruvane_live_instances(),0);drain();
+    });
     await t.test("the generated Cargo graph has only project and framework packages", () => {
       const metadata=JSON.parse(run(process.env.CARGO || "cargo",["metadata","--offline","--locked","--format-version","1"],project));
       assert.deepEqual(metadata.packages.map(p=>p.name).sort(),["application-fixture","ruvane","ruvane-application-browser","ruvane-browser"]);

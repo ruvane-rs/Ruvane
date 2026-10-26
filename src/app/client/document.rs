@@ -311,7 +311,7 @@ impl DocumentProducer {
         }
         let retained = packet.layouts().len();
         let retired = if retained < self.opened {
-            if retained == 0 || packet.failed_segment() != Some(self.opened) {
+            if packet.failed_segment() != Some(self.opened) {
                 return Err(PageError::InternalServerError);
             }
             let prefix = NavigationPage::new(

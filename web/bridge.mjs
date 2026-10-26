@@ -802,7 +802,7 @@ export async function createRuntime(url, options = {}) {
     if(retirement){
       if(layoutOnly||!Array.isArray(retirement.roots))throw new MountRejected();
       prefix=decodePage(retirement.bytes);
-      if(prefix.pending===null||prefix.selected!==0||prefix.url!==page.url||prefix.title!==page.title||prefix.layouts.length!==page.failed||!page.layouts.length||page.layouts.length>=prefix.layouts.length||retirement.roots.length!==prefix.layouts.length-page.layouts.length||parents.length&&parents.length!==prefix.layouts.length||!page.layouts.every((item,n)=>sameLayoutSeed(item,prefix.layouts[n])))throw new MountRejected();
+      if(prefix.pending===null||prefix.selected!==0||prefix.url!==page.url||prefix.title!==page.title||prefix.layouts.length!==page.failed||page.layouts.length>=prefix.layouts.length||retirement.roots.length!==prefix.layouts.length-page.layouts.length||parents.length&&parents.length!==prefix.layouts.length||!page.layouts.every((item,n)=>sameLayoutSeed(item,prefix.layouts[n])))throw new MountRejected();
       validatePage(retirement.bytes);
       departing.push(...parents.slice(page.layouts.length));parents=parents.slice(0,page.layouts.length);
     }
