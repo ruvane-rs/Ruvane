@@ -204,7 +204,8 @@ export function createDocumentHydration(runtime,root,{timeoutMs}={}){
       if(added)status.textContent="Layouts ready. Loading page…";
       if(document.readyState!=="loading"){
         const snapshot=readInitialSnapshot(root),page=decodeNavigationSnapshot(snapshot).page;
-        if(rows.length!==expected||page.layouts.length!==expected||title!==null&&title!==page.title||!page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor))||root.querySelector("[data-ruvane-segment]"))throw failure();
+        const shorter=rows.length>0&&rows.length<expected&&page.failed===rows.length;
+        if((rows.length!==expected&&!shorter)||page.layouts.length!==rows.length||title!==null&&title!==page.title||!page.layouts.every((item,n)=>sameDescriptor(item,rows[n].descriptor))||root.querySelector("[data-ruvane-segment]"))throw failure();
         runtime.validatePage(decodeNavigationSnapshot(snapshot).bytes);
         state="ready";resolve(Object.freeze({snapshot,parents:Object.freeze(rows.map(row=>row.controller))}));
       }

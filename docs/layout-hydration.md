@@ -83,7 +83,10 @@ ones through the normal navigator.
 
 Alpha.28 adds [typed leaf recovery](streamed-leaf-errors.md) when a boundary can
 retain all emitted layouts. Healthy parents stay active on the completed error
-branch and can survive an explicit GET retry. Other failures follow the rules below.
+branch and can survive an explicit GET retry. Alpha.29 also accepts a failed, un-emitted nested layout when its immediate
+validated parent has a child boundary. The error snapshot retains only the
+emitted prefix; an explicit retry builds the missing descendants. Other failures
+follow the rules below.
 
 ## Cancellation and failure
 

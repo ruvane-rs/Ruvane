@@ -137,10 +137,32 @@ fn app(loads: Arc<AtomicUsize>, gate: Arc<AtomicBool>) -> App {
             state,
             move |ctx| {
                 count.fetch_add(1, Ordering::SeqCst);
-                if ctx.request().unwrap().query_params().get("fail") == Some(name) {
+                let query = ctx.request().unwrap().query_params();
+                if query.get("fail") == Some(name) {
                     return Err(PageError::InternalServerError);
                 }
-                Ok(ClientLayoutData::new(data(label)))
+                if name == "inner" {
+                    match query.get("fail") {
+                        Some("inner-bad") => return Err(PageError::BadRequest),
+                        Some("inner-missing") => return Err(PageError::NotFound),
+                        Some("inner-panic") => panic!("private layout diagnostic"),
+                        Some("inner-schema") => {
+                            return Ok(ClientLayoutData::new(ActionData::default()));
+                        }
+                        _ => {}
+                    }
+                }
+                let mut seed = data(label);
+                if query.get("fail") == Some("record") {
+                    for index in 0..38 {
+                        seed.insert(
+                            &format!("field{index}"),
+                            ActionValue::Text("x".repeat(1000)),
+                        )
+                        .unwrap();
+                    }
+                }
+                Ok(ClientLayoutData::new(seed))
             },
         )
         .unwrap();
@@ -768,19 +790,80 @@ fn layout_loader_errors_cannot_be_relabelled_as_leaf_errors() {
     }
 }
 #[test]
+fn a_parent_child_boundary_recovers_an_unemitted_layout() {
+    let (mut app, loads, _) = fixture();
+    app.client_layout_boundary("root", Some(ClientBoundary::new(3, 3).unwrap()))
+        .unwrap();
+    page_boundary(&mut app);
+    let server = Running::new(&app, ServerConfig::default());
+    for mode in ["", "&hydrate=yes"] {
+        for (fail, status) in [
+            ("inner", 500),
+            ("inner-bad", 400),
+            ("inner-missing", 404),
+            ("inner-panic", 500),
+            ("inner-schema", 500),
+            ("record", 500),
+        ] {
+            let before = loads.load(Ordering::SeqCst);
+            let (headers, body, complete) = server.get(&format!("/work/page?fail={fail}{mode}"));
+            assert!(
+                complete
+                    && headers.starts_with("HTTP/1.1 200")
+                    && headers.contains("Cache-Control: no-store")
+            );
+            let snapshot = snapshot(&body);
+            let page = snapshot.page();
+            assert_eq!(page.failed_segment(), Some(1));
+            assert_eq!(page.layouts().len(), 1);
+            assert_eq!(page.layouts()[0].name(), "root");
+            assert_eq!(page.status().as_u16(), status);
+            assert_eq!(page.title(), "Report <&🦀");
+            assert_eq!(loads.load(Ordering::SeqCst) - before, 2);
+            assert!(
+                body.contains("data-ruvane-page")
+                    && body.contains("ruvane-complete")
+                    && !body.contains("data-ruvane-layout=\"inner\"")
+                    && !body.contains("data-ruvane-stream-error")
+                    && !body.contains("private")
+            );
+        }
+    }
+}
+#[test]
+fn a_layout_cannot_catch_its_own_failure() {
+    let (mut app, _, _) = fixture();
+    for name in ["root", "inner"] {
+        app.client_layout_boundary(name, Some(ClientBoundary::new(3, 3).unwrap()))
+            .unwrap();
+    }
+    let server = Running::new(&app, ServerConfig::default());
+    let (_, root, complete) = server.get("/work/page?hydrate=yes&fail=root");
+    assert!(
+        complete && root.contains("data-ruvane-stream-error") && !root.contains("ruvane-initial")
+    );
+    let (_, inner, complete) = server.get("/work/page?hydrate=yes&fail=inner");
+    assert!(complete);
+    assert_eq!(snapshot(&inner).page().layouts().len(), 1);
+}
+#[test]
 fn invalid_error_components_fall_back_without_diagnostics_or_initial_actions() {
     for component in 4..=6 {
         let (mut app, _, _) = fixture();
         app.client_page_boundary("page", Some(ClientBoundary::new(3, component).unwrap()))
             .unwrap();
+        app.client_layout_boundary("root", Some(ClientBoundary::new(3, component).unwrap()))
+            .unwrap();
         let server = Running::new(&app, ServerConfig::default());
-        let (_, body, complete) = server.get("/work/page?hydrate=yes&fail=page");
-        assert!(
-            complete
-                && body.contains("data-ruvane-stream-error")
-                && !body.contains("ruvane-initial")
-                && !body.contains("private")
-        );
+        for fail in ["page", "inner"] {
+            let (_, body, complete) = server.get(&format!("/work/page?hydrate=yes&fail={fail}"));
+            assert!(
+                complete
+                    && body.contains("data-ruvane-stream-error")
+                    && !body.contains("ruvane-initial")
+                    && !body.contains("private")
+            );
+        }
         assert!(server.get("/work/page").2);
     }
 }

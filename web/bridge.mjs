@@ -831,7 +831,8 @@ export async function createRuntime(url, options = {}) {
         if((layoutOnly||index<parents.length)&&!root.isConnected||root.localName!=="div"||root.attributes.length!==3||props.component!==expected.component||props.kind!==expected.kind||props.value!==expected.value)throw new HydrationMismatch();
         if(index<parents.length){
           const controller=parents[index],view=views.get(controller?.id),stamp=view?.document;
-          if(!view||view.controller!==controller||view.root!==root||!view.gated||!stamp||stamp.index!==index+1||stamp.expected!==page.layouts.length||stamp.url!==page.url||stamp.title!==page.title||!sameLayoutSeed(stamp.descriptor,expected))throw new HydrationMismatch();
+          const shorter=stamp&&parents.length===page.layouts.length&&page.failed===page.layouts.length&&page.failed<stamp.expected;
+          if(!view||view.controller!==controller||view.root!==root||!view.gated||!stamp||stamp.index!==index+1||(stamp.expected!==page.layouts.length&&!shorter)||(index>0&&stamp.expected!==views.get(parents[0]?.id)?.document?.expected)||stamp.url!==page.url||stamp.title!==page.title||!sameLayoutSeed(stamp.descriptor,expected))throw new HydrationMismatch();
           matchDom(view.nodes,root,false);controllers.push(controller);continue;
         }
         const selected=bytes.slice();if(segment)selected[4]=segment;

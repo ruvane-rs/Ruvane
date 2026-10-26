@@ -133,8 +133,45 @@ pub fn application() -> App {
     app.client_page_boundary("task", Some(boundary)).unwrap();
     app.client_page_boundary("project", Some(boundary)).unwrap();
     app.client_page_streaming("project", true).unwrap();
+    app.client_page(
+        PageRoute::new("resilient", "/tasks/resilient").unwrap(),
+        components::PROJECT,
+        zero,
+        project_page,
+    )
+    .unwrap();
+    app.client_layout(
+        PageRoute::new("resilientContext", "/tasks/resilient").unwrap(),
+        Some("workspace"),
+        components::CONTEXT,
+        zero,
+        |context| {
+            let query = context.request().unwrap().query_params();
+            if query.get("recover") == Some("yes")
+                && !LAYOUT_READY.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                if let Some(stream) = context.stream_context() {
+                    stream
+                        .wait(std::time::Duration::from_millis(500))
+                        .map_err(|_| PageError::InternalServerError)?;
+                }
+                return Err(PageError::InternalServerError);
+            }
+            Ok(ruvane::ClientLayoutData::new(ruvane::ActionData::default()))
+        },
+    )
+    .unwrap();
+    app.client_page_layout("resilient", Some("resilientContext"))
+        .unwrap();
+    app.client_page_document_streaming(
+        "resilient",
+        Some(|_| Ok(ruvane::ClientDocument::new("Project / Ruvane").hydrate_layouts(true))),
+    )
+    .unwrap();
+
     app
 }
+static LAYOUT_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static RECOVERY_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 fn project_page(context: &PageContext<'_>) -> Result<ClientPageData, PageError> {
     let query = context.request().unwrap().query_params();
@@ -185,21 +222,41 @@ pub fn shell(children: Html) -> Html {
                 ))
                 .child(" · ")
                 .child(ruvane::link(
-                    &InternalUrl::new("/tasks/document").unwrap().query("delay", "yes").unwrap(),
+                    &InternalUrl::new("/tasks/document")
+                        .unwrap()
+                        .query("delay", "yes")
+                        .unwrap(),
                     "Streaming App document",
                 ))
                 .child(" · ")
                 .child(ruvane::link(
-                    &InternalUrl::new("/tasks/live").unwrap().query("delay", "yes").unwrap(),
+                    &InternalUrl::new("/tasks/live")
+                        .unwrap()
+                        .query("delay", "yes")
+                        .unwrap(),
                     "Interactive streamed layouts",
                 ))
                 .child(" · ")
                 .child(ruvane::link(
-                    &InternalUrl::new("/tasks/live").unwrap().query("recover", "yes").unwrap().query("delay", "yes").unwrap(),
+                    &InternalUrl::new("/tasks/live")
+                        .unwrap()
+                        .query("recover", "yes")
+                        .unwrap()
+                        .query("delay", "yes")
+                        .unwrap(),
                     "Recover a failed page",
                 )),
         )
         .child(counter)
+        .child(
+            element(Tag::P).child(ruvane::link(
+                &InternalUrl::new("/tasks/resilient")
+                    .unwrap()
+                    .query("recover", "yes")
+                    .unwrap(),
+                "Recover a failed layout",
+            )),
+        )
         .child(children)
         .render()
 }

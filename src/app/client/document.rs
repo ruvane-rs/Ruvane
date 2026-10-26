@@ -274,10 +274,12 @@ impl DocumentProducer {
             self.finish(packet, own, page.body)
         }
     }
-    fn failure(&mut self, error: PageError) -> Result<Vec<u8>, PageError> {
-        if self.opened != self.inputs.len() || self.seeds.len() != self.opened {
+    fn failure(&mut self, failed: usize, error: PageError) -> Result<Vec<u8>, PageError> {
+        if self.opened != failed || self.seeds.len() < failed {
             return Err(PageError::InternalServerError);
         }
+        // A rejected record may have added a seed without emitting its layout.
+        self.seeds.truncate(failed);
         let (depth, boundary) = self
             .app
             .error_boundary(self.index, self.opened)
@@ -334,16 +336,12 @@ impl ByteProducer for DocumentProducer {
             }
             self.pending.clear();
             self.offset = 0;
-            let leaf = self.opened == self.inputs.len();
+            let failed = self.opened;
             self.pending = match App::guarded(|| self.pull(context)) {
                 Ok(bytes) => bytes,
                 Err(error) => {
                     context.check()?;
-                    let recovered = if leaf {
-                        App::guarded(|| self.failure(error)).ok()
-                    } else {
-                        None
-                    };
+                    let recovered = App::guarded(|| self.failure(failed, error)).ok();
                     match recovered {
                         Some(bytes) => bytes,
                         None if self.hydrate_layouts => {

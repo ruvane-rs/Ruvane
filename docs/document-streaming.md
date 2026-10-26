@@ -76,7 +76,9 @@ bootstrap arrived cannot be distinguished through that marker alone.
 
 Alpha.28 adds [typed leaf recovery](streamed-leaf-errors.md) for an eligible
 page or innermost layout boundary. It completes a validated logical error without
-changing the committed HTTP status. Other failures retain the behavior below.
+changing the committed HTTP status. Alpha.29 also handles an un-emitted nested
+layout through its nearest validated parent child boundary, keeping the emitted
+prefix. Other failures retain the behavior below.
 
 ## Bounds and failures
 

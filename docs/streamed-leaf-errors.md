@@ -1,4 +1,4 @@
-# Recovering streamed leaf errors
+# Recovering streamed branch errors
 
 Alpha.28 connects initial document streaming to `ClientBoundary`. A caught leaf
 loader, view, schema or title failure can finish as a complete typed error page
@@ -22,12 +22,12 @@ above an already emitted descendant cannot recover that subtree in this version.
 
 ## Error completion
 
-The server records whether it was loading the leaf before attempting recovery.
+The server records the emitted depth before attempting each layout or leaf.
 A failed layout cannot be relabelled as a leaf error, even if its seed had already
 been constructed. Loaders are not rerun to build the error response.
 
 For an eligible failure, the server creates an RVP3 packet with the same URL,
-precommitted title, exact layout props/seeds, failed leaf index, empty error seed
+precommitted title, exact layout props/seeds, failed segment index, empty error seed
 and logical 400/404/500 status. The configured error component receives the status
 as Number. Its view must be read-only and cannot queue an initial action. Shared
 ownership, schema, packet and rendering checks still apply. The error is rendered
@@ -48,7 +48,7 @@ gates. Parent fields are not reconciled from the initial seed again. The error
 component stays read-only; the navigator owns the accessible retry control.
 No automatic page GET or POST is needed to activate the error document.
 
-An absent or invalid boundary, a layout failure, or a boundary which would remove
+An absent or invalid boundary, a root layout failure, or a boundary which would remove
 an emitted descendant retains the existing failure path. In early-hydration mode,
 caught application failures use generic abort HTML when budgets permit; other
 streams remain incomplete. Invalid/eventful/panicking error components and initial
@@ -106,3 +106,35 @@ regressions also cover the previous default and early-hydration paths.
 The workspace remains two first-party crates using `std`, with ABI v11, 22 numeric
 exports, four versioned runtime assets, and no third-party Cargo/npm/build/test
 dependency.
+
+
+## Nested layout recovery (alpha.29)
+
+A layout that fails before emitting its HTML can use its nearest validated
+parent's child boundary. For `workspace → context → page`, a failure in `context`
+leaves `workspace` and its error child visible. The failed layout and page are
+never mounted, and the page loader is not called. A layout cannot catch its own
+failure. Its parent must declare a child boundary.
+
+The final RVP3 branch contains exactly the emitted prefix. Its failed index is
+the prefix length, shorter than the full depth declared by the document. Both
+the early session and runtime validate the shorter error branch. Attested parent
+owners must agree on the original depth, URL, title and seeds; successful packets
+still require the full chain. A rejected record's uncommitted seed is discarded.
+
+An explicit retry fetches the full route and builds the missing layout and page.
+Compatible ancestors keep their live state and DOM, including fields, focus and
+selection. Repeated errors stay retryable and uncached. No GET or POST is retried
+automatically. Removal of already emitted descendants to reach a higher boundary
+remains unsupported, as does recovery without a surviving parent for a root failure.
+
+The generated **Recover a failed layout** link opens
+`/tasks/resilient?recover=yes`. Its context fails once per server process. Increment
+the workspace counter, then use **Try again** to see the missing context and page
+appear while the workspace counter keeps its value.
+
+`web/layout-recovery-tests.mjs` covers a gated real document, shortened error
+activation, buffered/progressive retry, ancestor node identity and field state,
+invalid final packets, repeated failures and one hundred cleanup cycles. Native
+tests include a cumulative prefix that exceeds the packet budget after a seed
+was constructed, invalid boundaries and a root failure without a surviving parent.

@@ -42,7 +42,8 @@ and shutdown cooperatively.
 Open **Streaming App document** for `/tasks/document?delay=yes`. Its shell and
 workspace layout arrive before the leaf. A fixed `ClientDocument` head is known
 before headers, then the final snapshot hydrates the same server nodes without
-a second page GET. Late loader failures leave the response incomplete. Use
+a second page GET. Eligible failures use the configured typed boundary; other
+late failures leave the response incomplete. Use
 `?native=yes` for buffered SSR with normal HTTP error statuses.
 
 Open **Interactive streamed layouts** for `/tasks/live?delay=yes`. Its workspace
@@ -56,6 +57,13 @@ reports one failure, then becomes ready until server restart. Its typed error
 keeps the workspace interactive. Change the counter and choose **Try again**:
 a fresh GET replaces the leaf and retains compatible layout state. No POST is
 replayed. The committed HTTP status stays 200; the initial logical error is 500.
+
+Open **Recover a failed layout** for `/tasks/resilient?recover=yes`. Its context
+layout fails once before emitting its HTML. The workspace child boundary shows
+the error while keeping the workspace counter active. Increment it, then choose
+**Try again**: the context and page appear without resetting the workspace.
+The failed layout cannot catch its own error. A boundary cannot remove a layout
+that has already been emitted.
 
 Open **Streaming SSR** for `/stream`, a native progressive report. Its header
 arrives before the deferred content. Edit `progressive_report` in `src/main.rs`;

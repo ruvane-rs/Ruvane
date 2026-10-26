@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.0-alpha.29 — Unreleased
+
+- Recover a nested layout failure before its HTML is emitted through the nearest
+  validated parent child boundary, retaining the entire emitted prefix.
+- Adopt shorter typed error branches without resetting live ancestor DOM, drafts,
+  counters, focus or selection; rebuild missing descendants on explicit GET retry.
+- Keep root failures and boundaries above emitted descendants on the fallback path;
+  preserve cancellation, packet validation, quotas and POST replay protections.
+- Add a layout recovery demo and native/Wasm/browser checks with no new dependencies.
+  ABI v11, 22 exports, four runtime assets and two first-party crates remain.
+
 ## 0.1.0-alpha.28 — Unreleased
 
 - Recover eligible streamed leaf failures through existing ClientBoundary, RVP3
