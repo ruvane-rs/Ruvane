@@ -4,6 +4,7 @@ use crate::{
     NavigationPage, NavigationRoutes,
 };
 mod boundaries;
+mod cache;
 mod document;
 mod layouts;
 mod metadata;

@@ -577,3 +577,17 @@ sharing sensitive details. Do not include credentials or personal data.
 
 Security fixes may change the pre-release API. Users should follow the latest
 pre-release and review its changelog.
+
+Public server data caching is opt-in for a complete client page branch. Cookie
+and Authorization requests bypass both lookup and storage. The cache key includes
+the full validated URL and a separate immutable router namespace; a public
+declaration asserts that all layout/page seeds, metadata and native fallback
+are safe to share and do not vary with other headers, identity or request method.
+No-store loader results and errors are never stored or shared with waiters.
+Invalidation retires matching active loads; expired or retired results are not
+published. Entry/payload, active-load, waiter and absolute-wait limits apply.
+These payload budgets do not sandbox loader allocations or execution, and a
+running synchronous loader cannot be forcibly cancelled. A busy, timed-out or
+retired cache request returns a fixed no-store 503. Public cache invalidation
+does not replace authorization, transaction durability or remote-browser cache
+invalidation. No cross-process or persistent cache is provided.

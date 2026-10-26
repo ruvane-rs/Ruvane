@@ -143,6 +143,8 @@ pub enum StatusCode {
     InternalServerError,
     /// 501: the method or transfer/upgrade functionality is unsupported.
     NotImplemented,
+    /// 503: a bounded public cache cannot accept or finish this request.
+    ServiceUnavailable,
     /// 505: the HTTP version is outside this profile.
     HttpVersionNotSupported,
 }
@@ -167,6 +169,7 @@ impl StatusCode {
             Self::RequestHeaderFieldsTooLarge => 431,
             Self::InternalServerError => 500,
             Self::NotImplemented => 501,
+            Self::ServiceUnavailable => 503,
             Self::HttpVersionNotSupported => 505,
         }
     }
@@ -190,6 +193,7 @@ impl StatusCode {
             Self::RequestHeaderFieldsTooLarge => "Request Header Fields Too Large",
             Self::InternalServerError => "Internal Server Error",
             Self::NotImplemented => "Not Implemented",
+            Self::ServiceUnavailable => "Service Unavailable",
             Self::HttpVersionNotSupported => "HTTP Version Not Supported",
         }
     }
@@ -301,6 +305,13 @@ impl Response {
         } else {
             "no-store".into()
         }
+    }
+    pub(crate) fn limit_navigation_freshness(mut self, seconds: u32) -> Self {
+        if let Some(current) = self.navigation_cache.max_age_seconds() {
+            self.navigation_cache = crate::NavigationCachePolicy::public(current.min(seconds))
+                .unwrap_or_else(|_| crate::NavigationCachePolicy::no_store());
+        }
+        self
     }
     /// Serves a typed RVA1 action reply with fixed MIME and success/validation status.
     pub fn action(reply: &crate::ActionReply) -> Self {

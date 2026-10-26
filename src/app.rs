@@ -293,6 +293,7 @@ struct PageEntry {
     mode: PageMode,
     render: Render,
     client: Option<client::ClientRoute>,
+    server_cache: crate::ServerCachePolicy,
 }
 #[derive(Clone)]
 struct Layout {
@@ -336,6 +337,8 @@ pub struct App {
     client_runtime: Option<ClientRuntime>,
     client_layouts: Vec<client::ClientLayout>,
     endpoints: Vec<endpoints::Endpoint>,
+    server_cache: Option<crate::ServerCache>,
+    cache_namespace: Option<crate::server_cache::Namespace>,
 }
 impl App {
     /// Creates an empty application.
@@ -411,6 +414,7 @@ impl App {
             mode,
             render: Arc::new(render),
             client: None,
+            server_cache: crate::ServerCachePolicy::no_store(),
         };
         let mut candidate = self.clone();
         candidate.pages.push(entry);
@@ -619,6 +623,14 @@ impl App {
     /// public origin is optional; never derive it from request headers.
     pub fn router(&self, origin: Option<SiteOrigin>) -> Result<Router, AppError> {
         self.validate()?;
+        if self.server_cache.is_none()
+            && self
+                .pages
+                .iter()
+                .any(|page| page.server_cache.max_age_seconds().is_some())
+        {
+            return Err(AppError::InvalidPage);
+        }
         if self.pages.iter().any(|p| p.client.is_some()) && self.client_runtime.is_none() {
             return Err(AppError::InvalidPage);
         }
@@ -627,7 +639,14 @@ impl App {
             self.internal_error.as_ref(),
             StatusCode::InternalServerError,
         )?;
-        let app = Arc::new(self.clone());
+        let mut app = self.clone();
+        app.cache_namespace = app
+            .server_cache
+            .as_ref()
+            .map(crate::ServerCache::namespace)
+            .transpose()
+            .map_err(|_| AppError::RenderFailed)?;
+        let app = Arc::new(app);
         let mut router = Router::new();
         router.page_errors(not_found.clone(), internal.clone());
         for (index, page) in self.pages.iter().enumerate() {

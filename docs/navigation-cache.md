@@ -2,7 +2,7 @@
 
 Alpha.20 adds explicit public page caching and speculative GET loading without
 third-party crates or browser packages. Cache storage is private to one navigator
-in one document and holds only validated RVP1/RVP2 bytes. No live component, DOM tree,
+in one document and holds only validated final navigation bytes. No live component, DOM tree,
 localStorage, sessionStorage or database is used as a page cache.
 
 ## Server policy
@@ -170,3 +170,12 @@ Progressive RVS1 responses are always no-store. Their prefixes and final packets
 are not inserted into this cache. Prefetch still requests a complete public
 packet, and a validated warm packet can satisfy an opted-in navigation without
 streaming. See [progressive navigation](progressive-navigation.md).
+
+## Server data freshness
+
+The separate opt-in [server data cache](server-cache.md) reuses validated branch
+data between buffered requests. A server cache hit caps navigation max-age at
+the remaining whole seconds of server freshness; less than one second produces
+no-store. Server path/tag invalidation does not purge another document's browser
+cache. Existing action notifications still invalidate the requesting document;
+other documents refresh explicitly or wait for their bounded freshness to end.

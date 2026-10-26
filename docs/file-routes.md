@@ -251,6 +251,14 @@ directory and Cargo output modules are not required at runtime or exposed by
 the HTTP router. The generated native and Wasm modules use the same source
 tree; target-dependent declaration code remains the author's responsibility.
 
+## Server data cache
+
+Client `FilePage` declarations can opt an entire branch into the
+[public server cache](server-cache.md) with `.server_cache(policy)`. Attach a
+`ServerCache` handle to App before constructing its native router. Native-only
+`FilePage::server` declarations reject an enabled policy. The generated Wasm
+registry accepts the same declaration without using a server cache at runtime.
+
 ## Bounds and trust
 
 - Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs`, `route.rs` and route directories are accepted.

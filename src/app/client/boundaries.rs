@@ -185,6 +185,18 @@ impl App {
         let Ok(url) = Self::target(request) else {
             return self.client_failure(request, PageError::BadRequest);
         };
+        let lease = match self.server_cache_access(index, request) {
+            Ok(crate::server_cache::Access::Hit(branch, expires)) => {
+                return Self::guarded(|| {
+                    self.cached_branch_finish(index, context, request, &branch, Some(expires))
+                })
+                .unwrap_or_else(|error| self.client_failure(request, error));
+            }
+            Ok(crate::server_cache::Access::Load(lease)) => Some(lease),
+            Ok(crate::server_cache::Access::Bypass) => None,
+            Err(response) => return response,
+        };
+        let mut cacheable = true;
         let props = match Self::guarded(|| self.client_props(&url)) {
             Ok(props) => props,
             Err(error) => return self.client_failure(request, error),
@@ -208,10 +220,11 @@ impl App {
                 };
                 let seed = NavigationLayout::new(layout.route.name(), key, props, data.data)
                     .map_err(|_| PageError::InternalServerError)?;
-                Ok((seed, policy))
+                Ok((seed, policy, !data.no_store))
             });
             match seed {
-                Ok((seed, cache)) => {
+                Ok((seed, cache, public)) => {
+                    cacheable &= public;
                     seeds.push(seed);
                     policy = Self::combine_cache(policy, cache);
                 }
@@ -234,6 +247,7 @@ impl App {
             Ok(page) => page,
             Err(error) => return self.boundary_failure(index, chain.len(), seeds, request, error),
         };
+        cacheable &= !page.client_no_store;
         policy = if page.client_no_store
             || request.header("cookie").is_some()
             || request.header("authorization").is_some()
@@ -253,26 +267,25 @@ impl App {
             .and_then(|page| page.with_layouts(seeds.clone()))
             .map_err(|_| PageError::InternalServerError)?;
             let packet = self.packet_metadata(packet, page.client_metadata)?;
-            let head = if !matches!(
-                request.header("accept"),
-                Some(crate::NAVIGATION_MEDIA_TYPE | crate::NAVIGATION_STREAM_MEDIA_TYPE)
-            ) && request.query_params().get("native") != Some("yes")
-                && self.has_not_found(index)
-            {
-                self.pages[index]
-                    .client
-                    .unwrap()
-                    .document
-                    .map(|head| head(context))
-                    .transpose()?
-            } else {
-                None
+            let branch = crate::server_cache::CachedBranch {
+                packet,
+                fallback: page.body,
+                policy,
             };
-            self.client_finish(&packet, page.body, request, policy, head)
+            let response = self.cached_branch_finish(index, context, request, &branch, None)?;
+            Ok((response, branch))
         });
-        result.unwrap_or_else(|error| {
-            self.boundary_failure(index, chain.len(), seeds, request, error)
-        })
+        match result {
+            Ok((response, branch)) => {
+                if let Some(lease) = lease {
+                    if lease.publish(cacheable.then_some(branch)).is_err() {
+                        return Self::cache_busy();
+                    }
+                }
+                response
+            }
+            Err(error) => self.boundary_failure(index, chain.len(), seeds, request, error),
+        }
     }
     pub(super) fn boundary_manifest(&self) -> Html {
         let mut output = String::from("<div hidden id=\"ruvane-boundaries\">");

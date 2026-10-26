@@ -20,6 +20,7 @@ mod page_route;
 mod reactive;
 mod routing;
 mod server;
+mod server_cache;
 mod static_site;
 mod streaming;
 mod url;
@@ -84,6 +85,11 @@ pub use reactive::{
 };
 pub use routing::{RouteError, Router};
 pub use server::{Server, ServerConfig, ShutdownHandle};
+pub use server_cache::{
+    MAX_SERVER_CACHE_BYTES, MAX_SERVER_CACHE_ENTRIES, MAX_SERVER_CACHE_LOADS,
+    MAX_SERVER_CACHE_TAGS, MAX_SERVER_CACHE_WAIT_MS, MAX_SERVER_CACHE_WAITERS, ServerCache,
+    ServerCacheError, ServerCacheLimits, ServerCachePolicy, ServerCacheStats,
+};
 pub use static_site::{
     ExportError, ExportReport, MAX_STATIC_ENTRIES, MAX_STATIC_FILE_BYTES, MAX_STATIC_PATH_BYTES,
     MAX_STATIC_SEGMENTS, MAX_STATIC_TOTAL_BYTES, STATIC_COMPLETE_PATH, STATIC_HEADERS_PATH,

@@ -62,6 +62,7 @@ pub struct FilePage {
     kind: PageKind,
     boundary: Option<FileRouteBoundary>,
     not_found: Option<FileRouteNotFound>,
+    server_cache: crate::ServerCachePolicy,
 }
 enum PageKind {
     Server(PageMode, PageLoader),
@@ -79,6 +80,7 @@ impl FilePage {
             kind: PageKind::Server(mode, Arc::new(render)),
             boundary: None,
             not_found: None,
+            server_cache: crate::ServerCachePolicy::no_store(),
         }
     }
     /// Declares a shared SSR/Wasm page. The component factory remains application-owned.
@@ -93,7 +95,14 @@ impl FilePage {
             kind: PageKind::Client(component, state, Arc::new(load)),
             boundary: None,
             not_found: None,
+            server_cache: crate::ServerCachePolicy::no_store(),
         }
+    }
+    /// Opts this client page's entire branch into public server data caching.
+    /// Native-only FilePage::server declarations reject an enabled policy.
+    pub fn server_cache(mut self, policy: crate::ServerCachePolicy) -> Self {
+        self.server_cache = policy;
+        self
     }
     /// Attaches the generated directory's presentations to this client page.
     pub fn with_boundary(mut self, boundary: &FileRouteBoundary) -> Self {
@@ -356,10 +365,14 @@ impl<'a> FileRouteRegistry<'a> {
         declaration: FilePage,
     ) -> Result<(), FileRouteError> {
         let client = matches!(declaration.kind, PageKind::Client(..));
-        if !client && (declaration.boundary.is_some() || declaration.not_found.is_some()) {
+        if !client
+            && (declaration.boundary.is_some()
+                || declaration.not_found.is_some()
+                || declaration.server_cache.max_age_seconds().is_some())
+        {
             return Err(FileRouteError::at(
                 source,
-                "file presentations require a client page",
+                "file presentations and server cache policies require a client page",
             ));
         }
         if parent.is_some_and(|parent| parent.client != client) {
@@ -393,6 +406,11 @@ impl<'a> FileRouteRegistry<'a> {
             }
         }
         .map_err(|error| FileRouteError::at(source, error))?;
+        if client {
+            self.candidate
+                .client_page_server_cache(&declaration.name, declaration.server_cache)
+                .map_err(|error| FileRouteError::at(source, error))?;
+        }
         if let Some(boundary) = declaration.boundary {
             self.candidate
                 .client_page_boundary(&declaration.name, Some(boundary.client()))

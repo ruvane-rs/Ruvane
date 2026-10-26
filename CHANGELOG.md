@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-alpha.40 — Unreleased
+
+- Add explicit public server data caching for complete client page branches,
+  shared by buffered SSR, native fallbacks and typed navigation. Cache typed
+  seeds, metadata and fallback data; render HTML separately for every request.
+- Add bounded freshness, payload/entry budgets, LRU eviction, simultaneous
+  loader limits and coalescing with absolute wait deadlines.
+- Add path/tag invalidation handles that retire matching active loads and
+  prevent their late publication. Keep router/origin/revision namespaces separate.
+- Bypass Cookie/Authorization and progressive responses; never store or share
+  errors, invalid seeds or loader no_store results. Return fixed no-store 503
+  responses when cache work cannot safely proceed.
+- Add FilePage server-cache declarations and clamp navigation freshness to
+  the remaining server entry lifetime. Keep the Wasm ABI and four runtime
+  assets unchanged, with no third-party dependencies.
+
 ## 0.1.0-alpha.39 — Unreleased
 
 - Add complete typed client metadata replacements shared by SSR, snapshots,
