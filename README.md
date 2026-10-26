@@ -62,6 +62,8 @@ Opt-in [file routes](docs/file-routes.md) generate a shared Rust registry from
 `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs` and `[parameter]` directories
 during Cargo builds. Loading, error and not-found screens inherit through the
 route tree; unknown URLs use the root 404 without guessing parent layouts.
+Native-only [file endpoints](docs/file-endpoints.md) add `route.rs` GET/HEAD and
+POST handlers, sharing existing HTTP protections and atomic registration.
 
 Create an interactive project from a local checkout:
 

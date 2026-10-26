@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.0-alpha.38 — Unreleased
+
+- Add typed native-only route.rs endpoints for GET/HEAD, form queries, native
+  POST forms and typed POST actions, including API-only source trees.
+- Exclude endpoint modules from Wasm compilation, keep GET ownership separate
+  from pages/assets, and allow page GET plus endpoint POST on the same path.
+- Reject duplicate methods, reserved prefixes, dynamic ambiguity and combined
+  App route overflows before committing the candidate registry.
+- Reuse origin, Fetch Metadata, MIME, body/deadline and action revision checks;
+  prevent dynamic handlers from consuming reserved framework prefixes.
+- Move the file starter's task actions, native forms and stream into route files,
+  add a health endpoint and keep shared server helpers out of Wasm.
+- Verify source lifecycle, protected dev recovery, endpoint behavior and Wasm
+  exclusion without third-party dependencies. ABI v11, 22 exports, four runtime
+  assets and two first-party workspace crates remain.
+
 ## 0.1.0-alpha.37 — Unreleased
 
 - Add typed not_found.rs declarations independent of loading/error pairs, with

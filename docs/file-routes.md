@@ -207,6 +207,10 @@ After generated registration, ordinary App APIs configure named routes:
 available. Component IDs, props, action authorization and loader data schemas
 are application-owned. File discovery grants no additional capabilities.
 
+Alpha.38 [file endpoints](file-endpoints.md) add native-only `route.rs` handlers
+for GET/HEAD, native POST forms and typed POST actions. They use the same
+bounded scan and atomic registration, with independent HTTP method ownership.
+
 ## Build integration
 
 The starter adds only Ruvane itself as a first-party build dependency. Its
@@ -246,12 +250,12 @@ tree; target-dependent declaration code remains the author's responsibility.
 
 ## Bounds and trust
 
-- Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs` and route directories are accepted.
+- Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs`, `route.rs` and route directories are accepted.
 - Literal directories use the portable lowercase ASCII path profile. Dynamic
   names use lowercase ASCII letters, digits and underscores, beginning with a
   letter or underscore. Literal and parameter segments are limited to 64 bytes.
 - The scan limits directories to 128, entries to 512, depth to 16 and relative
-  directory paths to 512 bytes. At most 128 sources of all five kinds are accepted,
+  directory paths to 512 bytes. At most 128 sources of all six kinds are accepted,
   including at most the existing 32 App layouts.
 - A source file is at most 256 KiB of UTF-8; the total is at most 4 MiB. Generated
   Rust is at most 1 MiB. Existing App, static-export and runtime quotas also apply.

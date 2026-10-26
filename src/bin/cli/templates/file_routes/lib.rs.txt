@@ -1,0 +1,12 @@
+#![forbid(unsafe_code)]
+pub mod components;
+pub mod pages;
+mod remote_tasks;
+#[cfg(not(target_family = "wasm"))]
+pub mod server;
+pub mod store;
+
+pub const REVISION: u64 = ruvane::application_revision(env!("RUVANE_APPLICATION_REVISION"));
+pub fn validate_page(page: &ruvane::NavigationPage) -> bool {
+    pages::application().validate_navigation(page)
+}

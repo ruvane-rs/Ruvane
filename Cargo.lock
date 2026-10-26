@@ -4,11 +4,11 @@ version = 4
 
 [[package]]
 name = "ruvane"
-version = "0.1.0-alpha.37"
+version = "0.1.0-alpha.38"
 
 [[package]]
 name = "ruvane-browser"
-version = "0.1.0-alpha.37"
+version = "0.1.0-alpha.38"
 dependencies = [
  "ruvane",
 ]

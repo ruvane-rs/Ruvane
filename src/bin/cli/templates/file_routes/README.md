@@ -15,7 +15,7 @@ in HTTP handlers. The only dependencies are the first-party Ruvane packages.
 Names, components, state validation and loaders stay explicit in each declaration.
 Use `crate::` imports for shared helpers outside the route tree. Route files are
 trusted Rust source; the generator does not parse or sandbox their bodies.
-Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs` and route directories belong
+Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs`, `route.rs` and route directories belong
 in `src/routes`. The first screen scope needs both files. A descendant can replace
 one screen while inheriting the other. A layout catches child failures, never its
 own loader. Use the App fallback for root layout failures.
@@ -41,3 +41,12 @@ HTTP 404, no-store and noindex metadata. Initial documents under a custom 404
 profile are buffered before headers; progressive navigation keeps RVS1 framing.
 Native pages cannot inherit file presentations. For a mixed file tree, configure
 the client global fallback with App APIs rather than a root not_found.rs.
+
+Server `route.rs` files export `pub fn route() -> ruvane::FileEndpoint`. Builders
+are get, get_form, post_form and post_action. One GET and one POST may share a
+file; repeated methods are errors. A page GET may coexist with an endpoint POST.
+Endpoint GETs cannot overlap page GETs. Handlers do not inherit layouts or screen
+presentations. All POST origin, MIME, revision and size checks remain in Router.
+Route modules and the starter server module are excluded from Wasm compilation.
+The starter registers health, streaming, typed task actions and native forms
+through route files. An API-only tree is also accepted.

@@ -184,11 +184,19 @@ fn create_interactive(name: &str, framework: Option<&Path>, file_routes: bool) -
         (".gitignore", "/target/\n/.ruvane/\n/dist/\n.DS_Store\n"),
         (
             "src/lib.rs",
-            include_str!("templates/interactive/lib.rs.txt"),
+            if file_routes {
+                include_str!("templates/file_routes/lib.rs.txt")
+            } else {
+                include_str!("templates/interactive/lib.rs.txt")
+            },
         ),
         (
             "src/main.rs",
-            include_str!("templates/interactive/main.rs.txt"),
+            if file_routes {
+                include_str!("templates/file_routes/main.rs.txt")
+            } else {
+                include_str!("templates/interactive/main.rs.txt")
+            },
         ),
         (
             "src/pages.rs",
@@ -232,6 +240,17 @@ fn create_interactive(name: &str, framework: Option<&Path>, file_routes: bool) -
             "src/routes/tasks",
             "src/routes/tasks/[id]",
             "src/routes/tasks/settings",
+            "src/routes/api",
+            "src/routes/api/health",
+            "src/routes/actions",
+            "src/routes/actions/tasks",
+            "src/routes/actions/tasks/list",
+            "src/routes/actions/tasks/create",
+            "src/routes/actions/tasks/status",
+            "src/routes/actions/tasks/remove",
+            "src/routes/stream",
+            "src/routes/tasks/[id]/status",
+            "src/routes/tasks/[id]/remove",
         ] {
             fs::create_dir(destination.join(directory))?;
         }
@@ -239,6 +258,46 @@ fn create_interactive(name: &str, framework: Option<&Path>, file_routes: bool) -
             (
                 "build.rs",
                 include_str!("templates/file_routes/build.rs.txt"),
+            ),
+            (
+                "src/server.rs",
+                include_str!("templates/file_routes/server.rs.txt"),
+            ),
+            (
+                "src/routes/api/health/route.rs",
+                include_str!("templates/file_routes/health.rs.txt"),
+            ),
+            (
+                "src/routes/stream/route.rs",
+                include_str!("templates/file_routes/stream.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/route.rs",
+                include_str!("templates/file_routes/native_create.rs.txt"),
+            ),
+            (
+                "src/routes/actions/tasks/list/route.rs",
+                include_str!("templates/file_routes/action_list.rs.txt"),
+            ),
+            (
+                "src/routes/actions/tasks/create/route.rs",
+                include_str!("templates/file_routes/action_create.rs.txt"),
+            ),
+            (
+                "src/routes/actions/tasks/status/route.rs",
+                include_str!("templates/file_routes/action_status.rs.txt"),
+            ),
+            (
+                "src/routes/actions/tasks/remove/route.rs",
+                include_str!("templates/file_routes/action_remove.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/[id]/status/route.rs",
+                include_str!("templates/file_routes/native_status.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/[id]/remove/route.rs",
+                include_str!("templates/file_routes/native_remove.rs.txt"),
             ),
             (
                 "src/routes/page.rs",

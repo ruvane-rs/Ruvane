@@ -924,6 +924,54 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
     let root = parent.join("file-application");
     let mut running = Running::start(&root, &["dev", "--offline", "--port", "0"]);
     let address = running.address("Ruvane dev at");
+    assert_eq!(
+        response_body(&interactive_wire(address, "/api/health", false)),
+        b"ok"
+    );
+    let health_source = root.join("src/routes/api/health/route.rs");
+    fs::write(&health_source, "#[cfg(target_family = \"wasm\")] compile_error!(\"native route reached Wasm\");\npub fn route() -> ruvane::FileEndpoint { ruvane::FileEndpoint::new().get(|_| ruvane::Response::text(\"updated health\")) }\n").unwrap();
+    running.address("Ruvane dev at");
+    assert_eq!(
+        response_body(&interactive_wire(address, "/api/health", false)),
+        b"updated health"
+    );
+    let ping = root.join("src/routes/api/ping");
+    fs::create_dir(&ping).unwrap();
+    fs::write(ping.join("route.rs"), "pub fn route() -> ruvane::FileEndpoint { ruvane::FileEndpoint::new().get(|_| ruvane::Response::text(\"File endpoint\")) }\n").unwrap();
+    running.address("Ruvane dev at");
+    assert_eq!(
+        response_body(&interactive_wire(address, "/api/ping", false)),
+        b"File endpoint"
+    );
+    let ready = root.join("src/routes/api/ready");
+    fs::rename(&ping, &ready).unwrap();
+    running.address("Ruvane dev at");
+    assert!(interactive_wire(address, "/api/ping", false).starts_with(b"HTTP/1.1 404"));
+    assert_eq!(
+        response_body(&interactive_wire(address, "/api/ready", false)),
+        b"File endpoint"
+    );
+    fs::remove_file(ready.join("route.rs")).unwrap();
+    running.address("Ruvane dev at");
+    assert!(interactive_wire(address, "/api/ready", false).starts_with(b"HTTP/1.1 404"));
+    let tasks_endpoint = root.join("src/routes/tasks/route.rs");
+    let tasks_endpoint_source = fs::read_to_string(&tasks_endpoint).unwrap();
+    let retained = revision(&application_html(address)).to_owned();
+    fs::write(&tasks_endpoint, "pub fn route() -> ruvane::FileEndpoint { ruvane::FileEndpoint::new().get(|_| ruvane::Response::text(\"conflict\")) }\n").unwrap();
+    running.until("Restored the previous server");
+    assert_eq!(revision(&application_html(address)), retained);
+    assert!(
+        running
+            .logs
+            .lock()
+            .unwrap()
+            .contains("tasks/route.rs: GET endpoint overlaps")
+    );
+    fs::write(&tasks_endpoint, "pub fn route() -> u32 { 0 }\n").unwrap();
+    running.until("keeping the previous server");
+    assert_eq!(revision(&application_html(address)), retained);
+    fs::write(&tasks_endpoint, tasks_endpoint_source).unwrap();
+    running.address("Ruvane dev at");
     let html = application_html(address);
     let session = development_session(&html).to_owned();
     let version = revision(&html).to_owned();

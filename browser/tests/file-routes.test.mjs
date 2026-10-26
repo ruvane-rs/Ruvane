@@ -25,7 +25,9 @@ function missing(url, component) {
 async function exportsFor(project, version) {
   const bundle = join(project, "dist", `build-${String(version).padStart(6,"0")}`);
   const manifest = await readFile(join(bundle, "Ruvane.bundle"), "utf8"), revision = manifest.match(/^revision\t([0-9]+)$/m)[1];
-  const module = await WebAssembly.compile(await readFile(join(bundle,"resources/ruvane-runtime",BigInt(revision).toString(16).padStart(16,"0"),"app.wasm")));
+  const wasm = await readFile(join(bundle,"resources/ruvane-runtime",BigInt(revision).toString(16).padStart(16,"0"),"app.wasm"));
+  assert.equal(wasm.includes(Buffer.from("SERVER_ROUTE_ONLY_ALPHA38")),false);
+  const module = await WebAssembly.compile(wasm);
   assert.deepEqual(WebAssembly.Module.imports(module), []);
   const e = validateExports(new WebAssembly.Instance(module, {}).exports); assert.equal(e.ruvane_application_revision(), BigInt(revision));
   return e;
@@ -40,12 +42,19 @@ await test("generated file routes own the same Wasm registry across additions an
   const directory = await mkdtemp(join(await realpath(tmpdir()), "ruvane-file-routes-"));
   try {
     run(["new","file-application","--interactive","--file-routes","--framework-path",root], directory);
-    const project = join(directory,"file-application"); run(["build","--offline"],project);
+    const project = join(directory,"file-application");
+    const nativeRoute = '#[cfg(target_family = "wasm")] compile_error!("route.rs reached Wasm");\npub fn route() -> ruvane::FileEndpoint { ruvane::FileEndpoint::new().get(|_| ruvane::Response::text("SERVER_ROUTE_ONLY_ALPHA38")) }\n';
+    await writeFile(join(project,"src/routes/api/health/route.rs"),nativeRoute);
+    run(["build","--offline"],project);
     const e = await exportsFor(project,1);
     await t.test("fixed and inherited route metadata is validated without creating owners", () => {
       assert.equal(probe(e,packet("/",8)),1);
       assert.equal(probe(e,packet("/tasks/settings",14,0,[["workspace","/tasks",12,0]])),1);
       for (const bytes of [packet("/tasks/settings",14),packet("/tasks/settings",10,0,[["workspace","/tasks",12,0]]),packet("/tasks/01",10,1,[["workspace","/tasks",12,0],["context","/tasks/01",13,1]]),packet("/added",8)]) assert.equal(probe(e,bytes),0);
+    });
+    await t.test("native route modules are excluded from Wasm compilation and client page ownership", () => {
+      assert.equal(probe(e,packet("/api/health",8)),0);
+      assert.equal(probe(e,packet("/actions/tasks/create",8)),0);
     });
     const parents = [["workspace","/tasks",12,0],["context","/tasks/999",13,999]];
     await t.test("inherited file errors validate their exact component and retained scope", () => {
@@ -99,6 +108,14 @@ await test("generated file routes own the same Wasm registry across additions an
       assert.equal(probe(removed,missing("/unknown",11)),1);
       assert.equal(probe(removed,missing("/unknown",20)),0);
       assert.equal(probe(removed,failure("/tasks/999",21,parents,2,404)),0);
+    });
+    await rm(join(project,"src/routes"),{recursive:true});
+    await mkdir(join(project,"src/routes/api/health"),{recursive:true});
+    await writeFile(join(project,"src/routes/api/health/route.rs"),nativeRoute);
+    run(["build","--offline"],project); const apiOnly = await exportsFor(project,4);
+    await t.test("an API-only tree builds natively and leaves no interactive page owners in Wasm", () => {
+      assert.equal(probe(apiOnly,packet("/",8)),0);
+      assert.equal(probe(apiOnly,packet("/api/health",8)),0);
     });
   } finally { await rm(directory,{recursive:true,force:true}); }
 });

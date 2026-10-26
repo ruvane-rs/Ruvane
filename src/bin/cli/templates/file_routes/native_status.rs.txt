@@ -1,0 +1,13 @@
+use ruvane::{FileEndpoint, Response, StatusCode};
+pub fn route() -> FileEndpoint {
+    FileEndpoint::new().post_form(|request| {
+        let fields = request.form_data().unwrap();
+        if !fields.has_only(&["done"]) {
+            return Response::text("Invalid fields").with_status(StatusCode::BadRequest);
+        }
+        match fields.clone().field("id", request.param("id").unwrap()) {
+            Ok(fields) => crate::server::native(3, fields),
+            Err(_) => Response::text("Invalid fields").with_status(StatusCode::BadRequest),
+        }
+    })
+}

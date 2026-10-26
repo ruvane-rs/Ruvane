@@ -1,0 +1,84 @@
+#![forbid(unsafe_code)]
+use ruvane::{ClientRuntime, InternalUrl, MediaType, Server};
+use ruvane_application::{REVISION, pages};
+use std::io::{Read, Write};
+fn application() -> Result<ruvane::App, Box<dyn std::error::Error>> {
+    let mut app = pages::application();
+    app.asset(
+        "/assets/site.css",
+        include_bytes!("../assets/site.css"),
+        MediaType::Css,
+    )?;
+    let mut runtime = ClientRuntime::new(include_bytes!(env!("RUVANE_WASM_FILE")), REVISION)?
+        .shell(pages::shell)
+        .stylesheet(InternalUrl::new("/assets/site.css")?)?;
+    if let (Some(path), Some(session)) = (
+        option_env!("RUVANE_DEV_STATUS"),
+        option_env!("RUVANE_DEV_SESSION"),
+    ) {
+        runtime = runtime.development(
+            ruvane::Development::new(path, session.parse()?)?
+                .stylesheet("/assets/site.css", "assets/site.css")?,
+        );
+    }
+    app.client_runtime(runtime)?;
+    Ok(app)
+}
+fn router() -> Result<ruvane::Router, Box<dyn std::error::Error>> {
+    Ok(application()?.router(None)?)
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "--ruvane-client-assets" {
+        application()?.client_assets()?.export_to(&args[1])?;
+        let mut identity = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        writeln!(
+            identity,
+            "ruvane-runtime\t1\t{}\t{REVISION}",
+            ruvane::BROWSER_ABI_VERSION
+        )?;
+        return Ok(());
+    }
+    let managed = args.first().is_some_and(|arg| arg == "--ruvane-serve");
+    let port = if managed && args.len() == 3 {
+        args[1].to_str().ok_or("invalid port")?.parse::<u16>()?
+    } else if args.len() == 2 && args[0] == "--port" {
+        args[1].to_str().ok_or("invalid port")?.parse::<u16>()?
+    } else if args.is_empty() {
+        3000
+    } else {
+        return Err("usage: ruvane-app [--port PORT]".into());
+    };
+    let server = Server::bind(([127, 0, 0, 1], port).into(), router()?)?;
+    if managed {
+        if option_env!("RUVANE_DEV_STATUS").is_some() {
+            let mut path = args[2].clone();
+            path.push(".styles");
+            let record = application()?.development_styles()?;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)?
+                .write_all(record.as_bytes())?;
+        }
+        let shutdown = server.shutdown_handle();
+        std::thread::spawn(move || {
+            let _ = std::io::stdin().read_exact(&mut [0]);
+            shutdown.shutdown();
+        });
+        let mut ready = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[2])?;
+        writeln!(ready, "ruvane-ready\t1\t{}", server.local_addr()?)?;
+    }
+    println!(
+        "Ruvane application at http://{} (revision {REVISION})",
+        server.local_addr()?
+    );
+    server.run()?;
+    Ok(())
+}

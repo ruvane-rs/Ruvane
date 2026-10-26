@@ -1,0 +1,3 @@
+pub fn route() -> ruvane::FileEndpoint {
+    ruvane::FileEndpoint::new().post_action(|request| crate::server::typed(3, request))
+}

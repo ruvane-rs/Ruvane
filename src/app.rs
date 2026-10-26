@@ -1,4 +1,5 @@
 mod client;
+mod endpoints;
 use crate::page_route::valid_name;
 use crate::{
     Document, ExportError, Html, InternalUrl, MAX_ASSET_BYTES, MAX_ASSETS, MAX_METADATA_TEXT_BYTES,
@@ -10,12 +11,13 @@ pub use client::{
     ClientBoundary, ClientDocument, ClientDocumentHead, ClientLayoutData, ClientPageData,
     ClientRuntime, ComponentFactory, application_revision,
 };
+pub use endpoints::FileEndpoint;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::str::FromStr;
 use std::sync::Arc;
 
-/// Maximum combined page and asset routes in one application.
+/// Maximum combined page, endpoint-method and asset routes in one application.
 pub const MAX_APP_ROUTES: usize = 128;
 /// Maximum named layouts in one application.
 pub const MAX_APP_LAYOUTS: usize = 32;
@@ -54,6 +56,10 @@ pub enum AppError {
     OutputTooLarge,
     /// A page/layout panicked or an exported page returned a page error.
     RenderFailed,
+    /// An endpoint is empty or declares a method more than once.
+    InvalidEndpoint,
+    /// A GET endpoint overlaps a page, asset or framework route.
+    EndpointConflict,
     /// A low-level route registration was rejected.
     Route(RouteError),
     /// URL validation failed.
@@ -78,6 +84,8 @@ impl fmt::Display for AppError {
             Self::InvalidPage => "invalid page properties",
             Self::OutputTooLarge => "page output limit exceeded",
             Self::RenderFailed => "page rendering failed",
+            Self::InvalidEndpoint => "endpoint must declare unique GET and/or POST handlers",
+            Self::EndpointConflict => "GET endpoint overlaps a page, asset or framework route",
             Self::Route(_) => "invalid application route",
             Self::Url(_) => "invalid application URL",
             Self::Export(_) => "application static planning failed",
@@ -308,7 +316,8 @@ struct ErrorPage {
 ///
 /// Names are explicit; no filesystem route discovery, macros, script engine,
 /// wire deserialization or remote function dispatch is added. Handlers and
-/// layouts are trusted Rust code and must be bounded and read-only. Output
+/// layouts are trusted Rust code and must be bounded. GET handlers and layouts
+/// must be read-only. Output
 /// checks run after caller allocations and cannot sandbox CPU or memory use.
 #[derive(Clone, Default)]
 pub struct App {
@@ -323,6 +332,7 @@ pub struct App {
     client_not_found: Option<u32>,
     client_runtime: Option<ClientRuntime>,
     client_layouts: Vec<client::ClientLayout>,
+    endpoints: Vec<endpoints::Endpoint>,
 }
 impl App {
     /// Creates an empty application.
@@ -548,6 +558,7 @@ impl App {
         for asset in &self.assets {
             router.get(asset.path.url().as_str(), |_| Response::text(""))?;
         }
+        self.validate_endpoints(&mut router)?;
         self.validate_client_routes(&mut router)?;
         let mut paths = Vec::new();
         let mut outputs: Vec<String> = Vec::new();
@@ -586,13 +597,18 @@ impl App {
         Ok(())
     }
 
-    /// Lists deliberately unexported page names in declaration order. Generated
+    /// Lists unexported page names followed by endpoint patterns. Generated
     /// applications print this list during a static build.
     pub fn server_only_routes(&self) -> impl Iterator<Item = &str> {
         self.pages
             .iter()
             .filter(|p| matches!(p.mode, PageMode::ServerOnly(_)))
             .map(|p| p.route.name())
+            .chain(
+                self.endpoints
+                    .iter()
+                    .map(|endpoint| endpoint.pattern.as_str()),
+            )
     }
 
     /// Builds a server router from a snapshot of this declaration. Later changes
@@ -682,6 +698,9 @@ impl App {
                 .map_err(|_| AppError::RouteConflict)?;
         }
         self.mount_client_assets(&mut router)?;
+        for endpoint in &self.endpoints {
+            endpoint.declaration.mount(&mut router, &endpoint.pattern)?;
+        }
         if self.client_runtime.is_some() {
             let app = Arc::clone(&app);
             router.client_not_found(move |request| app.client_missing(request));

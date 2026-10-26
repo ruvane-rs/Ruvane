@@ -1,0 +1,95 @@
+use crate::store;
+use ruvane::{InternalUrl, Response, StatusCode};
+
+pub fn typed(
+    kind: u32,
+    request: &ruvane::Request,
+) -> Result<ruvane::ActionReply, ruvane::ActionError> {
+    store::action(kind, request.form_data().unwrap()).map_err(|_| ruvane::ActionError::InvalidData)
+}
+pub fn progressive_report(request: &ruvane::Request) -> Response {
+    use ruvane::{Document, Html, HtmlStream, StreamContext, StreamError, Tag, element, fragment};
+    use std::time::Duration;
+
+    let label = request
+        .query_params()
+        .get("q")
+        .unwrap_or("Rendered safely in Rust")
+        .to_owned();
+    let failure = request.query_params().get("fail").map(str::to_owned);
+    let document = Document::new(
+        "Streaming report / Ruvane",
+        fragment([
+            element(Tag::H1).child("Streaming report").render(),
+            element(Tag::P)
+                .child("This header is sent before the report is calculated.")
+                .render(),
+            ruvane::link(&InternalUrl::new("/").unwrap(), "Home"),
+        ]),
+    )
+    .stylesheet(InternalUrl::new("/assets/site.css").unwrap());
+    let plan = HtmlStream::new(document, move |_| {
+        if failure.as_deref() == Some("early") {
+            return Err(StreamError::Producer);
+        }
+        let mut sent = false;
+        let label = label.clone();
+        let failure = failure.clone();
+        Ok(
+            move |context: &StreamContext| -> Result<Option<Html>, StreamError> {
+                if sent {
+                    return Ok(None);
+                }
+                sent = true;
+                context.wait(Duration::from_millis(500))?;
+                if failure.as_deref() == Some("late") {
+                    return Err(StreamError::Producer);
+                }
+                Ok(Some(
+                    element(Tag::Section)
+                        .child(element(Tag::H2).child("Deferred report"))
+                        .child(element(Tag::P).child(label.as_str()))
+                        .render(),
+                ))
+            },
+        )
+    });
+    Response::stream_html(plan)
+}
+pub fn native(kind: u32, fields: ruvane::FormData) -> Response {
+    match store::action(kind, &fields) {
+        Ok(reply) if !reply.is_validation() => {
+            Response::see_other(InternalUrl::new("/tasks").unwrap())
+        }
+        Ok(reply) => {
+            let mut content = vec![
+                ruvane::element(ruvane::Tag::P)
+                    .child(reply.data().text("message").unwrap_or("Invalid fields"))
+                    .render(),
+            ];
+            if kind == 2 {
+                let mut form = ruvane::PostForm::new(InternalUrl::new("/tasks").unwrap())
+                    .unwrap()
+                    .text("title", "Task name", fields.get("title").unwrap_or(""))
+                    .unwrap()
+                    .textarea("notes", "Notes", fields.get("notes").unwrap_or(""))
+                    .unwrap()
+                    .submit_label("Add task")
+                    .unwrap();
+                if let Some(field @ ("title" | "notes")) = reply.data().text("field") {
+                    form = form.invalid(field).unwrap();
+                }
+                content.push(form.render());
+            }
+            content.push(ruvane::link(
+                &InternalUrl::new("/tasks").unwrap(),
+                "Back to tasks",
+            ));
+            Response::html(
+                ruvane::Document::new("Invalid task", ruvane::fragment(content)).render(),
+            )
+            .with_status(StatusCode::BadRequest)
+        }
+        Err(_) => Response::text("Request failed").with_status(StatusCode::BadRequest),
+    }
+}

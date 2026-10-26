@@ -1,0 +1,4 @@
+pub fn route() -> ruvane::FileEndpoint {
+    ruvane::FileEndpoint::new()
+        .post_form(|request| crate::server::native(2, request.form_data().unwrap().clone()))
+}

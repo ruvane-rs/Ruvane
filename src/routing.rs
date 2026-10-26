@@ -83,19 +83,17 @@ impl Route {
     }
 
     fn overlaps(&self, other: &Self) -> bool {
-        self.segments.len() == other.segments.len()
-            && self
-                .segments
-                .iter()
-                .zip(&other.segments)
-                .all(|(a, b)| match (a, b) {
-                    (Segment::Literal(a), Segment::Literal(b)) => a == b,
-                    (Segment::Literal(value), _) | (_, Segment::Literal(value)) => {
-                        !value.is_empty()
-                    }
-                    _ => true,
-                })
+        segments_overlap(&self.segments, &other.segments)
     }
+}
+
+fn segments_overlap(a: &[Segment], b: &[Segment]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| match (a, b) {
+            (Segment::Literal(a), Segment::Literal(b)) => a == b,
+            (Segment::Literal(value), _) | (_, Segment::Literal(value)) => !value.is_empty(),
+            _ => true,
+        })
 }
 
 pub(crate) fn pattern_segments(pattern: &str) -> Result<(Vec<Segment>, bool), RouteError> {
@@ -133,6 +131,22 @@ pub(crate) fn pattern_segments(pattern: &str) -> Result<(Vec<Segment>, bool), Ro
 }
 
 impl Router {
+    pub(crate) fn overlaps_get(&self, pattern: &str) -> Result<bool, RouteError> {
+        let (segments, _) = pattern_segments(pattern)?;
+        Ok(self.routes.iter().any(|route| {
+            route.method == Method::Get && segments_overlap(&route.segments, &segments)
+        }))
+    }
+    pub(crate) fn post_action_response(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.post_form(path, handler)?;
+        self.routes.last_mut().unwrap().action = true;
+        Ok(())
+    }
+
     pub(crate) fn has_path(&self, path: &str) -> bool {
         self.routes.iter().any(|route| route.matches(path))
     }
@@ -145,12 +159,10 @@ impl Router {
         + Sync
         + 'static,
     ) -> Result<(), RouteError> {
-        self.post_form(path, move |request| match handler(request) {
+        self.post_action_response(path, move |request| match handler(request) {
             Ok(reply) => Response::action(&reply),
             Err(_) => Response::error(StatusCode::InternalServerError),
-        })?;
-        self.routes.last_mut().unwrap().action = true;
-        Ok(())
+        })
     }
     /// Creates an empty router, which returns 404 for every path.
     pub fn new() -> Self {

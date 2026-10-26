@@ -180,6 +180,24 @@ impl<'a> FileRouteRegistry<'a> {
         }
     }
 
+    /// Adds native GET/HEAD and POST handlers without executing them.
+    pub fn endpoint(
+        &mut self,
+        source: &str,
+        pattern: &str,
+        declaration: crate::FileEndpoint,
+    ) -> Result<(), FileRouteError> {
+        let result =
+            self.candidate
+                .file_endpoint(pattern, declaration)
+                .map_err(|error| match error {
+                    crate::AppError::Route(error) => FileRouteError::at(source, error),
+                    error => FileRouteError::at(source, error),
+                });
+        self.failed |= result.is_err();
+        result
+    }
+
     /// Checks a local 404 component and optionally sets the global unknown-URL fallback.
     pub fn not_found(
         &mut self,

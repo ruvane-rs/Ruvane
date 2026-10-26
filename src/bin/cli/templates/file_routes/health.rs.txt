@@ -1,0 +1,3 @@
+pub fn route() -> ruvane::FileEndpoint {
+    ruvane::FileEndpoint::new().get(|_| ruvane::Response::text("ok"))
+}

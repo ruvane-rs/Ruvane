@@ -549,6 +549,17 @@ RVS1 navigation retains its HTTP 200 framing and final typed 404 packet.
 Native consumers of file presentations are rejected. The source remains trusted
 executable Rust, and presentation checks do not sandbox arbitrary callbacks.
 
+Alpha.38 route.rs endpoint modules are imported and registered only for native
+builds. They share source budgets and the atomic candidate registry; each method
+slot counts toward the total App route budget. GET endpoints cannot overlap page
+or embedded asset ownership. POST endpoints retain the existing origin, Fetch
+Metadata, MIME, body and revision checks. Reserved literal framework prefixes
+are rejected, and dynamic handlers cannot execute for those raw prefixes. Handler
+callbacks remain trusted bounded code and must authorize each operation; layouts
+and page loaders do not guard endpoints. Excluding route modules from Wasm does
+not automatically exclude arbitrary shared application modules. Production
+contains compiled handlers and never discovers route source from request paths.
+
 For reporting options, consult the repository's Security tab. If private
 vulnerability reporting is unavailable, contact a maintainer privately before
 sharing sensitive details. Do not include credentials or personal data.

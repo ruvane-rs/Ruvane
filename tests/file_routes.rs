@@ -467,3 +467,33 @@ fn not_found_files_have_independent_inheritance_and_share_source_limits() {
     );
     assert_eq!(temp.routes().unwrap_err().path(), "not_found.rs");
 }
+
+#[test]
+fn endpoint_modules_are_native_only_and_api_only_trees_generate_without_page_scopes() {
+    let temp = Temp::new();
+    temp.file(
+        "routes/api/[id]/route.rs",
+        "#[cfg(target_family = \"wasm\")] compile_error!(\"native only\");",
+    );
+    let routes = temp.routes().unwrap();
+    assert_eq!((routes.page_count(), routes.endpoint_count()), (0, 1));
+    let source = routes.rust_module().unwrap();
+    assert!(source.contains("#[cfg(not(target_family = \"wasm\"))]\n#[path = "));
+    assert!(source.contains(
+        "registry.endpoint(\"api/[id]/route.rs\", \"/api/{id}\", __ruvane_file_0::route())"
+    ));
+    assert!(source.contains("#[cfg(target_family = \"wasm\")]\n    let registry"));
+    let temp = Temp::new();
+    temp.file("routes/page.rs", "");
+    temp.file("routes/route.rs", "");
+    assert_eq!(temp.routes().unwrap().endpoint_count(), 1);
+    let temp = Temp::new();
+    temp.file("routes/api/layout.rs", "");
+    temp.file("routes/api/route.rs", "");
+    assert!(
+        temp.routes()
+            .unwrap_err()
+            .to_string()
+            .contains("no descendant pages")
+    );
+}

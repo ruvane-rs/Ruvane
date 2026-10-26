@@ -1,6 +1,7 @@
 //! Bounded route discovery for Cargo build scripts.
 
 mod declarations;
+pub use crate::app::FileEndpoint;
 use crate::{PageRoute, Router};
 pub use declarations::{
     FileError, FileLayout, FileLoading, FileNotFound, FilePage, FileRouteBoundary, FileRouteLayout,
@@ -12,7 +13,7 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Maximum page, layout, loading, error and not-found source files in a route tree.
+/// Maximum page, layout, loading, error, not-found and endpoint source files in a route tree.
 pub const MAX_FILE_ROUTE_FILES: usize = 128;
 /// Maximum source bytes in one route file.
 pub const MAX_FILE_ROUTE_SOURCE_BYTES: usize = 256 * 1024;
@@ -71,6 +72,7 @@ enum SourceKind {
     Loading,
     Error,
     NotFound,
+    Endpoint,
 }
 impl SourceKind {
     fn name(self) -> &'static str {
@@ -80,6 +82,7 @@ impl SourceKind {
             Self::Loading => "loading.rs",
             Self::Error => "error.rs",
             Self::NotFound => "not_found.rs",
+            Self::Endpoint => "route.rs",
         }
     }
 }
@@ -91,7 +94,7 @@ struct BoundarySource {
 }
 
 /// A deterministic route tree discovered before compilation, never from HTTP input.
-/// Accepts page/layout/loading/error/not_found Rust files and portable literal or `[parameter]` directories.
+/// Accepts page/layout/loading/error/not_found/route Rust files and portable literal or `[parameter]` directories.
 #[derive(Debug)]
 pub struct FileRoutes {
     sources: Vec<Source>,
@@ -117,8 +120,11 @@ impl FileRoutes {
             router: Router::new(),
         };
         scan.visit(&root, &mut Vec::new(), None, None, None)?;
-        if scan.result.pages == 0 {
-            return Err(FileRouteError::at("<routes>", "no page.rs files found"));
+        if scan.result.pages == 0 && scan.result.endpoint_count() == 0 {
+            return Err(FileRouteError::at(
+                "<routes>",
+                "no page.rs or route.rs files found",
+            ));
         }
         Ok(scan.result)
     }
@@ -144,6 +150,14 @@ impl FileRoutes {
             .count()
     }
 
+    /// Returns the number of server-only route.rs files.
+    pub fn endpoint_count(&self) -> usize {
+        self.sources
+            .iter()
+            .filter(|source| source.kind == SourceKind::Endpoint)
+            .count()
+    }
+
     /// Generates typed module imports and one atomic `register(&mut App)` function.
     pub fn rust_module(&self) -> Result<String, FileRouteError> {
         let mut result = String::from(MARKER);
@@ -160,9 +174,19 @@ impl FileRoutes {
                 .path
                 .to_str()
                 .ok_or_else(|| FileRouteError::at(&source.relative, "source path is not UTF-8"))?;
+            if source.kind == SourceKind::Endpoint {
+                result.push_str("#[cfg(not(target_family = \"wasm\"))]\n");
+            }
             writeln!(result, "#[path = {path:?}]\nmod __ruvane_file_{index};").unwrap();
         }
-        result.push_str("pub fn register(app: &mut ruvane::App) -> Result<(), ruvane::FileRouteError> {\n    let mut registry = ruvane::FileRouteRegistry::new(app);\n");
+        result.push_str(
+            "pub fn register(app: &mut ruvane::App) -> Result<(), ruvane::FileRouteError> {\n",
+        );
+        if self.pages == 0 {
+            result.push_str("    #[cfg(not(target_family = \"wasm\"))]\n    let mut registry = ruvane::FileRouteRegistry::new(app);\n    #[cfg(target_family = \"wasm\")]\n    let registry = ruvane::FileRouteRegistry::new(app);\n");
+        } else {
+            result.push_str("    let mut registry = ruvane::FileRouteRegistry::new(app);\n");
+        }
         for (index, source) in self.sources.iter().enumerate() {
             if source.kind == SourceKind::NotFound {
                 writeln!(result, "    let not_found_{index} = registry.not_found({:?}, __ruvane_file_{index}::not_found(), {})?;", source.relative, source.relative == "not_found.rs").unwrap();
@@ -209,7 +233,15 @@ impl FileRoutes {
                 SourceKind::Page => {
                     writeln!(result, "    registry.page({:?}, {:?}, {parent}, __ruvane_file_{index}::page(){boundary}{not_found})?;", source.relative, source.pattern).unwrap();
                 }
-                SourceKind::Loading | SourceKind::Error | SourceKind::NotFound => {}
+                SourceKind::Loading
+                | SourceKind::Error
+                | SourceKind::NotFound
+                | SourceKind::Endpoint => {}
+            }
+        }
+        for (index, source) in self.sources.iter().enumerate() {
+            if source.kind == SourceKind::Endpoint {
+                writeln!(result, "    #[cfg(not(target_family = \"wasm\"))]\n    registry.endpoint({:?}, {:?}, __ruvane_file_{index}::route())?;", source.relative, source.pattern).unwrap();
             }
         }
         result.push_str("    registry.finish()\n}\n");
@@ -399,6 +431,7 @@ impl Scan {
         let mut loading = false;
         let mut error = false;
         let mut local_not_found = false;
+        let mut endpoint = false;
         for entry in entries {
             let name = entry
                 .file_name()
@@ -423,7 +456,12 @@ impl Scan {
             } else if kind.is_file()
                 && matches!(
                     name.as_str(),
-                    "page.rs" | "layout.rs" | "loading.rs" | "error.rs" | "not_found.rs"
+                    "page.rs"
+                        | "layout.rs"
+                        | "loading.rs"
+                        | "error.rs"
+                        | "not_found.rs"
+                        | "route.rs"
                 )
             {
                 match name.as_str() {
@@ -432,12 +470,13 @@ impl Scan {
                     "loading.rs" => loading = true,
                     "error.rs" => error = true,
                     "not_found.rs" => local_not_found = true,
+                    "route.rs" => endpoint = true,
                     _ => unreachable!(),
                 }
             } else {
                 return Err(FileRouteError::at(
                     format!("{label}/{name}"),
-                    "expected page.rs, layout.rs, loading.rs, error.rs, not_found.rs or a route directory",
+                    "expected page.rs, layout.rs, loading.rs, error.rs, not_found.rs, route.rs or a route directory",
                 ));
             }
         }
@@ -520,6 +559,16 @@ impl Scan {
                 (boundary, not_found),
             )?;
         }
+        if endpoint {
+            self.add(
+                directory,
+                segments,
+                &pattern,
+                None,
+                SourceKind::Endpoint,
+                (None, None),
+            )?;
+        }
         for name in children {
             segments.push(name.clone());
             self.visit(&directory.join(name), segments, parent, boundary, not_found)?;
@@ -591,7 +640,10 @@ impl Scan {
         match kind {
             SourceKind::Layout => self.result.layouts += 1,
             SourceKind::Page => self.result.pages += 1,
-            SourceKind::Loading | SourceKind::Error | SourceKind::NotFound => {}
+            SourceKind::Loading
+            | SourceKind::Error
+            | SourceKind::NotFound
+            | SourceKind::Endpoint => {}
         }
         Ok(index)
     }
