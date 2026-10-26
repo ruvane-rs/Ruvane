@@ -157,6 +157,113 @@ fn development_is_explicit_and_native_pages_keep_their_script_free_policy() {
             .starts_with("HTTP/1.1 404")
     );
 }
+
+#[test]
+fn development_css_serves_only_registered_bounded_snapshots_with_original_urls() {
+    let directory = std::fs::canonicalize(std::env::temp_dir())
+        .unwrap()
+        .join(format!("ruvane-css-app-{}", std::process::id()));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("status");
+    std::fs::write(&path, "RVD2\n9\n1\nready\n123\n1\n1\n/assets/site.css\n\n").unwrap();
+    let snapshot = directory.join("css-123-1-0");
+    std::fs::write(&snapshot, "body { background: url('./logo.svg'); }").unwrap();
+    let mut candidate = app(Arc::new(AtomicUsize::new(0)));
+    candidate
+        .asset("/assets/site.css", b"body { color: red; }", MediaType::Css)
+        .unwrap();
+    let development = ruvane::Development::new(&path, 9)
+        .unwrap()
+        .stylesheet("/assets/site.css", "assets/site.css")
+        .unwrap();
+    for (url, source) in [
+        ("/assets/site.css?x=1", "assets/site.css"),
+        ("/assets/site.css", "../secret.css"),
+        ("/assets/site.css", "src/style.css"),
+    ] {
+        assert!(
+            ruvane::Development::new(&path, 9)
+                .unwrap()
+                .stylesheet(url, source)
+                .is_err()
+        );
+    }
+    candidate
+        .client_runtime(runtime().development(development))
+        .unwrap();
+    assert_eq!(
+        candidate.development_styles().unwrap(),
+        "RVDS1\n123\n/assets/site.css\tassets/site.css\n"
+    );
+    let server = Running::start(candidate);
+    for header in [
+        "Origin: http://example.com\r\n",
+        "Sec-Fetch-Site: cross-site\r\n",
+    ] {
+        assert!(
+            server
+                .get_headers(
+                    "GET",
+                    "/assets/site.css?ruvane-css=9-123-1",
+                    false,
+                    None,
+                    header
+                )
+                .0
+                .starts_with("HTTP/1.1 403")
+        );
+    }
+    for url in ["/assets/site.css", "/assets/site.css?ruvane-css=9-123-1"] {
+        let (headers, bytes) = server.get("GET", url, false);
+        assert!(
+            headers.contains("text/css; charset=utf-8")
+                && headers.contains("Cache-Control: no-store")
+        );
+        assert_eq!(bytes, b"body { background: url('./logo.svg'); }");
+    }
+    for url in [
+        "/assets/site.css?ruvane-css=8-123-1",
+        "/assets/site.css?ruvane-css=9-124-1",
+        "/assets/site.css?ruvane-css=9-123-01",
+        "/assets/site.css?ruvane-css=../../secret",
+    ] {
+        assert!(server.get("GET", url, false).0.starts_with("HTTP/1.1 409"));
+    }
+    assert!(
+        server
+            .get("GET", "/assets/site.css?ruvane-css=9-123-1&other=1", false)
+            .0
+            .starts_with("HTTP/1.1 400")
+    );
+    assert!(
+        server
+            .get("GET", "/assets/site.css?ruvane-css=9-123-2", false)
+            .0
+            .starts_with("HTTP/1.1 404")
+    );
+    std::fs::write(&snapshot, vec![b' '; ruvane::MAX_ASSET_BYTES + 1]).unwrap();
+    assert!(
+        server
+            .get("GET", "/assets/site.css?ruvane-css=9-123-1", false)
+            .0
+            .starts_with("HTTP/1.1 404")
+    );
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(&snapshot).unwrap();
+        std::os::unix::fs::symlink(&path, &snapshot).unwrap();
+        assert!(
+            server
+                .get("GET", "/assets/site.css?ruvane-css=9-123-1", false)
+                .0
+                .starts_with("HTTP/1.1 404")
+        );
+    }
+    drop(server);
+    std::fs::remove_file(snapshot).unwrap();
+    std::fs::remove_file(path).unwrap();
+    std::fs::remove_dir(directory).unwrap();
+}
 #[test]
 fn ssr_carries_the_exact_initial_seed_without_executable_markup_or_an_extra_loader_call() {
     let loads = Arc::new(AtomicUsize::new(0));
@@ -299,13 +406,23 @@ impl Running {
         typed: bool,
         revision: Option<&str>,
     ) -> (String, Vec<u8>) {
+        self.get_headers(method, target, typed, revision, "")
+    }
+    fn get_headers(
+        &self,
+        method: &str,
+        target: &str,
+        typed: bool,
+        revision: Option<&str>,
+        extra: &str,
+    ) -> (String, Vec<u8>) {
         let mut stream = TcpStream::connect(self.address).unwrap();
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(3)))
             .unwrap();
         write!(
             stream,
-            "{method} {target} HTTP/1.1\r\nHost: {}\r\n{}{}\r\n",
+            "{method} {target} HTTP/1.1\r\nHost: {}\r\n{}{}{extra}\r\n",
             self.address,
             if typed {
                 "Accept: application/vnd.ruvane.page\r\n"

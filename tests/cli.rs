@@ -713,6 +713,43 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
         application_post(address, "title=Accepted", Some(&version)).starts_with(b"HTTP/1.1 200")
     );
 
+    let css_path = root.join("assets/site.css");
+    let css = fs::read_to_string(&css_path).unwrap();
+    let first_status = development_status(address, &session, "");
+    let first_generation = first_status
+        .split("\r\n\r\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .nth(5)
+        .unwrap();
+    let first_url = format!("/assets/site.css?ruvane-css={session}-{version}-{first_generation}");
+    assert_eq!(
+        response_body(&interactive_wire(address, &first_url, false)),
+        css.as_bytes()
+    );
+    for index in 1..=10 {
+        let changed = format!("{css}\nbody {{ --development-check: {index}; }}\n");
+        fs::write(&css_path, &changed).unwrap();
+        running.until("Updated styles without compilation or restart");
+        assert_eq!(revision(&application_html(address)), version);
+        assert_eq!(
+            response_body(&interactive_wire(address, "/assets/site.css", false)),
+            changed.as_bytes()
+        );
+    }
+    assert!(interactive_wire(address, &first_url, false).starts_with(b"HTTP/1.1 404"));
+    let retained = interactive_wire(address, "/tasks", true);
+    assert_eq!(
+        ruvane::NavigationPage::decode(response_body(&retained))
+            .unwrap()
+            .data()
+            .number("count"),
+        Some(1)
+    );
+    fs::write(&css_path, &css).unwrap();
+    running.until("Updated styles without compilation or restart");
+
     let module = interactive_wire(address, &path, false);
     assert!(response_body(&module).starts_with(b"\0asm\x01\0\0\0"));
     assert!(response_body(&module).len() <= ruvane::MAX_ASSET_BYTES);
@@ -733,18 +770,26 @@ fn interactive_project_builds_both_targets_and_retains_its_matching_pair_on_erro
     .unwrap();
     running.until("keeping the previous server");
     assert!(development_status(address, &session, "").contains("wasm failure"));
+    fs::write(&css_path, format!("{css}\nbody {{ --mixed-edit: 1; }}")).unwrap();
+    running.until("keeping the previous server");
+    assert!(development_status(address, &session, "").contains("wasm failure"));
+    assert_eq!(
+        response_body(&interactive_wire(address, "/assets/site.css", false)),
+        css.as_bytes()
+    );
     assert_eq!(revision(&application_html(address)), version);
     assert_eq!(
         response_body(&interactive_wire(address, &path, false)),
         response_body(&module)
     );
+    fs::write(&css_path, &css).unwrap();
     fs::write(&wasm_path, &wasm).unwrap();
     let restored = running.address("Ruvane dev at");
     assert_eq!(restored, address);
     let updated = application_html(address);
     assert!(
         development_status(address, &session, "")
-            .contains(&format!("\nready\n{}\n\n", revision(&updated)))
+            .contains(&format!("\nready\n{}\n", revision(&updated)))
     );
     assert_ne!(revision(&updated), version);
     let native_path = root.join("src/main.rs");

@@ -673,6 +673,9 @@ impl App {
             }
         }
         for asset in &self.assets {
+            if self.mount_development_asset(&mut router, asset)? {
+                continue;
+            }
             router
                 .asset(asset.path.url().as_str(), asset.bytes, asset.kind)
                 .map_err(|_| AppError::RouteConflict)?;

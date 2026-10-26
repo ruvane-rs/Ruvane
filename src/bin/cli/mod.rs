@@ -180,6 +180,24 @@ fn dev(args: &[OsString]) -> Result<()> {
         }
         if pending && changed_at.elapsed() >= Duration::from_millis(200) {
             pending = false;
+            if let (Some(session), Some(app)) = (&mut session, &mut running) {
+                match session.reload_styles(&project, app, &observed) {
+                    Ok(true) => {
+                        println!("Updated styles without compilation or restart.");
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        session.publish(
+                            "error",
+                            app.revision(),
+                            &format!("Stylesheet update failed: {error}"),
+                        )?;
+                        eprintln!("Stylesheet update failed: {error}; keeping previous styles.");
+                        continue;
+                    }
+                }
+            }
             println!("Compiling application...");
             let active = running.as_ref().map_or(0, process::App::revision);
             if let Some(session) = &mut session {
@@ -200,6 +218,13 @@ fn dev(args: &[OsString]) -> Result<()> {
                         Ok(app) => {
                             selected_port = app.address.port();
                             if let Some(session) = &mut session {
+                                if let Some(sources) = app.sources() {
+                                    if let Err(error) =
+                                        session.capture_styles(&project, &app, sources)
+                                    {
+                                        eprintln!("Could not prepare development styles: {error}");
+                                    }
+                                }
                                 session.publish("ready", app.revision(), "")?;
                             }
                             println!("Ruvane dev at http://{} — application ready.", app.address);

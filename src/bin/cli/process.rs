@@ -398,17 +398,25 @@ pub(super) struct App {
     binary: Binary,
     child: Option<ChildGuard>,
     pub address: SocketAddr,
+    pub styles: Vec<(String, String)>,
 }
 
 impl App {
     pub fn revision(&self) -> u64 {
         self.binary.revision
     }
+    pub fn sources(&self) -> Option<&watch::Snapshot> {
+        self.binary.sources.as_ref()
+    }
+    pub fn accept_style_sources(&mut self, sources: watch::Snapshot) {
+        self.binary.sources = Some(sources);
+    }
     pub fn start(binary: Binary, port: u16, quit: &AtomicBool) -> Result<Self> {
         let mut app = Self {
             binary,
             child: None,
             address: ([127, 0, 0, 1], port).into(),
+            styles: Vec::new(),
         };
         app.restart(port, quit)?;
         Ok(app)
@@ -420,6 +428,15 @@ impl App {
             .directory
             .join(format!("ready-{}", self.binary.ready_files.len()));
         self.binary.ready_files.push(ready.clone());
+        let styles = ready.with_file_name(format!(
+            "{}.styles",
+            ready
+                .file_name()
+                .unwrap()
+                .to_str()
+                .ok_or("invalid readiness filename")?
+        ));
+        self.binary.ready_files.push(styles.clone());
         self.child = Some(ChildGuard(
             Command::new(&self.binary.executable)
                 .arg("--ruvane-serve")
@@ -463,6 +480,11 @@ impl App {
                     return Err("invalid application address".into());
                 }
                 self.address = address;
+                self.styles = match fs::symlink_metadata(&styles) {
+                    Ok(_) => development::read_styles(&styles, self.revision())?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                    Err(error) => return Err(error.into()),
+                };
                 return Ok(());
             }
             if start.elapsed() >= Duration::from_secs(5) {

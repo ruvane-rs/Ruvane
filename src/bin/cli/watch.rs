@@ -4,6 +4,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(super) type Snapshot = BTreeMap<PathBuf, (usize, u64)>;
+pub(super) fn signature(body: &[u8]) -> (usize, u64) {
+    // For change detection, not integrity checks.
+    (
+        body.len(),
+        body.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        }),
+    )
+}
 const MAX_FILES: usize = 1024;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 
@@ -16,11 +25,7 @@ fn fingerprint(root: &Path, path: &Path, result: &mut Snapshot, bytes: &mut usiz
         .checked_add(body.len())
         .filter(|size| *size <= MAX_BYTES)
         .ok_or("watch byte budget exceeded")?;
-    // For change detection, not integrity checks.
-    let hash = body.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    });
-    result.insert(path.strip_prefix(root)?.to_owned(), (body.len(), hash));
+    result.insert(path.strip_prefix(root)?.to_owned(), signature(&body));
     Ok(())
 }
 
@@ -121,10 +126,7 @@ pub(super) fn refresh_lock(root: &Path, snapshot: &mut Snapshot) -> Result<()> {
         if other_bytes + body.len() > MAX_BYTES {
             return Err("watch byte budget exceeded".into());
         }
-        let hash = body.iter().fold(0xcbf29ce484222325u64, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-        });
-        snapshot.insert(PathBuf::from("Cargo.lock"), (body.len(), hash));
+        snapshot.insert(PathBuf::from("Cargo.lock"), signature(&body));
     } else if fs::symlink_metadata(&path)
         .err()
         .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)

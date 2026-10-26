@@ -5,6 +5,56 @@ interactive starters. No Cargo or JavaScript dependencies are added. The native
 and Wasm code still share ABI v11 and 22 exports. Production bundles keep their
 four versioned runtime assets.
 
+Alpha.34 adds CSS updates without compilation or server restart. New interactive
+starters declare `/assets/site.css` and its source `assets/site.css`. The CLI
+learns these declarations from a bounded `RVDS1` record written before server
+readiness. Projects without this record retain the normal rebuild path.
+
+## CSS updates
+
+When every changed file is a declared stylesheet and all other watched sources
+match the active executable, the CLI copies the declared CSS into immutable
+session files and publishes an `RVD2` status. Cargo does not run. The application
+revision, server memory, document and Wasm components stay in place, including
+drafts and pending actions. CSS edits alongside uncompiled Rust changes take
+the normal build path; a failed build keeps the previous styles and application.
+
+The browser stages matching stylesheet links beside their originals, with
+nonmatching media while loading. It replaces the originals only after every
+replacement loads. Cascade order, media and IDs are retained. Relative image,
+font and import URLs keep their original CSS directory because the stylesheet
+URL only receives a version query. Stylesheet source text is trusted CSS, with
+the same CSP restrictions as before; this feature does not parse CSS syntax.
+
+A failed load or three-second deadline removes the staged links and keeps the
+working styles. The panel reports the failure and retries with bounded backoff.
+Newer generations retire pending replacements. Hidden or departed documents
+cancel staged loads. Links removed or changed while loading are not committed.
+Only same-origin, plain declared URLs and previous development version URLs are
+eligible. Disabled, integrity-protected and custom load-handler links retain
+their originals. A stylesheet URL without an active link needs no DOM change.
+
+Declarations require embedded CSS assets and project-relative files under
+`assets/`. They reject duplicates, nonportable paths and more than 16 entries.
+Each CSS file is limited to 1 MiB and a complete generation to 8 MiB. At most
+eight generations are retained in the session directory, for at most 64 MiB of
+snapshot files. Older version requests fail after retirement rather than return
+different bytes. Only known owned files are removed at shutdown.
+
+The existing asset URL serves these snapshots only in development, using
+`?ruvane-css=SESSION-APPLICATION-GENERATION`; public URLs never reveal source or
+filesystem paths. Reads recheck real directories, regular files and byte limits.
+Origin checks, no-store and nosniff remain in force. Snapshot paths are built
+from validated integers and the registered asset index. Project directories must
+remain protected from hostile concurrent writers, as for other CLI operations.
+Native-only documents remain script-free and pick up current CSS on refresh.
+
+To add another stylesheet, register its embedded asset and document link, then
+add `.stylesheet("/assets/theme.css", "assets/theme.css")?` to the development
+configuration. Changing declarations or adding/removing source files rebuilds
+the application. Source files used as other compile-time inputs must use the
+normal rebuild path rather than be declared for CSS updates.
+
 Run `ruvane dev --offline` in a generated interactive project and open the printed
 HTTP address. A temporary page is available before the first compile finishes,
 including when that compile fails. The previous application continues serving
@@ -65,8 +115,12 @@ Production startup cannot enable development support through environment values.
 `ClientRuntime::development(Development::new(path, session)?)` is available for
 trusted custom local tooling; production applications must leave it unset.
 
-Projects generated before alpha.33 need the small compile-time configuration
-block from the current interactive `src/main.rs` template to use these tools.
+Projects generated before alpha.33 need the compile-time configuration block
+from the current interactive [src/main.rs template](../src/bin/cli/templates/interactive/main.rs.txt)
+to use browser feedback. For CSS updates, existing projects also need the
+stylesheet declarations and the managed-startup `.styles` readiness record
+shown in that template. An alpha.33 starter without that record still rebuilds
+normally after CSS edits.
 Updating the framework alone does not rewrite an existing application's source.
 
 ## Validation
@@ -74,7 +128,9 @@ Updating the framework alone does not rewrite an existing application's source.
 `cargo test --workspace --offline --locked --all-targets` covers first-build
 errors, old-server retention, readiness, startup rollback, production isolation,
 path/file/symlink validation, origin and session checks, CSP and native opt-out.
+It also checks consecutive CSS generations, retired snapshots, unchanged
+application revisions, retained server data and mixed-edit rebuild failures.
 `node --test browser/tests/development.test.mjs` checks parsing, bounded reads,
-reload safety, escaped diagnostics, backoff, visibility and disposal using only
+reload safety, escaped diagnostics, CSS load/rollback, backoff, visibility and disposal using only
 Node's built-in test runner. Browser validation also exercises a generated dev
 server across real source edits and a complete production build.

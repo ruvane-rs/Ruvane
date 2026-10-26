@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.0-alpha.34 — Unreleased
+
+- Update declared CSS in generated interactive dev projects without invoking
+  Cargo, restarting the application or recreating browser components.
+- Publish bounded immutable stylesheet snapshots; retain the previous styles
+  until every replacement loads and keep the original URL directory for assets.
+- Preserve drafts and actions during CSS updates; cancel retired, hidden or
+  superseded loads and retry failed loads without replacing working styles.
+- Use the normal protected rebuild for Rust, mixed and unregistered changes.
+- Keep development declarations, snapshots and CSS revision handling out of
+  production; preserve CSP and the four versioned runtime assets.
+- Add native, CLI and browser checks with zero third-party dependencies.
+  ABI v11, 22 exports and two first-party crates remain.
+
 ## 0.1.0-alpha.33 — Unreleased
 
 - Add first-build waiting pages and bounded browser compiler diagnostics for

@@ -511,6 +511,13 @@ keep scripts disabled. Compiler output is visible to the local development
 browser and must not contain secrets. Session IDs are public and do not
 authenticate local programs. See [development feedback](docs/development.md).
 
+Alpha.34 CSS updates read bounded snapshots of explicitly registered assets,
+with source names confined to project-relative `assets/` paths. The browser
+stages external stylesheets and retains working CSS after failed, expired or
+retired loads. Development-only asset handlers validate session/build/version
+tokens and origin metadata. CSS remains trusted application source. Production
+assets keep their embedded bytes and do not read development snapshot files.
+
 For reporting options, consult the repository's Security tab. If private
 vulnerability reporting is unavailable, contact a maintainer privately before
 sharing sensitive details. Do not include credentials or personal data.

@@ -369,6 +369,15 @@ impl App {
         }
         self.routes()?;
         if let Some(runtime) = &self.client_runtime {
+            if let Some(development) = &runtime.development {
+                for (url, _) in &development.styles {
+                    if !self.assets.iter().any(|asset| {
+                        asset.path.url().as_str() == url && asset.kind == MediaType::Css
+                    }) {
+                        return Err(AppError::InvalidPage);
+                    }
+                }
+            }
             let total: usize = runtime
                 .assets()
                 .iter()
@@ -410,6 +419,43 @@ impl App {
             site.asset(asset.path.clone(), asset.bytes, asset.kind)?;
         }
         Ok(site)
+    }
+    /// Returns the bounded stylesheet declaration record used by the local CLI.
+    /// It contains only public URLs and relative assets/ source names.
+    pub fn development_styles(&self) -> Result<String, AppError> {
+        self.validate()?;
+        let runtime = self.client_runtime.as_ref().ok_or(AppError::InvalidPage)?;
+        let mut record = format!("RVDS1\n{}\n", runtime.revision);
+        if let Some(development) = &runtime.development {
+            for (url, source) in &development.styles {
+                record.push_str(&format!("{url}\t{source}\n"));
+            }
+        }
+        Ok(record)
+    }
+    pub(super) fn mount_development_asset(
+        &self,
+        router: &mut Router,
+        asset: &super::Asset,
+    ) -> Result<bool, AppError> {
+        let Some(runtime) = &self.client_runtime else {
+            return Ok(false);
+        };
+        let Some(development) = &runtime.development else {
+            return Ok(false);
+        };
+        let Some(index) = development
+            .styles
+            .iter()
+            .position(|(url, _)| url == asset.path.url().as_str())
+        else {
+            return Ok(false);
+        };
+        let (development, revision, bytes) = (development.clone(), runtime.revision, asset.bytes);
+        router.get(asset.path.url().as_str(), move |request| {
+            development.css(request, revision, index, bytes)
+        })?;
+        Ok(true)
     }
     pub(super) fn mount_client_assets(&self, router: &mut Router) -> Result<(), AppError> {
         if let Some(runtime) = &self.client_runtime {

@@ -13,7 +13,8 @@ fn application() -> Result<ruvane::App, Box<dyn std::error::Error>> {
             .shell(pages::shell)
             .stylesheet(InternalUrl::new("/assets/site.css")?)?;
     if let (Some(path), Some(session)) = (option_env!("RUVANE_DEV_STATUS"), option_env!("RUVANE_DEV_SESSION")) {
-        runtime = runtime.development(ruvane::Development::new(path, session.parse()?)?);
+        runtime = runtime.development(ruvane::Development::new(path, session.parse()?)?
+            .stylesheet("/assets/site.css", "assets/site.css")?);
     }
     app.client_runtime(runtime)?;
     Ok(app)
@@ -158,6 +159,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let server = Server::bind(([127, 0, 0, 1], port).into(), router()?)?;
     if managed {
+        if option_env!("RUVANE_DEV_STATUS").is_some() {
+            let mut path = args[2].clone();
+            path.push(".styles");
+            let record = application()?.development_styles()?;
+            std::fs::OpenOptions::new().write(true).create_new(true).open(path)?.write_all(record.as_bytes())?;
+        }
         let shutdown = server.shutdown_handle();
         std::thread::spawn(move || {
             let _ = std::io::stdin().read_exact(&mut [0]);

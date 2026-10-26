@@ -7,8 +7,69 @@ function decimal(value) {
 export function parseStatus(text, session) {
   if (typeof text !== "string" || new TextEncoder().encode(text).length > LIMIT || /[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(text)) throw new Error("Invalid development status");
   const split = text.indexOf("\n\n"), lines = text.slice(0, split).split("\n");
-  if (split < 0 || lines.length !== 5 || lines[0] !== "RVD1" || decimal(lines[1]) !== session || decimal(lines[2]) === "0" || !["building", "ready", "error"].includes(lines[3]) || decimal(lines[4]) === "0" && lines[3] === "ready") throw new Error("Invalid development status");
-  return Object.freeze({ sequence: BigInt(lines[2]), state: lines[3], revision: lines[4], message: text.slice(split + 2) });
+  if (split < 0 || lines.length < 5 || !["RVD1", "RVD2"].includes(lines[0]) || decimal(lines[1]) !== session || decimal(lines[2]) === "0" || !["building", "ready", "error"].includes(lines[3]) || decimal(lines[4]) === "0" && lines[3] === "ready") throw new Error("Invalid development status");
+  let cssRevision = "0", styles = [];
+  if (lines[0] === "RVD2") {
+    cssRevision = decimal(lines[5]); const count = Number(decimal(lines[6]));
+    if (count < 1 || count > 16 || lines.length !== count + 7 || cssRevision === "0" || lines[4] === "0") throw new Error("Invalid development styles");
+    styles = lines.slice(7);
+    if (new Set(styles).size !== count || styles.some(url => !styleURL(url))) throw new Error("Invalid development styles");
+  } else if (lines.length !== 5) throw new Error("Invalid development status");
+  return Object.freeze({ sequence: BigInt(lines[2]), state: lines[3], revision: lines[4], cssRevision, styles: Object.freeze(styles), message: text.slice(split + 2) });
+}
+
+function styleURL(url) {
+  return typeof url === "string" && url.length <= 240 && !url.startsWith("/_ruvane/") && url.endsWith(".css") && !url.includes("..") && /^\/(?:[a-z0-9][a-z0-9_-]*\/)*[a-z0-9][a-z0-9_.-]*\.css$/.test(url) && url.slice(1).split("/").every(part => part.length <= 64);
+}
+
+export function createStyleUpdater({ document, window, session, revision, onChange = () => {}, now = () => Date.now() }) {
+  let current = "0", job = null, error = false, stopped = false, retryAt = 0, failures = 0, requested = "0";
+  function cancel() {
+    if (!job) return;
+    const previous = job; job = null; window.clearTimeout(previous.timer);
+    for (const row of previous.rows) { row.next.removeEventListener("load", row.load); row.next.removeEventListener("error", row.fail); row.next.remove(); }
+  }
+  function failed(active) {
+    if (job !== active) return;
+    cancel(); error = true; failures++; retryAt = now() + Math.min(8000, 1000 * 2 ** Math.min(failures - 1, 3)); onChange();
+  }
+  function commit(active) {
+    if (job !== active || active.rows.some(row => !row.loaded)) return;
+    if (document.hidden || active.rows.some(row => !row.old.isConnected || !row.next.isConnected || row.old.getAttribute("href") !== row.href || row.old.disabled || row.old.getAttribute("media") !== row.media || row.old.getAttribute("id") !== row.id || row.old.getAttribute("rel") !== "stylesheet" || row.next.getAttribute("href") !== row.nextHref || row.next.getAttribute("media") !== "not all" || row.next.disabled || row.next.getAttribute("rel") !== "stylesheet")) { cancel(); return; }
+    window.clearTimeout(active.timer);
+    for (const row of active.rows) {
+      row.next.removeEventListener("load", row.load); row.next.removeEventListener("error", row.fail);
+      row.old.remove();
+      if (row.id !== null) row.next.setAttribute("id", row.id);
+      if (row.media === null) row.next.removeAttribute("media"); else row.next.setAttribute("media", row.media);
+    }
+    job = null; current = active.generation; failures = 0; retryAt = 0; error = false; onChange();
+  }
+  function request(status) {
+    if (stopped || document.hidden || status.revision !== revision || !status.styles.length || status.cssRevision === "0" || BigInt(status.cssRevision) <= BigInt(current)) return;
+    if (requested !== status.cssRevision) { cancel(); requested = status.cssRevision; retryAt = 0; failures = 0; error = false; }
+    if (job || now() < retryAt) return;
+    const active = { generation: status.cssRevision, rows: [], timer: null }; job = active;
+    try {
+      const base = new URL(document.baseURI);
+      const links = [...document.head.querySelectorAll('link[rel="stylesheet"]')];
+      if (links.length > 64) throw new Error("Too many stylesheets");
+      for (const old of links) {
+        const href = old.getAttribute("href"), url = new URL(href, base);
+        if (url.origin !== base.origin || !status.styles.includes(url.pathname)) continue;
+        if (url.hash || url.search && !new RegExp(`^\\?ruvane-css=${session}-${revision}-[1-9][0-9]{0,19}$`).test(url.search) || old.disabled || old.hasAttribute("integrity") || old.hasAttribute("onload") || old.hasAttribute("onerror")) throw new Error("Unsupported development stylesheet");
+        const next = old.cloneNode(false), row = { old, next, href, media: old.getAttribute("media"), id: old.getAttribute("id"), loaded: false };
+        next.removeAttribute("id"); next.setAttribute("media", "not all"); next.setAttribute("href", `${url.pathname}?ruvane-css=${session}-${revision}-${status.cssRevision}`);
+        row.nextHref = next.getAttribute("href");
+        row.load = () => { if (job === active) { row.loaded = true; commit(active); } }; row.fail = () => failed(active);
+        next.addEventListener("load", row.load); next.addEventListener("error", row.fail); active.rows.push(row);
+      }
+      if (!active.rows.length) { job = null; current = status.cssRevision; error = false; return; }
+      active.timer = window.setTimeout(() => failed(active), 3000);
+      for (const row of active.rows) row.old.after(row.next);
+    } catch { failed(active); }
+  }
+  return Object.freeze({ request, cancel, stop() { stopped = true; cancel(); }, get error() { return error; }, get revision() { return current; } });
 }
 
 export function changedFields(fields) {
@@ -73,6 +134,7 @@ export function startDevelopment({ document, window, fetch, loadApplication = ur
     if (wasm !== `/ruvane-runtime/${hex}/app.wasm`) throw new Error("Invalid development revision");
     Promise.resolve().then(() => loadApplication(wasm.replace("app.wasm", "application.mjs"))).then(module => { if (!stopped && typeof module.applicationState === "function") application = module; }).catch(() => {});
   }
+  const styles = createStyleUpdater({ document, window, session, revision, onChange: update });
   function safety() {
     let state;
     try { state = placeholder ? { ready: true, actions: { state: "active", pending: 0, uncertain: false }, navigationPending: false } : application?.applicationState(); } catch { state = null; }
@@ -89,7 +151,11 @@ export function startDevelopment({ document, window, fetch, loadApplication = ur
       diagnostics.textContent = latest.message; diagnostics.hidden = false; return;
     }
     if (latest.state === "building") { title.textContent = "Building…"; message.textContent = ""; return; }
-    if (latest.revision === revision) { panel.hidden = true; return; }
+    if (latest.revision === revision) {
+      panel.hidden = !styles.error;
+      if (styles.error) { title.textContent = "Stylesheet update failed"; message.textContent = "The previous styles are still active. Retrying automatically."; }
+      return;
+    }
     const reason = safety();
     if (reason === "safe" && failures === 0) { reloading = true; window.location.reload(); return; }
     title.textContent = "New version available";
@@ -110,16 +176,18 @@ export function startDevelopment({ document, window, fetch, loadApplication = ur
     const active = controller, timeout = window.setTimeout(() => active.abort(), 2000);
     try {
       const response = await fetch("/_ruvane/dev/status", { headers: { Accept: "text/plain", "Ruvane-Development": session }, credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error", signal: active.signal });
-      if (response.status === 409) { foreign = true; throw new Error("Development session changed"); }
+      if (response.status === 409) { foreign = true; styles.cancel(); throw new Error("Development session changed"); }
       const status = parseStatus(await readStatus(response), session);
       if (status.sequence < sequence) throw new Error("Development status went backwards");
-      if (status.sequence === sequence && latest && (status.state !== latest.state || status.revision !== latest.revision || status.message !== latest.message)) throw new Error("Development status changed without a sequence");
+      if (latest && status.revision === latest.revision && (BigInt(status.cssRevision) < BigInt(latest.cssRevision) || latest.cssRevision !== "0" && JSON.stringify(status.styles) !== JSON.stringify(latest.styles))) throw new Error("Development styles changed incompatibly");
+      if (status.sequence === sequence && latest && (status.state !== latest.state || status.revision !== latest.revision || status.message !== latest.message || status.cssRevision !== latest.cssRevision || JSON.stringify(status.styles) !== JSON.stringify(latest.styles))) throw new Error("Development status changed without a sequence");
       sequence = status.sequence; latest = status; failures = 0;
+      styles.request(status);
     } catch { failures++; }
     finally { window.clearTimeout(timeout); controller = null; if (!stopped) { update(); schedule(Math.min(8000, 1000 * 2 ** Math.min(failures, 3))); } }
   }
-  listen(document, "visibilitychange", () => { window.clearTimeout(timer); timer = null; if (document.hidden) controller?.abort(); else if (!controller) poll(); });
-  function stop() { if (stopped) return; stopped = true; window.clearTimeout(timer); controller?.abort(); for (const remove of listeners) remove(); panel.remove(); style.remove(); }
+  listen(document, "visibilitychange", () => { window.clearTimeout(timer); timer = null; if (document.hidden) { controller?.abort(); styles.cancel(); } else if (!controller) poll(); });
+  function stop() { if (stopped) return; stopped = true; window.clearTimeout(timer); controller?.abort(); styles.stop(); for (const remove of listeners) remove(); panel.remove(); style.remove(); }
   listen(window, "pagehide", stop);
   update(); poll();
   return Object.freeze({ stop });

@@ -56,7 +56,8 @@ Opted-in [shell islands](docs/shell-hydration.md) can activate independently whi
 the initial page loads, preserving local state through final adoption and recovery.
 New interactive starters provide [browser development feedback](docs/development.md):
 compiler diagnostics, first-build waiting pages and guarded full-document reloads
-after the replacement server is ready.
+after the replacement server is ready. Declared CSS updates in place without
+compilation or server restart, keeping the current components and drafts.
 
 Create an interactive project from a local checkout:
 

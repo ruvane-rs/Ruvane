@@ -1,5 +1,9 @@
 # Ruvane CLI
 
+Alpha.34 updates explicitly declared CSS in interactive dev projects without
+Cargo or server restart, preserving the current document and components.
+Other changes use the existing protected rebuild. See [development feedback](development.md).
+
 Alpha.33 adds [browser development feedback](development.md) for new interactive
 starters: first-build diagnostics, a bounded compiler-error panel and guarded
 reload after server readiness. Static starters retain manual refresh.
