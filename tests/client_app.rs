@@ -908,3 +908,258 @@ fn public_boundary_manifest_declares_routes_without_running_other_loaders() {
     assert!(html.contains("data-rvn-chain=\"root,item_context\""));
     assert!(html.contains("data-rvn-loading=\"5\""));
 }
+
+#[test]
+fn file_boundaries_validate_all_states_and_poison_failed_batches_before_activation() {
+    use ruvane::{FileError, FileLoading, FilePage, FileRouteRegistry};
+    for component in [0, 1, 3, 5, 999] {
+        let mut app = App::new();
+        app.components(factory, 3).unwrap();
+        let mut registry = FileRouteRegistry::new(&mut app);
+        registry
+            .page(
+                "page.rs",
+                "/",
+                None,
+                FilePage::client("home", 1, zero, |_| {
+                    Ok(ClientPageData::new("Home", data("Home")))
+                }),
+            )
+            .unwrap();
+        let error = registry
+            .boundary(
+                None,
+                Some(("loading.rs", FileLoading::new(5))),
+                Some(("error.rs", FileError::new(component))),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.path(), "error.rs");
+        assert!(registry.finish().is_err());
+        assert!(app.url("home", &[]).is_err());
+    }
+    for loading in [true, false] {
+        let mut app = App::new();
+        app.components(factory, 3).unwrap();
+        app.client_boundary(Some(ruvane::ClientBoundary::new(5, 4).unwrap()))
+            .unwrap();
+        let mut registry = FileRouteRegistry::new(&mut app);
+        let error = registry
+            .boundary(
+                None,
+                loading.then(|| ("loading.rs", FileLoading::new(5))),
+                (!loading).then(|| ("error.rs", FileError::new(4))),
+            )
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("complete pair"));
+        assert!(registry.finish().is_err());
+    }
+}
+
+#[test]
+fn file_presentations_reject_native_consumers_and_factories_without_a_component_registry() {
+    use ruvane::{FileError, FileLayout, FileLoading, FilePage, FileRouteRegistry};
+    let mut app = App::new();
+    let mut registry = FileRouteRegistry::new(&mut app);
+    assert!(
+        registry
+            .boundary(
+                None,
+                Some(("loading.rs", FileLoading::new(5))),
+                Some(("error.rs", FileError::new(4)))
+            )
+            .is_err()
+    );
+    assert!(registry.finish().is_err());
+    for layout in [true, false] {
+        let mut app = App::new();
+        app.components(factory, 3).unwrap();
+        let mut registry = FileRouteRegistry::new(&mut app);
+        let boundary = registry
+            .boundary(
+                None,
+                Some(("loading.rs", FileLoading::new(5))),
+                Some(("error.rs", FileError::new(4))),
+            )
+            .unwrap();
+        if layout {
+            assert!(
+                registry
+                    .layout(
+                        "layout.rs",
+                        "/",
+                        None,
+                        FileLayout::server("native", |_, _, body| body).with_boundary(&boundary)
+                    )
+                    .is_err()
+            );
+        } else {
+            assert!(
+                registry
+                    .page(
+                        "page.rs",
+                        "/",
+                        None,
+                        FilePage::server("native", PageMode::fixed(), |_| Ok(ruvane::Page::new(
+                            "Native", "Native"
+                        )))
+                        .with_boundary(&boundary)
+                    )
+                    .is_err()
+            );
+        }
+        assert!(registry.finish().is_err());
+    }
+}
+
+#[test]
+fn file_screens_keep_healthy_parents_and_cannot_catch_their_own_layout_loader() {
+    use ruvane::{FileError, FileLayout, FileLoading, FilePage, FileRouteRegistry};
+    let loads = Arc::new(AtomicUsize::new(0));
+    let mut app = App::new();
+    app.components(factory, 3).unwrap();
+    let mut registry = FileRouteRegistry::new(&mut app);
+    let screens = registry
+        .boundary(
+            None,
+            Some(("loading.rs", FileLoading::new(5))),
+            Some(("error.rs", FileError::new(4))),
+        )
+        .unwrap();
+    let screens = registry
+        .boundary(
+            Some(&screens),
+            None,
+            Some(("items/error.rs", FileError::new(4))),
+        )
+        .unwrap();
+    let screens = registry
+        .boundary(
+            Some(&screens),
+            Some(("items/details/loading.rs", FileLoading::new(5))),
+            None,
+        )
+        .unwrap();
+    let counted = Arc::clone(&loads);
+    let parent = registry
+        .layout(
+            "layout.rs",
+            "/",
+            None,
+            FileLayout::client("root", 1, zero, move |_| {
+                counted.fetch_add(1, Ordering::Relaxed);
+                Ok(ruvane::ClientLayoutData::new(data("Healthy root")))
+            })
+            .with_boundary(&screens),
+        )
+        .unwrap();
+    let child = registry
+        .layout(
+            "items/layout.rs",
+            "/items",
+            Some(&parent),
+            FileLayout::client("child", 1, zero, |context| {
+                if context.request().unwrap().query_params().get("layout") == Some("fail") {
+                    Err(PageError::InternalServerError)
+                } else {
+                    Ok(ruvane::ClientLayoutData::new(data("Healthy child")))
+                }
+            })
+            .with_boundary(&screens),
+        )
+        .unwrap();
+    registry
+        .page(
+            "items/page.rs",
+            "/items",
+            Some(&child),
+            FilePage::client("items", 2, zero, |_| Err(PageError::NotFound))
+                .with_boundary(&screens),
+        )
+        .unwrap();
+    registry.finish().unwrap();
+    assert_eq!(loads.load(Ordering::Relaxed), 0);
+    let server = Running::new(app.clone());
+    for (url, retained, failed, status) in [
+        ("/items", 2, 2, StatusCode::NotFound),
+        ("/items?layout=fail", 1, 1, StatusCode::InternalServerError),
+    ] {
+        let (headers, body) = server.get("GET", url, true);
+        assert!(headers.contains("Cache-Control: no-store"));
+        let packet = NavigationPage::decode(&body).unwrap();
+        assert_eq!(packet.status(), status);
+        assert_eq!(packet.props().component(), 4);
+        assert_eq!(packet.layouts().len(), retained);
+        assert_eq!(packet.failed_segment(), Some(failed));
+        assert!(app.validate_navigation(&packet));
+    }
+    let (headers, body) = server.get("GET", "/items?native=yes", false);
+    let html = String::from_utf8(body).unwrap();
+    assert!(headers.contains("script-src 'none'") && !html.contains("<script"));
+    assert!(
+        html.contains("Healthy root")
+            && html.contains("Healthy child")
+            && html.contains("Local boundary")
+    );
+}
+
+#[test]
+fn file_presentations_reject_event_bindings_pending_actions_and_panics() {
+    struct Invalid(u32);
+    impl Component for Invalid {
+        fn page_data(&mut self, _: ActionData) -> Result<(), ComponentError> {
+            Ok(())
+        }
+        fn view(&self) -> Result<View, ComponentError> {
+            if self.0 == 8 {
+                panic!("private presentation diagnostic");
+            }
+            let mut view = View::new();
+            if self.0 == 6 {
+                view.button(0, "Mutate", 1, false)?;
+            }
+            Ok(view)
+        }
+        fn take_action(&mut self) -> Option<ruvane::ActionRequest> {
+            (self.0 == 7).then(|| {
+                ruvane::ActionRequest::new(
+                    1,
+                    InternalUrl::new("/actions/write").unwrap(),
+                    ruvane::FormData::default(),
+                )
+                .unwrap()
+            })
+        }
+        fn dispatch(&mut self, _: u32) -> Result<(), ComponentError> {
+            Ok(())
+        }
+    }
+    fn invalid(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
+        if matches!(props.component(), 6..=8) {
+            Ok(Box::new(Invalid(props.component())))
+        } else {
+            factory(props)
+        }
+    }
+    for component in 6..=8 {
+        let mut app = App::new();
+        app.components(invalid, 3).unwrap();
+        let mut registry = ruvane::FileRouteRegistry::new(&mut app);
+        let error = registry
+            .boundary(
+                None,
+                Some(("loading.rs", ruvane::FileLoading::new(5))),
+                Some(("tasks/error.rs", ruvane::FileError::new(component))),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.path(), "tasks/error.rs");
+        assert!(
+            !error
+                .to_string()
+                .contains("private presentation diagnostic")
+        );
+        assert!(registry.finish().is_err());
+    }
+}

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-alpha.36 — Unreleased
+
+- Generate typed loading.rs/error.rs declarations with explicit file inheritance;
+  descendants can replace one presentation while inheriting the other.
+- Validate local presentation factories, required states, empty seeds, bounded
+  read-only views and absence of initial actions before committing the registry.
+- Reuse page/layout boundaries, healthy parent preservation and fresh GET retry;
+  retain the existing App fallback and never replay POST actions.
+- Include all four source kinds in the discovery and regeneration budgets, reject
+  orphan screens and native consumers, and report relative source diagnostics.
+- Add starter screens and native, CLI, Wasm and browser coverage with zero
+  third-party dependencies. ABI v11, 22 exports and four runtime assets remain.
+
 ## 0.1.0-alpha.35 — Unreleased
 
 - Add opt-in `new --interactive --file-routes` with a generated native/Wasm

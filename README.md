@@ -59,7 +59,8 @@ compiler diagnostics, first-build waiting pages and guarded full-document reload
 after the replacement server is ready. Declared CSS updates in place without
 compilation or server restart, keeping the current components and drafts.
 Opt-in [file routes](docs/file-routes.md) generate a shared Rust registry from
-`page.rs`, `layout.rs` and `[parameter]` directories during Cargo builds.
+`page.rs`, `layout.rs`, `loading.rs`, `error.rs` and `[parameter]` directories
+during Cargo builds. Loading and error screens inherit through the route tree.
 
 Create an interactive project from a local checkout:
 

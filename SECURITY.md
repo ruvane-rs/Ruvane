@@ -528,6 +528,16 @@ declaration functions and imported code remain trusted executable inputs. Source
 and output directories must be protected from concurrent hostile changes.
 See [file routes](docs/file-routes.md) for the exact format and limits.
 
+Alpha.36 file loading/error screens use the same bounded discovery and atomic
+registry. The first file scope must resolve both components; descendants can
+replace one through file inheritance. Registration checks local factories and
+views against empty seeds and every required state, rejects event bindings and
+initial actions, and catches native unwinding panics as generic source errors.
+These checks execute trusted presentation code; they cannot sandbox callbacks or
+recover Wasm traps. Native consumers and orphan screens are rejected. Existing
+boundary scope validation, no-store errors, script-free native responses and
+fresh GET retry apply unchanged; POST actions are never replayed by retry.
+
 For reporting options, consult the repository's Security tab. If private
 vulnerability reporting is unavailable, contact a maintainer privately before
 sharing sensitive details. Do not include credentials or personal data.

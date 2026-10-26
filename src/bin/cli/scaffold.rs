@@ -253,6 +253,14 @@ fn create_interactive(name: &str, framework: Option<&Path>, file_routes: bool) -
                 include_str!("templates/file_routes/workspace.rs.txt"),
             ),
             (
+                "src/routes/tasks/loading.rs",
+                include_str!("templates/file_routes/loading.rs.txt"),
+            ),
+            (
+                "src/routes/tasks/error.rs",
+                include_str!("templates/file_routes/error.rs.txt"),
+            ),
+            (
                 "src/routes/tasks/[id]/page.rs",
                 include_str!("templates/file_routes/task.rs.txt"),
             ),

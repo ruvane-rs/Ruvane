@@ -2,14 +2,17 @@
 
 mod declarations;
 use crate::{PageRoute, Router};
-pub use declarations::{FileLayout, FilePage, FileRouteLayout, FileRouteRegistry};
+pub use declarations::{
+    FileError, FileLayout, FileLoading, FilePage, FileRouteBoundary, FileRouteLayout,
+    FileRouteRegistry,
+};
 use std::fmt::{self, Write as _};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Maximum page.rs and layout.rs source files in a route tree.
+/// Maximum page, layout, loading and error source files in a route tree.
 pub const MAX_FILE_ROUTE_FILES: usize = 128;
 /// Maximum source bytes in one route file.
 pub const MAX_FILE_ROUTE_SOURCE_BYTES: usize = 256 * 1024;
@@ -56,16 +59,42 @@ struct Source {
     path: PathBuf,
     pattern: String,
     parent: Option<usize>,
-    layout: bool,
+    kind: SourceKind,
+    boundary: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SourceKind {
+    Page,
+    Layout,
+    Loading,
+    Error,
+}
+impl SourceKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Page => "page.rs",
+            Self::Layout => "layout.rs",
+            Self::Loading => "loading.rs",
+            Self::Error => "error.rs",
+        }
+    }
+}
+#[derive(Debug)]
+struct BoundarySource {
+    parent: Option<usize>,
+    loading: Option<usize>,
+    error: Option<usize>,
 }
 
 /// A deterministic route tree discovered before compilation, never from HTTP input.
-/// Only `page.rs`, `layout.rs` and portable literal or `[parameter]` directories are accepted.
+/// Accepts page/layout/loading/error Rust files and portable literal or `[parameter]` directories.
 #[derive(Debug)]
 pub struct FileRoutes {
     sources: Vec<Source>,
     pages: usize,
     layouts: usize,
+    boundaries: Vec<BoundarySource>,
 }
 impl FileRoutes {
     /// Scans real directories and bounded UTF-8 source files without parsing Rust.
@@ -77,13 +106,14 @@ impl FileRoutes {
                 sources: Vec::new(),
                 pages: 0,
                 layouts: 0,
+                boundaries: Vec::new(),
             },
             directories: 0,
             entries: 0,
             bytes: 0,
             router: Router::new(),
         };
-        scan.visit(&root, &mut Vec::new(), None)?;
+        scan.visit(&root, &mut Vec::new(), None, None)?;
         if scan.result.pages == 0 {
             return Err(FileRouteError::at("<routes>", "no page.rs files found"));
         }
@@ -98,11 +128,23 @@ impl FileRoutes {
         self.layouts
     }
 
+    /// Returns the number of directories declaring loading or error presentations.
+    pub fn boundary_count(&self) -> usize {
+        self.boundaries.len()
+    }
+
     /// Generates typed module imports and one atomic `register(&mut App)` function.
     pub fn rust_module(&self) -> Result<String, FileRouteError> {
         let mut result = String::from(MARKER);
+        let mut bytes = 0;
         for (index, source) in self.sources.iter().enumerate() {
-            read_source(&source.path, &source.relative)?;
+            bytes += read_source(&source.path, &source.relative)?.len();
+            if bytes > MAX_FILE_ROUTE_TOTAL_BYTES {
+                return Err(FileRouteError::at(
+                    &source.relative,
+                    "route source total byte limit exceeded",
+                ));
+            }
             let path = source
                 .path
                 .to_str()
@@ -110,20 +152,45 @@ impl FileRoutes {
             writeln!(result, "#[path = {path:?}]\nmod __ruvane_file_{index};").unwrap();
         }
         result.push_str("pub fn register(app: &mut ruvane::App) -> Result<(), ruvane::FileRouteError> {\n    let mut registry = ruvane::FileRouteRegistry::new(app);\n");
+        for (index, boundary) in self.boundaries.iter().enumerate() {
+            let parent = boundary
+                .parent
+                .map_or_else(|| "None".into(), |index| format!("Some(&boundary_{index})"));
+            let declaration = |source: Option<usize>, function: &str| {
+                source.map_or_else(
+                    || "None".to_owned(),
+                    |index| {
+                        format!(
+                            "Some(({:?}, __ruvane_file_{index}::{function}()))",
+                            self.sources[index].relative
+                        )
+                    },
+                )
+            };
+            writeln!(
+                result,
+                "    let boundary_{index} = registry.boundary({parent}, {}, {})?;",
+                declaration(boundary.loading, "loading"),
+                declaration(boundary.error, "error")
+            )
+            .unwrap();
+        }
         for (index, source) in self.sources.iter().enumerate() {
             let parent = source.parent.map_or_else(
                 || "None".to_owned(),
                 |index| format!("Some(&layout_{index})"),
             );
-            if source.layout {
-                writeln!(result, "    let layout_{index} = registry.layout({:?}, {:?}, {parent}, __ruvane_file_{index}::layout())?;", source.relative, source.pattern).unwrap();
-            } else {
-                writeln!(
-                    result,
-                    "    registry.page({:?}, {:?}, {parent}, __ruvane_file_{index}::page())?;",
-                    source.relative, source.pattern
-                )
-                .unwrap();
+            let boundary = source.boundary.map_or_else(String::new, |index| {
+                format!(".with_boundary(&boundary_{index})")
+            });
+            match source.kind {
+                SourceKind::Layout => {
+                    writeln!(result, "    let layout_{index} = registry.layout({:?}, {:?}, {parent}, __ruvane_file_{index}::layout(){boundary})?;", source.relative, source.pattern).unwrap();
+                }
+                SourceKind::Page => {
+                    writeln!(result, "    registry.page({:?}, {:?}, {parent}, __ruvane_file_{index}::page(){boundary})?;", source.relative, source.pattern).unwrap();
+                }
+                SourceKind::Loading | SourceKind::Error => {}
             }
         }
         result.push_str("    registry.finish()\n}\n");
@@ -282,6 +349,7 @@ impl Scan {
         directory: &Path,
         segments: &mut Vec<String>,
         inherited: Option<usize>,
+        inherited_boundary: Option<usize>,
     ) -> Result<(), FileRouteError> {
         self.directories += 1;
         let label = if segments.is_empty() {
@@ -308,6 +376,8 @@ impl Scan {
         let mut children = Vec::new();
         let mut page = false;
         let mut layout = false;
+        let mut loading = false;
+        let mut error = false;
         for entry in entries {
             let name = entry
                 .file_name()
@@ -329,16 +399,23 @@ impl Scan {
                     return Err(FileRouteError::at(&name, "reserved framework route prefix"));
                 }
                 children.push(name);
-            } else if kind.is_file() && matches!(name.as_str(), "page.rs" | "layout.rs") {
-                if name == "page.rs" {
-                    page = true;
-                } else {
-                    layout = true;
+            } else if kind.is_file()
+                && matches!(
+                    name.as_str(),
+                    "page.rs" | "layout.rs" | "loading.rs" | "error.rs"
+                )
+            {
+                match name.as_str() {
+                    "page.rs" => page = true,
+                    "layout.rs" => layout = true,
+                    "loading.rs" => loading = true,
+                    "error.rs" => error = true,
+                    _ => unreachable!(),
                 }
             } else {
                 return Err(FileRouteError::at(
                     format!("{label}/{name}"),
-                    "expected page.rs, layout.rs or a route directory",
+                    "expected page.rs, layout.rs, loading.rs, error.rs or a route directory",
                 ));
             }
         }
@@ -351,21 +428,76 @@ impl Scan {
                 .join("/")
         );
         PageRoute::new("file", &pattern).map_err(|error| FileRouteError::at(&label, error))?;
+        let mut boundary = inherited_boundary;
+        if loading || error {
+            let loading = if loading {
+                Some(self.add(
+                    directory,
+                    segments,
+                    &pattern,
+                    inherited,
+                    SourceKind::Loading,
+                    None,
+                )?)
+            } else {
+                None
+            };
+            let error = if error {
+                Some(self.add(
+                    directory,
+                    segments,
+                    &pattern,
+                    inherited,
+                    SourceKind::Error,
+                    None,
+                )?)
+            } else {
+                None
+            };
+            boundary = Some(self.result.boundaries.len());
+            self.result.boundaries.push(BoundarySource {
+                parent: inherited_boundary,
+                loading,
+                error,
+            });
+        }
         let mut parent = inherited;
         if layout {
-            parent = Some(self.add(directory, segments, &pattern, inherited, true)?);
+            parent = Some(self.add(
+                directory,
+                segments,
+                &pattern,
+                inherited,
+                SourceKind::Layout,
+                boundary,
+            )?);
         }
         let pages_before = self.result.pages;
         if page {
             self.router
                 .get(&pattern, |_| crate::Response::text(""))
                 .map_err(|error| FileRouteError::at(format!("{label}/page.rs"), error))?;
-            self.add(directory, segments, &pattern, parent, false)?;
+            self.add(
+                directory,
+                segments,
+                &pattern,
+                parent,
+                SourceKind::Page,
+                boundary,
+            )?;
         }
         for name in children {
             segments.push(name.clone());
-            self.visit(&directory.join(name), segments, parent)?;
+            self.visit(&directory.join(name), segments, parent, boundary)?;
             segments.pop();
+        }
+        if boundary != inherited_boundary && self.result.pages == pages_before {
+            let scope = &self.result.boundaries[boundary.unwrap()];
+            let source = &self.result.sources[scope.loading.or(scope.error).unwrap()];
+            return Err(FileRouteError::at(
+                &source.relative,
+                "presentation has no descendant pages",
+            ));
         }
         if layout && self.result.pages == pages_before {
             return Err(FileRouteError::at(
@@ -381,16 +513,17 @@ impl Scan {
         segments: &[String],
         pattern: &str,
         parent: Option<usize>,
-        layout: bool,
+        kind: SourceKind,
+        boundary: Option<usize>,
     ) -> Result<usize, FileRouteError> {
-        let name = if layout { "layout.rs" } else { "page.rs" };
+        let name = kind.name();
         let relative = if segments.is_empty() {
             name.to_owned()
         } else {
             format!("{}/{name}", segments.join("/"))
         };
         if self.result.sources.len() == MAX_FILE_ROUTE_FILES
-            || layout && self.result.layouts == crate::MAX_APP_LAYOUTS
+            || kind == SourceKind::Layout && self.result.layouts == crate::MAX_APP_LAYOUTS
         {
             return Err(FileRouteError::at(
                 &relative,
@@ -411,12 +544,13 @@ impl Scan {
             path,
             pattern: pattern.into(),
             parent,
-            layout,
+            kind,
+            boundary,
         });
-        if layout {
-            self.result.layouts += 1;
-        } else {
-            self.result.pages += 1;
+        match kind {
+            SourceKind::Layout => self.result.layouts += 1,
+            SourceKind::Page => self.result.pages += 1,
+            SourceKind::Loading | SourceKind::Error => {}
         }
         Ok(index)
     }

@@ -1,0 +1,3 @@
+pub fn loading() -> ruvane::FileLoading {
+    ruvane::FileLoading::new(crate::components::LOADING)
+}

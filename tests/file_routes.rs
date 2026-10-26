@@ -346,3 +346,76 @@ fn symlinks_are_rejected_in_roots_sources_ancestors_and_outputs() {
     assert!(routes.rust_module().is_err());
     assert_eq!(fs::read(&output).unwrap(), b"keep");
 }
+
+#[test]
+fn screen_sources_are_typed_inherited_and_counted_in_the_same_scan_budget() {
+    let temp = Temp::new();
+    for file in [
+        "routes/tasks/loading.rs",
+        "routes/tasks/error.rs",
+        "routes/tasks/layout.rs",
+        "routes/tasks/page.rs",
+        "routes/tasks/[id]/error.rs",
+        "routes/tasks/[id]/page.rs",
+    ] {
+        temp.file(file, "");
+    }
+    let routes = temp.routes().unwrap();
+    assert_eq!(
+        (
+            routes.page_count(),
+            routes.layout_count(),
+            routes.boundary_count()
+        ),
+        (2, 1, 2)
+    );
+    let source = routes.rust_module().unwrap();
+    assert!(source.contains("registry.boundary(None, Some((\"tasks/loading.rs\""));
+    assert!(
+        source.contains("registry.boundary(Some(&boundary_0), None, Some((\"tasks/[id]/error.rs\"")
+    );
+    assert!(source.contains("::layout().with_boundary(&boundary_0)"));
+    assert!(source.contains("::page().with_boundary(&boundary_1)"));
+    assert_eq!(source, routes.rust_module().unwrap());
+    for file in ["loading.rs", "error.rs"] {
+        let temp = Temp::new();
+        temp.file("routes/page.rs", "");
+        temp.file(&format!("routes/orphan/{file}"), "");
+        let error = temp.routes().unwrap_err();
+        assert!(error.path().ends_with(file));
+        assert!(error.to_string().contains("no descendant pages"));
+    }
+    let temp = Temp::new();
+    temp.file("routes/page.rs", "");
+    temp.file("routes/loading.rs", "");
+    temp.file(
+        "routes/error.rs",
+        vec![b' '; ruvane::MAX_FILE_ROUTE_SOURCE_BYTES + 1],
+    );
+    assert!(temp.routes().unwrap_err().path().ends_with("error.rs"));
+}
+
+#[test]
+fn regeneration_rechecks_the_combined_source_budget_including_screens() {
+    let temp = Temp::new();
+    for index in 0..9 {
+        temp.file(&format!("routes/p{index}/page.rs"), "");
+        temp.file(&format!("routes/p{index}/error.rs"), "");
+    }
+    let routes = temp.routes().unwrap();
+    for index in 0..9 {
+        for name in ["page.rs", "error.rs"] {
+            temp.file(
+                &format!("routes/p{index}/{name}"),
+                vec![b' '; ruvane::MAX_FILE_ROUTE_SOURCE_BYTES],
+            );
+        }
+    }
+    assert!(
+        routes
+            .rust_module()
+            .unwrap_err()
+            .to_string()
+            .contains("total byte limit")
+    );
+}

@@ -16,6 +16,9 @@ const empty = [82,86,65,49,0,0,0], count = [82,86,65,49,0,1,0,5,99,111,117,110,1
 function packet(url, component, state = 0, layouts = []) {
   return new Uint8Array([82,86,80,layouts.length ? 50 : 49,...(layouts.length ? [0] : []),200,0,...text(url),...text("File route"),...word(component),...word(1),...word(state),...word(count.length),...count,...(layouts.length ? [layouts.length, ...layouts.flatMap(([name,key,id,value]) => [...text(name),...text(key),...word(id),...word(1),...word(value),...word(empty.length),...empty])] : [])]);
 }
+function failure(url, component, layouts, failed = layouts.length) {
+  return new Uint8Array([82,86,80,51,0,failed,244,1,...text(url),...text("File error"),...word(component),...word(1),...word(500),...word(empty.length),...empty,layouts.length,...layouts.flatMap(([name,key,id,value]) => [...text(name),...text(key),...word(id),...word(1),...word(value),...word(empty.length),...empty])]);
+}
 async function exportsFor(project, version) {
   const bundle = join(project, "dist", `build-${String(version).padStart(6,"0")}`);
   const manifest = await readFile(join(bundle, "Ruvane.bundle"), "utf8"), revision = manifest.match(/^revision\t([0-9]+)$/m)[1];
@@ -41,11 +44,34 @@ await test("generated file routes own the same Wasm registry across additions an
       assert.equal(probe(e,packet("/tasks/settings",14,0,[["workspace","/tasks",12,0]])),1);
       for (const bytes of [packet("/tasks/settings",14),packet("/tasks/settings",10,0,[["workspace","/tasks",12,0]]),packet("/tasks/01",10,1,[["workspace","/tasks",12,0],["context","/tasks/01",13,1]]),packet("/added",8)]) assert.equal(probe(e,bytes),0);
     });
+    const parents = [["workspace","/tasks",12,0],["context","/tasks/999",13,999]];
+    await t.test("inherited file errors validate their exact component and retained scope", () => {
+      assert.equal(probe(e,failure("/tasks/999",16,parents)),1);
+      assert.equal(probe(e,failure("/tasks/999",19,parents)),0);
+      assert.equal(probe(e,failure("/tasks/999",16,parents,1)),0);
+      assert.equal(probe(e,failure("/tasks/999",16,[],2)),0);
+      const owner = e.ruvane_boundary_mount(8,15,1,0); assert.ok(owner); e.ruvane_commands_clear();
+      assert.equal(e.ruvane_dispose(owner),1); e.ruvane_commands_clear(); assert.equal(e.ruvane_live_instances(),0);
+    });
+    const override = join(project,"src/routes/tasks/[id]/error.rs");
+    await writeFile(override,'pub fn error() -> ruvane::FileError { ruvane::FileError::new(crate::components::GLOBAL_ERROR) }\n');
     const added = join(project,"src/routes/added"); await mkdir(added);
     await writeFile(join(added,"page.rs"),'pub fn page() -> ruvane::FilePage { ruvane::FilePage::client("added", crate::components::HOME, crate::pages::zero, |_| Ok(ruvane::ClientPageData::new("Added", crate::store::snapshot()?))) }\n');
     run(["build","--offline"],project); const updated = await exportsFor(project,2);
     await t.test("a newly generated page is accepted only by the new registry", () => { assert.equal(probe(e,packet("/added",8)),0); assert.equal(probe(updated,packet("/added",8)),1); assert.notEqual(e.ruvane_application_revision(),updated.ruvane_application_revision()); });
+    await t.test("a single error override inherits loading and replaces Wasm error ownership", () => {
+      assert.equal(probe(updated,failure("/tasks/999",19,parents)),1);
+      assert.equal(probe(updated,failure("/tasks/999",16,parents)),0);
+    });
+    await rm(override);
+    await rm(join(project,"src/routes/tasks/loading.rs"));
+    await rm(join(project,"src/routes/tasks/error.rs"));
     await rm(join(added,"page.rs")); run(["build","--offline"],project); const removed = await exportsFor(project,3);
     await t.test("removed files retire their Wasm route ownership", () => { assert.equal(probe(removed,packet("/added",8)),0); assert.equal(probe(removed,packet("/",8)),1); });
+    await t.test("removing file screens restores the explicit App fallback without forged parents", () => {
+      assert.equal(probe(removed,failure("/tasks/999",19,[],2)),1);
+      assert.equal(probe(removed,failure("/tasks/999",19,parents)),0);
+      assert.equal(probe(removed,failure("/tasks/999",16,parents)),0);
+    });
   } finally { await rm(directory,{recursive:true,force:true}); }
 });

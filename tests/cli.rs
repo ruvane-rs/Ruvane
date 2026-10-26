@@ -947,6 +947,56 @@ fn file_routed_projects_rebuild_on_add_rename_remove_and_keep_the_previous_pair_
             && native.contains("script-src 'none'")
             && !native.contains("<script")
     );
+    let error_packet = |url: &str| {
+        let bytes = interactive_wire(address, url, true);
+        ruvane::NavigationPage::decode(response_body(&bytes)).unwrap()
+    };
+    let missing = error_packet("/tasks/999");
+    assert_eq!(missing.status(), ruvane::StatusCode::NotFound);
+    assert_eq!(missing.props().component(), 16);
+    assert_eq!(missing.layouts().len(), 2);
+    assert_eq!(missing.failed_segment(), Some(2));
+    let override_path = root.join("src/routes/tasks/[id]/error.rs");
+    let override_source = "pub fn error() -> ruvane::FileError { ruvane::FileError::new(crate::components::GLOBAL_ERROR) }\n";
+    fs::write(&override_path, override_source).unwrap();
+    running.address("Ruvane dev at");
+    assert_eq!(error_packet("/tasks/999").props().component(), 19);
+    let retained = revision(&application_html(address)).to_owned();
+    fs::write(
+        &override_path,
+        "pub fn error() -> ruvane::FileLoading { ruvane::FileLoading::new(15) }\n",
+    )
+    .unwrap();
+    running.until("keeping the previous server");
+    assert_eq!(revision(&application_html(address)), retained);
+    assert_eq!(error_packet("/tasks/999").props().component(), 19);
+    fs::write(&override_path, "pub fn error() -> ruvane::FileError { ruvane::FileError::new(crate::components::WORKSPACE) }\n").unwrap();
+    running.until("Restored the previous server");
+    assert_eq!(revision(&application_html(address)), retained);
+    assert!(
+        running
+            .logs
+            .lock()
+            .unwrap()
+            .contains("tasks/[id]/error.rs: presentation")
+    );
+    fs::remove_file(&override_path).unwrap();
+    running.address("Ruvane dev at");
+    assert_eq!(error_packet("/tasks/999").props().component(), 16);
+    let loading = root.join("src/routes/tasks/loading.rs");
+    let loading_source = fs::read_to_string(&loading).unwrap();
+    fs::remove_file(&loading).unwrap();
+    running.until("Restored the previous server");
+    assert!(
+        running
+            .logs
+            .lock()
+            .unwrap()
+            .contains("tasks/error.rs: loading.rs and error.rs must resolve")
+    );
+    assert_eq!(error_packet("/tasks/999").props().component(), 16);
+    fs::write(&loading, loading_source).unwrap();
+    running.address("Ruvane dev at");
     let added = root.join("src/routes/added");
     fs::create_dir(&added).unwrap();
     let page = "pub fn page() -> ruvane::FilePage { ruvane::FilePage::client(\"added\", crate::components::HOME, crate::pages::zero, |_| Ok(ruvane::ClientPageData::new(\"Added\", crate::store::snapshot()?))) }\n";

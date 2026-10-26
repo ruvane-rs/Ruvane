@@ -68,7 +68,63 @@ retaining its declared name for `app.url("task", &[("id", "1")])`.
 Fixed routes retain priority over captures. Ambiguous dynamic siblings such as
 `tasks/[id]/page.rs` and `tasks/[slug]/page.rs`, repeated capture names and
 reserved framework prefixes fail before generating code. Catch-all parameters,
-route groups and additional special filenames are outside this first format.
+route groups and additional special filenames are outside this format.
+
+## Loading and errors
+
+Alpha.36 accepts `loading.rs` and `error.rs` beside pages and layouts:
+
+```rust
+// tasks/loading.rs
+pub fn loading() -> ruvane::FileLoading {
+    ruvane::FileLoading::new(15)
+}
+// tasks/error.rs
+pub fn error() -> ruvane::FileError {
+    ruvane::FileError::new(16)
+}
+```
+
+These IDs belong to the application's shared component factory. Rust checks
+`pub fn loading() -> FileLoading` and `pub fn error() -> FileError`. The generator
+imports these functions into both targets, without parsing Rust source.
+
+The first directory with either file must declare both. Descendants inherit the
+pair; a local file replaces only its matching presentation. For example,
+`tasks/[id]/error.rs` can replace error presentation while retaining
+`tasks/loading.rs`. Removing that override restores the ancestor's error view.
+The App-level fallback is separate and does not supply a missing half of a file
+pair. An incomplete pair reports the local source file and refuses registration.
+
+The resolved pair is attached to every client page and client layout in that
+file scope. A page error retains all healthy layouts. A layout's boundary covers
+its children and cannot catch its own loader: its failure uses the nearest
+ancestor layout boundary, then the App fallback. A directory with screens and
+no layout creates no extra layout or catch point; descendants inherit its
+presentation, but loader failures can retain only existing ancestor layouts.
+Use a `layout.rs` to establish a persistent branch boundary. Root layout failures
+still require an App fallback. Screens with no descendant pages are rejected,
+as are native pages or native layouts inheriting file screens.
+
+Registration checks each local component before committing the candidate App.
+Loading must accept `Number(0)`; errors must accept `Number(0/408/400/404/500)`.
+Both receive an empty `ActionData`, produce a bounded view without event
+bindings, and queue no action. Invalid IDs, rejected states/seeds, invalid views
+and native unwinding panics produce a relative source diagnostic. Registration
+runs these trusted presentation factories and views, never page/layout loaders.
+Wasm traps are still runtime faults, not recoverable component exceptions.
+
+The existing navigator supplies loading feedback and the retry button. Loading
+keeps the current document and drafts mounted. Retry performs a fresh GET and
+retains parents only when their validated descriptors still match; it never
+replays POST actions. Initial errors and `?native=yes` retain their real status
+and script-free fallback. See [segment boundaries](segment-boundaries.md) for
+wire validation, loading, transport errors and retry behavior.
+
+`FileRouteRegistry::boundary` resolves typed declarations atomically. The
+resulting `FileRouteBoundary` is attached through `FilePage::with_boundary` or
+`FileLayout::with_boundary` by the generator. Applications may still override
+named boundaries through ordinary App APIs after registration.
 
 ## Native pages and existing App features
 
@@ -110,8 +166,8 @@ and add the `ruvane` build dependency. No new application is required.
 
 `FileRouteRegistry` builds a private App clone. Successful completion validates
 and commits the batch. An error poisons the batch, so even an ignored method
-error cannot commit partial routes. Registration runs no loader or renderer;
-the application's `page()` and `layout()` declaration functions do run and
+error cannot commit partial routes. Registration runs no page loader or layout renderer;
+the application's declaration functions and local presentation checks do run and
 must be bounded and deterministic across targets.
 
 Adding, renaming or removing a source triggers the normal protected dev rebuild.
@@ -127,12 +183,12 @@ tree; target-dependent declaration code remains the author's responsibility.
 
 ## Bounds and trust
 
-- Only `page.rs`, `layout.rs` and route directories are accepted in the tree.
+- Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs` and route directories are accepted.
 - Literal directories use the portable lowercase ASCII path profile. Dynamic
   names use lowercase ASCII letters, digits and underscores, beginning with a
   letter or underscore. Literal and parameter segments are limited to 64 bytes.
 - The scan limits directories to 128, entries to 512, depth to 16 and relative
-  directory paths to 512 bytes. At most 128 page/layout sources are accepted,
+  directory paths to 512 bytes. At most 128 sources of all four kinds are accepted,
   including at most the existing 32 App layouts.
 - A source file is at most 256 KiB of UTF-8; the total is at most 4 MiB. Generated
   Rust is at most 1 MiB. Existing App, static-export and runtime quotas also apply.

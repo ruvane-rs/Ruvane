@@ -4,6 +4,10 @@ Alpha.22 adds local presentation and typed error boundaries to client pages and
 layouts. Loading leaves the displayed branch and its drafts in place. A server
 error can retain freshly validated parents. Retry is an explicit fresh GET.
 
+Alpha.36 [file routes](file-routes.md#loading-and-errors) attach these same
+boundaries through typed `loading.rs` and `error.rs` declarations with explicit
+file inheritance and validation before registration commits.
+
 ## Declaration
 
 ```rust,ignore

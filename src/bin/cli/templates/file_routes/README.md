@@ -8,12 +8,21 @@ in HTTP handlers. The only dependencies are the first-party Ruvane packages.
 - `tasks/page.rs` declares `/tasks` and inherits `tasks/layout.rs`.
 - `tasks/[id]/page.rs` declares `/tasks/{id}` and inherits both task layouts.
 - `tasks/settings/page.rs` is the fixed route `/tasks/settings`.
+- `tasks/loading.rs` and `tasks/error.rs` supply inherited read-only presentation.
 - A layout exports `pub fn layout() -> ruvane::FileLayout`.
 
 Names, components, state validation and loaders stay explicit in each declaration.
 Use `crate::` imports for shared helpers outside the route tree. Route files are
 trusted Rust source; the generator does not parse or sandbox their bodies.
-Only `page.rs`, `layout.rs` and route directories belong in `src/routes`.
+Only `page.rs`, `layout.rs`, `loading.rs`, `error.rs` and route directories belong
+in `src/routes`. The first screen scope needs both files. A descendant can replace
+one screen while inheriting the other. A layout catches child failures, never its
+own loader. Use the App fallback for root layout failures.
+
+Screen files export `pub fn loading() -> ruvane::FileLoading` and
+`pub fn error() -> ruvane::FileError`. Their component IDs are checked before
+activation with empty seeds and all required states. Views must be read-only and
+start no actions. The navigator owns retry: a fresh GET, with no POST replay.
 
 Adding, renaming or removing a page triggers a rebuild. Invalid trees or Rust
 signatures retain the previous dev server. Declared CSS still updates in place.

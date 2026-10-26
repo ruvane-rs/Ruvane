@@ -18,6 +18,22 @@ impl ClientBoundary {
     }
 }
 impl App {
+    pub(crate) fn validate_file_presentation(
+        &self,
+        component: u32,
+        states: &[u32],
+    ) -> Result<(), PageError> {
+        let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
+        Self::guarded(|| {
+            for state in states {
+                let props = ComponentProps::new(component, InitialState::Number(*state))
+                    .map_err(|_| PageError::InternalServerError)?;
+                let _ = Self::client_view(factory, props, &ActionData::default(), true)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Configures the App boundary used when no page or parent boundary applies.
     /// It can catch a root layout failure. Registration runs no components.
     pub fn client_boundary(&mut self, boundary: Option<ClientBoundary>) -> Result<(), AppError> {

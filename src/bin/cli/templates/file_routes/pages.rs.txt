@@ -23,7 +23,7 @@ pub fn application() -> App {
     let mut app = App::new();
     app.components(components::create_component, components::ERROR)
         .unwrap();
-    generated::register(&mut app).unwrap();
+    generated::register(&mut app).unwrap_or_else(|error| panic!("{error}"));
     app.client_boundary(Some(
         ruvane::ClientBoundary::new(components::LOADING, components::GLOBAL_ERROR).unwrap(),
     ))

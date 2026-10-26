@@ -1,7 +1,7 @@
 use super::FileRouteError;
 use crate::{
-    App, ClientLayoutData, ClientPageData, Html, InitialState, NavigationMatch, Page, PageContext,
-    PageError, PageMode, PageRoute,
+    App, ClientBoundary, ClientLayoutData, ClientPageData, Html, InitialState, NavigationMatch,
+    Page, PageContext, PageError, PageMode, PageRoute,
 };
 use std::sync::Arc;
 
@@ -13,10 +13,41 @@ type LayoutRenderer = Arc<dyn Fn(&PageContext<'_>, &str, Html) -> Html + Send + 
 type LayoutLoader =
     Arc<dyn Fn(&PageContext<'_>) -> Result<ClientLayoutData, PageError> + Send + Sync>;
 
+/// A loading component declared by `pub fn loading()` in loading.rs.
+pub struct FileLoading(u32);
+impl FileLoading {
+    /// Declares a component checked by the registry with Number(0) and an empty seed.
+    pub fn new(component: u32) -> Self {
+        Self(component)
+    }
+}
+
+/// An error component declared by `pub fn error()` in error.rs.
+pub struct FileError(u32);
+impl FileError {
+    /// Declares a component checked with every supported error state and an empty seed.
+    pub fn new(component: u32) -> Self {
+        Self(component)
+    }
+}
+
+/// A complete, validated pair of inherited file presentations.
+#[derive(Clone, Copy)]
+pub struct FileRouteBoundary {
+    loading: u32,
+    error: u32,
+}
+impl FileRouteBoundary {
+    fn client(self) -> ClientBoundary {
+        ClientBoundary::new(self.loading, self.error).unwrap()
+    }
+}
+
 /// A page declaration returned by a route file's `pub fn page()`.
 pub struct FilePage {
     name: String,
     kind: PageKind,
+    boundary: Option<FileRouteBoundary>,
 }
 enum PageKind {
     Server(PageMode, PageLoader),
@@ -32,6 +63,7 @@ impl FilePage {
         Self {
             name: name.into(),
             kind: PageKind::Server(mode, Arc::new(render)),
+            boundary: None,
         }
     }
     /// Declares a shared SSR/Wasm page. The component factory remains application-owned.
@@ -44,7 +76,13 @@ impl FilePage {
         Self {
             name: name.into(),
             kind: PageKind::Client(component, state, Arc::new(load)),
+            boundary: None,
         }
+    }
+    /// Attaches the generated directory's presentations to this client page.
+    pub fn with_boundary(mut self, boundary: &FileRouteBoundary) -> Self {
+        self.boundary = Some(*boundary);
+        self
     }
 }
 
@@ -52,6 +90,7 @@ impl FilePage {
 pub struct FileLayout {
     name: String,
     kind: LayoutKind,
+    boundary: Option<FileRouteBoundary>,
 }
 enum LayoutKind {
     Server(LayoutRenderer),
@@ -66,6 +105,7 @@ impl FileLayout {
         Self {
             name: name.into(),
             kind: LayoutKind::Server(Arc::new(render)),
+            boundary: None,
         }
     }
     /// Declares a persistent client layout inherited by interactive descendant pages.
@@ -78,7 +118,13 @@ impl FileLayout {
         Self {
             name: name.into(),
             kind: LayoutKind::Client(component, state, Arc::new(load)),
+            boundary: None,
         }
+    }
+    /// Attaches presentations for this client layout's children, excluding its own loader.
+    pub fn with_boundary(mut self, boundary: &FileRouteBoundary) -> Self {
+        self.boundary = Some(*boundary);
+        self
     }
 }
 
@@ -105,6 +151,58 @@ impl<'a> FileRouteRegistry<'a> {
         }
     }
 
+    /// Resolves local screens against file ancestors, without consulting the App fallback.
+    /// Runs local presentation factories and read-only views, never page/layout loaders.
+    pub fn boundary(
+        &mut self,
+        parent: Option<&FileRouteBoundary>,
+        loading: Option<(&str, FileLoading)>,
+        error: Option<(&str, FileError)>,
+    ) -> Result<FileRouteBoundary, FileRouteError> {
+        let result = (|| {
+            let source = loading
+                .as_ref()
+                .map(|item| item.0)
+                .or_else(|| error.as_ref().map(|item| item.0))
+                .unwrap_or("<boundary>");
+            let loading_id = loading
+                .as_ref()
+                .map(|item| item.1.0)
+                .or(parent.map(|p| p.loading));
+            let error_id = error
+                .as_ref()
+                .map(|item| item.1.0)
+                .or(parent.map(|p| p.error));
+            let (Some(loading_id), Some(error_id)) = (loading_id, error_id) else {
+                return Err(FileRouteError::at(
+                    source,
+                    "loading.rs and error.rs must resolve a complete pair from file ancestors",
+                ));
+            };
+            for (local, states) in [
+                (
+                    loading.map(|(path, component)| (path, component.0)),
+                    &[0][..],
+                ),
+                (
+                    error.map(|(path, component)| (path, component.0)),
+                    &[0, 408, 400, 404, 500][..],
+                ),
+            ] {
+                if let Some((path, component)) = local {
+                    self.candidate.validate_file_presentation(component, states)
+                        .map_err(|_| FileRouteError::at(path, "presentation must accept all required states, an empty seed and a read-only view"))?;
+                }
+            }
+            Ok(FileRouteBoundary {
+                loading: loading_id,
+                error: error_id,
+            })
+        })();
+        self.failed |= result.is_err();
+        result
+    }
+
     /// Adds a file layout under its nearest generated ancestor.
     pub fn layout(
         &mut self,
@@ -125,6 +223,12 @@ impl<'a> FileRouteRegistry<'a> {
         declaration: FileLayout,
     ) -> Result<FileRouteLayout, FileRouteError> {
         let client = matches!(declaration.kind, LayoutKind::Client(..));
+        if !client && declaration.boundary.is_some() {
+            return Err(FileRouteError::at(
+                source,
+                "file presentations require a client layout",
+            ));
+        }
         if parent.is_some_and(|parent| parent.client != client) {
             return Err(FileRouteError::at(
                 source,
@@ -148,6 +252,11 @@ impl<'a> FileRouteRegistry<'a> {
             }
         }
         .map_err(|error| FileRouteError::at(source, error))?;
+        if let Some(boundary) = declaration.boundary {
+            self.candidate
+                .client_layout_boundary(&declaration.name, Some(boundary.client()))
+                .map_err(|error| FileRouteError::at(source, error))?;
+        }
         Ok(FileRouteLayout {
             name: declaration.name,
             client,
@@ -174,6 +283,12 @@ impl<'a> FileRouteRegistry<'a> {
         declaration: FilePage,
     ) -> Result<(), FileRouteError> {
         let client = matches!(declaration.kind, PageKind::Client(..));
+        if !client && declaration.boundary.is_some() {
+            return Err(FileRouteError::at(
+                source,
+                "file presentations require a client page",
+            ));
+        }
         if parent.is_some_and(|parent| parent.client != client) {
             return Err(FileRouteError::at(
                 source,
@@ -204,7 +319,13 @@ impl<'a> FileRouteRegistry<'a> {
                 self.candidate.client_page_layout(&declaration.name, parent)
             }
         }
-        .map_err(|error| FileRouteError::at(source, error))
+        .map_err(|error| FileRouteError::at(source, error))?;
+        if let Some(boundary) = declaration.boundary {
+            self.candidate
+                .client_page_boundary(&declaration.name, Some(boundary.client()))
+                .map_err(|error| FileRouteError::at(source, error))?;
+        }
+        Ok(())
     }
 
     /// Validates and commits the complete registry without running loaders.
