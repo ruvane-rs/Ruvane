@@ -98,6 +98,11 @@ in the browser, survive validation, and expire on reset, removal or navigation.
 The runtime shares the form/JSON pending slot, aborts retired transports and
 never retries an upload automatically. ABI v14 requires matching Wasm and bridge.
 
+[Private persistent files](docs/file-storage.md) add a bounded native FileStore,
+stable application-owner checks, disk quotas, atomic snapshots and explicit offline
+recovery. Opaque downloads use typed attachment names and fixed security headers;
+the native demo supports upload, download, deletion and restart without scripts.
+
 [Component JSON requests](docs/json-client.md) add explicit GET/POST/PUT/PATCH/DELETE
 from Rust/Wasm, exact response decoding, retained versions, bounded transport and
 late-response disposal. Typed failures preserve mutation uncertainty without

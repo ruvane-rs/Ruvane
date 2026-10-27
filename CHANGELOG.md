@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.1.0-alpha.57 — Unreleased
+## 0.1.0-alpha.58 — Unreleased
+
+- Add a native bounded FileStore with stable server-assigned owners, opaque
+  OS-random file IDs, global/per-owner quotas and redacted metadata.
+- Persist complete private snapshots through exclusive temporary files, sync and
+  atomic publication. Preserve corrupt committed data and require explicit offline
+  recovery for interrupted writers, with uncertainty after failed publication sync.
+- Add typed UTF-8 attachment names and opaque no-store downloads with fixed
+  Content-Disposition, nosniff and script-blocking CSP; preserve GET/HEAD semantics.
+- Add a native upload/list/download/delete demo, restart and isolation coverage,
+  filesystem failure tests and source-hidden native/Wasm bundle checks.
+- Keep zero third-party dependencies, ABI v14, 22 exports and four core assets.
+
+## 0.1.0-alpha.57
 
 - Add typed file controls, bounded BrowserFile metadata and explicit component
   multipart requests. Keep file bytes in the browser and scope references to a

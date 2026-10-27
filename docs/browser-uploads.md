@@ -129,6 +129,10 @@ stored metadata. `/` serves the native fallback. The demo holds at most eight
 shared files in process memory; it provides no real account authentication or
 per-user file isolation. Enter stops the server.
 
+For persistent owner-scoped attachments and downloads, use the separate
+[private file store](file-storage.md) and its native demo. The original shared
+memory uploader remains a transport/lifecycle example.
+
 `/upload-tests` runs real-browser selection, validation, quota, deadline, disposal
 and repeated-reset checks. `browser/tests/uploads.test.mjs` validates command
 framing, typed file ingress and source-hidden native/Wasm packaging. Its compiled

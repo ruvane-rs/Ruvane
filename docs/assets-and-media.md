@@ -30,7 +30,10 @@ Their execution requires an explicitly interactive document response; see
 Content-Length is calculated from buffered body bytes. HEAD produces the same status,
 type, and length as GET without sending the body. The serializer retains
 Connection: close, Cache-Control: no-store, and X-Content-Type-Options: nosniff.
-No filename or application string becomes an HTTP header value.
+Ordinary asset responses do not insert filenames or application strings into headers.
+Alpha.58 adds an explicit [download response](file-storage.md#safe-attachment-responses)
+with a typed, bounded name encoded into a fixed attachment header. Ordinary byte
+and asset responses retain their existing header profile.
 Starting with alpha.6, the fixed CSP also accompanies assets and errors.
 Explicit native HTML streams use chunked framing and expose only their initial
 prefix through `body()`; `buffered_body()` returns `None`. Asset responses remain

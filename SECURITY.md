@@ -1,5 +1,18 @@
 # Security
 
+Alpha.58 adds [private persistent files](docs/file-storage.md). Native FileStore
+operations require a trusted server-assigned owner and opaque OS-random IDs;
+foreign and absent files have the same read/delete result. Names never select
+disk paths. A private directory, strict entry checks, bounded snapshots, quotas,
+exclusive creation and synced same-directory publication constrain storage.
+CRC32 detects accidental corruption only; filesystem access remains trusted.
+Interrupted writers require explicit offline recovery after every process has
+stopped. Committed corruption is preserved and refused. Failures after publication
+retain uncertainty and do not cause retries. Attachment headers percent-encode
+validated names, force opaque downloads and retain no-store/nosniff/blocking CSP.
+The demo's two identities are public test identities, not real authentication.
+Storage stays native and ABI v14 remains unchanged.
+
 Alpha.57 adds [component file uploads](docs/browser-uploads.md). A single bounded
 browser File remains behind a view/control/epoch/selection reference; Wasm receives
 only validated metadata. Replacement, reset, removal and disposal retire that

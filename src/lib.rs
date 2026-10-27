@@ -11,7 +11,10 @@ mod content;
 mod cookies;
 mod csrf;
 mod development;
+mod downloads;
 mod file_routes;
+#[cfg(not(target_family = "wasm"))]
+mod file_store;
 mod forms;
 mod guards;
 mod html;
@@ -78,11 +81,16 @@ pub use csrf::{
     CsrfToken,
 };
 pub use development::{Development, MAX_DEVELOPMENT_STATUS_BYTES};
+pub use downloads::{DownloadName, DownloadNameError};
 pub use file_routes::{
     FileEndpoint, FileError, FileLayout, FileLoading, FileNotFound, FilePage, FileRouteBoundary,
     FileRouteError, FileRouteLayout, FileRouteNotFound, FileRouteRegistry, FileRoutes,
     MAX_FILE_ROUTE_FILES, MAX_FILE_ROUTE_MODULE_BYTES, MAX_FILE_ROUTE_SOURCE_BYTES,
     MAX_FILE_ROUTE_TOTAL_BYTES,
+};
+#[cfg(not(target_family = "wasm"))]
+pub use file_store::{
+    FileId, FileInfo, FileOwner, FileStore, FileStoreError, FileStoreLimits, StoredFile,
 };
 pub use forms::{
     FormData, FormError, GetForm, MAX_FORM_NAME_BYTES, MAX_POST_BODY_BYTES, MultipartForm, PostForm,

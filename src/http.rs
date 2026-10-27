@@ -402,14 +402,16 @@ pub struct Response {
     retry_after: Option<RetryAfter>,
     action_rate_rejected: bool,
     etag: Option<crate::EntityTag>,
+    pub(crate) download: Option<crate::DownloadName>,
 }
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let body: &dyn fmt::Debug = if self.content_type == crate::JSON_MEDIA_TYPE {
-            &"[redacted JSON]"
-        } else {
-            &self.body
-        };
+        let body: &dyn fmt::Debug =
+            if self.content_type == crate::JSON_MEDIA_TYPE || self.download.is_some() {
+                &"[redacted JSON]"
+            } else {
+                &self.body
+            };
         f.debug_struct("Response")
             .field("status", &self.status)
             .field("content_type", &self.content_type)
@@ -604,6 +606,7 @@ impl Response {
             retry_after: None,
             action_rate_rejected: false,
             etag: None,
+            download: None,
         }
     }
 
@@ -622,6 +625,7 @@ impl Response {
             retry_after: None,
             action_rate_rejected: false,
             etag: None,
+            download: None,
         }
     }
 
@@ -663,6 +667,7 @@ impl Response {
             retry_after: None,
             action_rate_rejected: false,
             etag: None,
+            download: None,
         }
     }
 
@@ -680,6 +685,7 @@ impl Response {
             retry_after: None,
             action_rate_rejected: false,
             etag: None,
+            download: None,
         }
     }
 
@@ -718,6 +724,7 @@ impl Response {
             retry_after: None,
             action_rate_rejected: false,
             etag: None,
+            download: None,
         }
     }
 
@@ -832,8 +839,12 @@ impl Response {
             }
             fields
         };
+        let download = self
+            .download
+            .as_ref()
+            .map_or_else(String::new, crate::DownloadName::header);
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}{}{}{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}{}{}{}{}\r\n",
             self.status,
             self.content_type,
             framing,
@@ -845,6 +856,7 @@ impl Response {
             retry,
             allow,
             location,
+            download,
             if self.navigation_variance {
                 "Vary: Accept, Ruvane-Application-Revision\r\n"
             } else {
