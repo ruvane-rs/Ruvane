@@ -42,6 +42,7 @@ jobs:
           node --test browser/tests/persistent-prerender.test.mjs
           node --test browser/tests/guards.test.mjs
           node --test browser/tests/cookies.test.mjs
+          node --test browser/tests/sessions.test.mjs
           node --test browser/tests/progressive.test.mjs
           node --test browser/tests/initial.test.mjs
           node --test browser/tests/layout-snapshot.test.mjs

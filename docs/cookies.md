@@ -146,3 +146,10 @@ a verified session/CSRF design.
 
 References: [RFC 6265](https://httpwg.org/specs/rfc6265.html) and
 [Set-Cookie attributes and prefixes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie).
+
+## Server session lifecycle
+
+[Native memory sessions](sessions.md) use this cookie transport with OS-generated
+identifiers, bounded server data, expiration, rotation and revocation. Cookie
+removal alone does not revoke a server session. Identity verification remains an
+application responsibility.

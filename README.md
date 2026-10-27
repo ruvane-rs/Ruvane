@@ -73,6 +73,10 @@ decisions stay server-side; guarded navigation always checks the server again.
 cookies, explicit local HTTP mode, native form/action integration and browser cache
 invalidation without exposing Set-Cookie values to the runtime.
 
+[Native memory sessions](docs/sessions.md) add OS-generated opaque identifiers,
+bounded server-only data, idle/absolute expiration, atomic rotation and revocation.
+Session guards integrate with private page delivery and typed cookies.
+
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
 URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
 

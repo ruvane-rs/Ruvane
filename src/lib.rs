@@ -24,6 +24,8 @@ mod reactive;
 mod routing;
 mod server;
 mod server_cache;
+#[cfg(not(target_family = "wasm"))]
+mod sessions;
 mod static_site;
 mod streaming;
 mod url;
@@ -109,6 +111,12 @@ pub use server_cache::{
     MAX_SERVER_CACHE_WORKERS, ServerCache, ServerCacheBackgroundLimits, ServerCacheDiskLimits,
     ServerCacheError, ServerCacheLimits, ServerCachePersistence, ServerCachePolicy,
     ServerCacheStats,
+};
+#[cfg(not(target_family = "wasm"))]
+pub use sessions::{
+    MAX_SESSION_DATA_BYTES, MAX_SESSION_ENTRIES, MAX_SESSION_FIELDS, MAX_SESSION_LIFETIME_SECONDS,
+    MAX_SESSION_STORE_BYTES, MAX_SESSION_VALUE_BYTES, SESSION_ID_BYTES, Session, SessionCookie,
+    SessionData, SessionError, SessionLimits, SessionStats, SessionStore,
 };
 pub use static_site::{
     ExportError, ExportReport, MAX_STATIC_ENTRIES, MAX_STATIC_FILE_BYTES, MAX_STATIC_PATH_BYTES,

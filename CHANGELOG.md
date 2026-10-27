@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.48 — Unreleased
+
+- Add bounded native memory sessions with 256-bit OS-generated identifiers,
+  cookie-only lookup and no entropy fallback or browser-side session backend.
+- Add validated server-only payloads, capacity limits, monotonic idle/absolute
+  expiration, lazy cleanup and aggregate counters without live-session eviction.
+- Rotate identifiers/data atomically while preserving the absolute deadline;
+  fence stale generations and allow resolved native handles to revoke rotated families.
+- Integrate SessionStore guards with Private/403/503 behavior before page caches,
+  loaders and handlers; retain typed cookie, native 303 and action protections.
+- Support macOS and Linux x86_64/aarch64 OS random devices without unsafe code;
+  exclude all session types/backend from Wasm and discard sessions on restart.
+- Cover failures, collisions, concurrency, revocation, expiry and source-free bundles
+  without third-party dependencies. ABI v11, 22 exports and four assets stay unchanged.
+
 ## 0.1.0-alpha.47 — Unreleased
 
 - Add bounded typed request cookies, strict duplicate/syntax rejection before

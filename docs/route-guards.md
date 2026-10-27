@@ -124,3 +124,9 @@ This API supplies access decision hooks. Authentication, verified session lookup
 identity storage, login/logout and CSRF tokens remain application responsibilities.
 A header's presence is never proof of identity. Browser navigation is not an
 access authority; every protected request must be guarded on the server.
+
+## Native sessions
+
+`SessionStore::guard()` resolves its configured cookie and returns Private for a
+live session, Forbidden for invalid/absent credentials and Unavailable for failed
+store access. See [memory sessions](sessions.md) for lifecycle and platform limits.

@@ -1,7 +1,7 @@
 import {execFileSync} from "node:child_process";
 import {readFile,writeFile,mkdir} from "node:fs/promises";
 import {join} from "node:path";
-export async function cookieFixture({directory,root,cli,harness="export {};"}) {
+export async function cookieFixture({directory,root,cli,harness="export {};",prepare}) {
   execFileSync(cli,["new","cookie-app","--interactive","--file-routes","--framework-path",root],{cwd:directory,encoding:"utf8",timeout:120000,stdio:["ignore","pipe","pipe"]});
   const project=join(directory,"cookie-app"),pagesFile=join(project,"src/pages.rs"),componentFile=join(project,"src/components.rs");
   let pages=await readFile(pagesFile,"utf8");
@@ -92,6 +92,7 @@ pub fn preference_component()->Box<dyn ruvane::Component>{Box::new(Preference{va
   await writeFile(join(project,"assets/cookies-checks.mjs"),harness);
   const mainFile=join(project,"src/main.rs"),main=await readFile(mainFile,"utf8");
   await writeFile(mainFile,main.replace('    let mut app = pages::application();','    let mut app = pages::application();\n    app.asset("/assets/cookies-checks.mjs", include_bytes!("../assets/cookies-checks.mjs"), MediaType::JavaScript)?;'));
+  if(prepare)await prepare(project);
   execFileSync(cli,["build","--offline"],{cwd:project,encoding:"utf8",timeout:120000,maxBuffer:2*1024*1024,stdio:["ignore","pipe","pipe"]});
   const bundle=join(project,"dist/build-000001"),manifest=await readFile(join(bundle,"Ruvane.bundle"),"utf8"),revision=manifest.match(/^revision\t([0-9]+)$/m)[1];
   return {project,bundle,revision};

@@ -1,5 +1,16 @@
 # Security
 
+Alpha.48 adds [native memory sessions](docs/sessions.md), with OS-generated opaque
+256-bit identifiers, server-only bounded data, cookie-only lookup and monotonic
+idle/absolute expiry. Rotation retires old generations without extending the
+absolute deadline. Revocation through a resolved native handle also fences a
+concurrently rotated family. Native guards fail invalid sessions closed before
+page caches/loaders. The supported source is the macOS or Linux x86_64/aarch64
+kernel random device; errors never fall back to application-generated randomness.
+State is memory-only and assumes protected process memory. This supplies session
+lifecycle primitives, not credential verification, CSRF tokens or production TLS.
+
+
 Alpha.47 adds [typed cookies](docs/cookies.md). Cookie pairs are validated before
 routing and callbacks; repeated names and malformed inputs fail closed. Response
 cookies are bounded host-only declarations with validated prefixes and attributes,
