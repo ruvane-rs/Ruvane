@@ -5,6 +5,7 @@ target/
 # Generated sites and local files
 /dist/
 /.ruvane/
+desk-data/
 .DS_Store
 
 # rustfmt backups

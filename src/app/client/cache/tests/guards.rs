@@ -517,3 +517,35 @@ fn frozen_public_build_output_still_requires_a_guard_and_private_requests_load_l
     );
     assert_eq!(calls.load(Ordering::SeqCst), 4);
 }
+
+#[test]
+fn scoped_guards_do_not_reject_the_root_endpoint() {
+    let (_, _, _, mut app) = setup();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    app.guard_branch(
+        "/private",
+        RouteGuard::new(move |_| {
+            count.fetch_add(1, Ordering::SeqCst);
+            GuardDecision::Forbidden
+        }),
+    )
+    .unwrap();
+    let mut routes = FileRouteRegistry::new(&mut app);
+    routes
+        .endpoint(
+            "root/route.rs",
+            "/",
+            FileEndpoint::new().get(|_| Response::text("Public root")),
+        )
+        .unwrap();
+    routes.finish().unwrap();
+    let router = app.router(None).unwrap();
+    assert_eq!(request(&router, "/", false, "").status(), StatusCode::Ok);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        request(&router, "/private", false, "").status(),
+        StatusCode::Forbidden
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}

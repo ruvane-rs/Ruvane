@@ -1,0 +1,25 @@
+[package]
+name = "desk"
+version = "0.1.0-alpha.61"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace]
+members = ["browser"]
+default-members = ["."]
+resolver = "2"
+
+[lib]
+name = "ruvane_application"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ruvane-app"
+path = "src/main.rs"
+
+[dependencies]
+ruvane = { path = "../.." }
+
+[build-dependencies]
+ruvane = { path = "../.." }

@@ -830,3 +830,14 @@ fields. It does not write files or decode their contents. Supplied names and MIM
 types are untrusted; applications choose storage identifiers and authorization.
 The demo stores at most eight files in shared memory and supplies no real account
 authentication or public upload mount. See [multipart limits](docs/multipart.md).
+
+## Desk local pilot
+
+Alpha.61 adds the separate [Desk application](apps/desk/README.md). Its local
+session grants access to one local project; it does not verify identity. The
+server still binds loopback HTTP only. Business files are private, bounded RDS1
+snapshots, with CRC32 corruption detection, not encryption or authentication.
+A trusted local OS account and trusted existing parent directory are required.
+Stop every writer before offline recovery. Corrupt committed files are preserved.
+Ticket creation has no replay identity; lost acknowledgements require inspection
+before any new attempt. Existing FileStore upload receipts do not cover tickets.

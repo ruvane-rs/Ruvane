@@ -1,4 +1,4 @@
-"""Check that Cargo uses only our two local packages."""
+"""Check that the framework and Desk use only local first-party packages."""
 import json
 import os
 from pathlib import Path
@@ -17,7 +17,20 @@ assert len(metadata["workspace_members"]) == len(expected), "unexpected workspac
 for package in metadata["packages"]:
     assert package["source"] is None, "registry/git dependency is forbidden"
     assert package["name"] in expected and Path(package["manifest_path"]).resolve() == expected[package["name"]], "unexpected package path"
-    assert package["version"] == "0.1.0-alpha.60", "workspace versions must match"
+    assert package["version"] == "0.1.0-alpha.61", "workspace versions must match"
+desk = root / "apps/desk"
+pilot = json.loads(subprocess.run(
+    [os.environ.get("CARGO", "cargo"), "metadata", "--offline", "--locked", "--all-features", "--format-version", "1"],
+    cwd=desk, check=True, stdout=subprocess.PIPE, text=True,
+).stdout)
+pilot_expected = {**expected, "desk": desk / "Cargo.toml", "ruvane-application-browser": desk / "browser/Cargo.toml"}
+assert len(pilot["packages"]) == 4 and len(pilot["workspace_members"]) == 2, "unexpected Desk graph"
+for package in pilot["packages"]:
+    assert package["source"] is None, "third-party dependency is forbidden"
+    assert package["name"] in pilot_expected and Path(package["manifest_path"]).resolve() == pilot_expected[package["name"]], "unexpected Desk package path"
+    assert package["version"] == "0.1.0-alpha.61", "Desk and framework versions must match"
+for source in [*(desk / "src").rglob("*.rs"), *(desk / "browser/src").rglob("*.rs")]:
+    assert not re.search(r"\bunsafe\s*\{|\bunsafe\s+(?:fn|extern)|#\[unsafe\(", source.read_text()), "unsafe Desk code is forbidden"
 abi = root / "browser/src/abi.rs"
 for source in (root / "browser/src").rglob("*.rs"):
     text = source.read_text()

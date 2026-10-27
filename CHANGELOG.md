@@ -1,6 +1,22 @@
 # Changelog
 
-## 0.1.0-alpha.60 — Unreleased
+## 0.1.0-alpha.61 — Unreleased
+
+- Add Ruvane Desk, an autonomous CLI-generated ticket pilot under `apps/desk`,
+  consuming public APIs through a separate workspace with four local packages.
+- Share strict ticket validation, paginated SSR seeds and Rust/Wasm list/editor
+  views, with script-free native forms and explicit local sessions.
+- Persist bounded RDS1 business snapshots with private files, exclusive writers,
+  sync/rename publication and offline recovery. Retain revisions across restart.
+- Check strong edit preconditions under the publication mutex. Keep stale drafts
+  after 412 and require explicit reload; block uncertain creation without replay.
+- Fix prefix guards incorrectly rejecting the root URL outside their scope.
+- Add native failure/concurrency tests, source-hidden bundle/restart/HTTP/Wasm
+  checks and browser lifecycle coverage. Audit the pilot's dependency graph in CI.
+- Keep zero third-party dependencies, ABI v15/RVN9, 22 exports and four core assets.
+  This remains a local pilot without account authentication or TLS.
+
+## 0.1.0-alpha.60
 
 - Add bounded owner-bound FileUploadId reservations, exact FileUploadStatus decoding
   and one-hour retained upload results without third-party dependencies.

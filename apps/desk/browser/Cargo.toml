@@ -1,0 +1,14 @@
+[package]
+name = "ruvane-application-browser"
+version = "0.1.0-alpha.61"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[lib]
+name = "ruvane_application_browser"
+crate-type = ["cdylib"]
+
+[dependencies]
+ruvane-application = { package = "desk", path = ".." }
+ruvane-browser = { path = "../../../browser", default-features = false }

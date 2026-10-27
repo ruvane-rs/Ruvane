@@ -67,6 +67,9 @@ fn matches(scope: &[Segment], request: &Request) -> Result<bool, StatusCode> {
     if scope.is_empty() {
         return Ok(true);
     }
+    if request.path() == "/" {
+        return Ok(false);
+    }
     let parts = request.path()[1..].split('/').collect::<Vec<_>>();
     if scope.len() > parts.len() {
         return Ok(false);
