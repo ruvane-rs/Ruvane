@@ -299,6 +299,8 @@ pub enum ActionFailure {
     Protocol = 3,
     /// The action was blocked before sending or the server returned an unexpected status.
     Rejected = 4,
+    /// The framework confirmed that a quota guard blocked the request before its handler.
+    RateLimited = 5,
 }
 /// The completion delivered to the owning Rust component.
 pub type ActionOutcome = Result<ActionReply, ActionFailure>;

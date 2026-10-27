@@ -299,6 +299,24 @@ struct Inner {
     limits: SessionLimits,
 }
 
+#[derive(Clone)]
+pub(crate) struct RateSubject {
+    inner: Weak<Inner>,
+    family: u64,
+}
+impl PartialEq for RateSubject {
+    fn eq(&self, other: &Self) -> bool {
+        self.family == other.family && Weak::ptr_eq(&self.inner, &other.inner)
+    }
+}
+impl Eq for RateSubject {}
+impl std::hash::Hash for RateSubject {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.inner.as_ptr().hash(state);
+        self.family.hash(state);
+    }
+}
+
 /// Native-only handle for one resolved session generation. Debug redacts all data.
 /// Data access rechecks expiry and the current generation; a handle is not a permanent grant.
 #[derive(Clone)]
@@ -313,6 +331,22 @@ impl fmt::Debug for Session {
     }
 }
 impl Session {
+    pub(crate) fn rate_subject(&self) -> Result<Option<RateSubject>, SessionError> {
+        let Some(inner) = self.inner.upgrade() else {
+            return Ok(None);
+        };
+        let mut state = inner.state.lock().map_err(|_| SessionError::Unavailable)?;
+        let now = state.now();
+        state.prune(now, inner.limits);
+        Ok(state
+            .records
+            .get(&self.token)
+            .filter(|record| record.family == self.family)
+            .map(|_| RateSubject {
+                inner: self.inner.clone(),
+                family: self.family,
+            }))
+    }
     /// Issues or reads this generation's independent CSRF token without refreshing idle time.
     /// Stale, revoked or expired handles return None. Entropy failure leaves state unchanged.
     pub fn csrf_token(&self) -> Result<Option<CsrfToken>, SessionError> {
@@ -382,6 +416,29 @@ impl fmt::Debug for SessionStore {
     }
 }
 impl SessionStore {
+    pub(crate) fn rate_subject(
+        &self,
+        request: &Request,
+    ) -> Result<Option<RateSubject>, SessionError> {
+        let Some(token) = request
+            .cookies()
+            .get(self.cookie.name())
+            .and_then(parse_token)
+        else {
+            return Ok(None);
+        };
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| SessionError::Unavailable)?;
+        let now = state.now();
+        state.prune(now, self.inner.limits);
+        Ok(state.records.get(&token).map(|record| RateSubject {
+            inner: Arc::downgrade(&self.inner),
+            family: record.family,
+        }))
+    }
     /// Opens the OS random source and probes it before creating an empty store.
     /// Supported providers are macOS and Linux x86_64/aarch64; failure never selects a fallback generator.
     ///

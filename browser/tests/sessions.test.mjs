@@ -17,7 +17,7 @@ await test("native memory sessions rotate revoke expire and stay outside Wasm an
   const wasm=await readFile(join(bundle,"resources/ruvane-runtime",BigInt(revision).toString(16).padStart(16,"0"),"app.wasm"));
   const module=await WebAssembly.compile(wasm),e=validateExports(new WebAssembly.Instance(module,{}).exports);
   await t.test("the session backend is excluded from the unchanged import-free Wasm ABI",()=>{
-   assert.equal(wasm.includes(Buffer.from("SERVER_SESSION_DATA_ALPHA48")),false);assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),11);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
+   assert.equal(wasm.includes(Buffer.from("SERVER_SESSION_DATA_ALPHA48")),false);assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),12);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
   });
   await rename(join(project,"src"),join(project,"source-hidden"));let next=0;
   async function start(idle=300,absolute=3600){const ready=join(directory,`ready-${next++}`);child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,env:{...process.env,RUVANE_SESSION_IDLE_SECONDS:String(idle),RUVANE_SESSION_ABSOLUTE_SECONDS:String(absolute)},stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");if(value)return `http://${value.trim().split("\t").at(-1)}`;if(child.exitCode!==null)throw Error(errors);await pause(20);}throw Error("session fixture did not start");}

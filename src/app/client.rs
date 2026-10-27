@@ -326,6 +326,7 @@ impl App {
                 && matches!(
                     page.status(),
                     StatusCode::Forbidden
+                        | StatusCode::TooManyRequests
                         | StatusCode::ServiceUnavailable
                         | StatusCode::InternalServerError
                 )

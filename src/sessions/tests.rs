@@ -1,5 +1,6 @@
 use super::*;
 mod csrf;
+mod rate_limit;
 use std::{collections::VecDeque, sync::Barrier, thread};
 fn data(user: &str) -> SessionData {
     let mut data = SessionData::default();

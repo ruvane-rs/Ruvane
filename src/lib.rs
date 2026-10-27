@@ -21,6 +21,8 @@ mod navigation;
 mod navigation_snapshot;
 mod page_route;
 mod prerender;
+#[cfg(not(target_family = "wasm"))]
+mod rate_limit;
 mod reactive;
 mod routing;
 mod server;
@@ -82,8 +84,8 @@ pub use html::{
     image, link, module_script, text,
 };
 pub use http::{
-    CONTENT_SECURITY_POLICY, INTERACTIVE_CONTENT_SECURITY_POLICY, Method, Request, Response,
-    StatusCode,
+    CONTENT_SECURITY_POLICY, INTERACTIVE_CONTENT_SECURITY_POLICY, MAX_RETRY_AFTER_SECONDS, Method,
+    Request, Response, RetryAfter, StatusCode,
 };
 pub use layout_snapshot::{LayoutSnapshot, MAX_LAYOUT_SNAPSHOT_BYTES};
 pub use metadata::{
@@ -102,6 +104,12 @@ pub use page_route::{MAX_PAGE_NAME_BYTES, MAX_PAGE_SEGMENTS, PageParams, PageRou
 pub use prerender::{
     CLIENT_PRERENDER_MARKER, ClientPrerender, MAX_CLIENT_PRERENDER_BYTES,
     MAX_CLIENT_PRERENDER_PAGES, PrerenderError, PrerenderRevalidationPolicy,
+};
+#[cfg(not(target_family = "wasm"))]
+pub use rate_limit::{
+    MAX_RATE_LIMIT_ENTRIES, MAX_RATE_LIMIT_PERIOD_SECONDS, MAX_RATE_LIMIT_REQUESTS,
+    MAX_RATE_LIMIT_SCOPE_BYTES, RateLimitDecision, RateLimitError, RateLimitLimits,
+    RateLimitPolicy, RateLimitStats, RateLimiter,
 };
 pub use reactive::{
     Effect, Memo, ReactiveError, ReactiveLimits, ReactiveRuntime, ReactiveStats, Scope, Signal,

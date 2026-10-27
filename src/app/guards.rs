@@ -11,6 +11,19 @@ pub(super) struct Outcome {
     pub active: bool,
     pub private: bool,
 }
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Failure {
+    status: StatusCode,
+    retry_after: Option<crate::RetryAfter>,
+}
+impl From<StatusCode> for Failure {
+    fn from(status: StatusCode) -> Self {
+        Self {
+            status,
+            retry_after: None,
+        }
+    }
+}
 fn segments(pattern: &str) -> Result<Vec<Segment>, AppError> {
     PageRoute::new("guard", pattern).map_err(|_| AppError::InvalidGuard)?;
     if pattern != "/" && pattern.ends_with('/') {
@@ -183,7 +196,7 @@ impl App {
         pattern: Option<&str>,
         page: Option<&str>,
         local: &[RouteGuard],
-    ) -> Result<Outcome, StatusCode> {
+    ) -> Result<Outcome, Failure> {
         let mut outcome = Outcome {
             active: false,
             private: false,
@@ -205,7 +218,7 @@ impl App {
             let guard = guard?;
             count += 1;
             if count > MAX_ROUTE_GUARDS {
-                return Err(StatusCode::InternalServerError);
+                return Err(StatusCode::InternalServerError.into());
             }
             outcome.active = true;
             let context = GuardContext {
@@ -219,8 +232,14 @@ impl App {
             match decision {
                 GuardDecision::Allow => {}
                 GuardDecision::Private => outcome.private = true,
-                GuardDecision::Forbidden => return Err(StatusCode::Forbidden),
-                GuardDecision::Unavailable => return Err(StatusCode::ServiceUnavailable),
+                GuardDecision::Forbidden => return Err(StatusCode::Forbidden.into()),
+                GuardDecision::Unavailable => return Err(StatusCode::ServiceUnavailable.into()),
+                GuardDecision::RateLimited(retry_after) => {
+                    return Err(Failure {
+                        status: StatusCode::TooManyRequests,
+                        retry_after: Some(retry_after),
+                    });
+                }
             }
         }
         Ok(outcome)
@@ -228,25 +247,34 @@ impl App {
     pub(super) fn guard_failure(
         &self,
         request: &Request,
-        status: StatusCode,
+        failure: impl Into<Failure>,
         client: bool,
     ) -> Response {
-        if client {
-            return self.client_guard_failure(request, status);
-        }
-        let title =
-            crate::guards::guard_title(status.as_u16().into()).unwrap_or("Invalid page request");
-        Response::html(
-            Document::new(
-                title,
-                crate::element(crate::Tag::Main)
-                    .child(crate::element(crate::Tag::H1).child(title))
-                    .render(),
+        let failure = failure.into();
+        let status = failure.status;
+        let response = if client {
+            self.client_guard_failure(request, status)
+        } else {
+            let title = crate::guards::guard_title(status.as_u16().into())
+                .unwrap_or("Invalid page request");
+            Response::html(
+                Document::new(
+                    title,
+                    crate::element(crate::Tag::Main)
+                        .child(crate::element(crate::Tag::H1).child(title))
+                        .render(),
+                )
+                .metadata(Metadata::new().for_error())
+                .render(),
             )
-            .metadata(Metadata::new().for_error())
-            .render(),
-        )
-        .with_status(status)
+            .with_status(status)
+        };
+        match failure.retry_after {
+            Some(retry) => {
+                response.guard_rate_limited(retry, request.method() == crate::Method::Post)
+            }
+            None => response,
+        }
     }
     pub(super) fn guarded_endpoint(
         &self,

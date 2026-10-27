@@ -23,7 +23,7 @@ await test("source-free native session CSRF protects actions and native forms",{
     const {project,bundle,revision}=await csrfFixture({directory,root,cli});
     const wasm=await readFile(join(bundle,"resources/ruvane-runtime",BigInt(revision).toString(16).padStart(16,"0"),"app.wasm"));
     const module=await WebAssembly.compile(wasm),e=validateExports(new WebAssembly.Instance(module,{}).exports);
-    assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),11);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
+    assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),12);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
     assert.equal(wasm.includes(Buffer.from("SERVER_SESSION_DATA_ALPHA48")),false);
     await rename(join(project,"src"),join(project,"source-hidden"));
     const ready=join(directory,"ready");child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);

@@ -79,6 +79,10 @@ Session guards integrate with private page delivery and typed cookies.
 [Session CSRF tokens](docs/csrf.md) protect native forms and Wasm actions with
 independent OS-generated tokens, generation checks and automatic same-origin retrieval.
 
+[Native request quotas](docs/rate-limits.md) add bounded per-route and per-session
+token buckets, rotation-stable session quotas and typed 429 responses across
+native forms, navigation and Wasm actions. Browser ABI v12 keeps 22 exports.
+
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
 URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
 

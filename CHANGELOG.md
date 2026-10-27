@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.50 — Unreleased
+
+- Add native std-only token buckets with validated burst/refill policies, monotonic
+  integer credits, bounded entries/route bytes, cleanup and aggregate counters.
+- Add shared per-pattern and per-session guards. Session debt survives rotation;
+  invalid identifiers share a global anonymous quota and unmatched paths share one scope.
+- Preserve active debt on capacity saturation and fail closed with 503; reject
+  exhausted requests with no-store 429 and bounded typed Retry-After before handlers.
+- Add read-only 429 errors across native HTML, initial hydration, navigation and
+  Wasm validation without exposing limiter state or credentials to the browser.
+- Deliver a distinct RateLimited action failure only for confirmed pre-handler
+  refusals; expose retry deltas without automatic POST replay or uncertain mutation.
+- Advance browser ABI to v12 with the same 22 exports and four runtime assets;
+  retain zero third-party dependencies and process-local, memory-only quotas.
+
 ## 0.1.0-alpha.49 — Unreleased
 
 - Add independent OS-generated CSRF tokens bound to native session generations,

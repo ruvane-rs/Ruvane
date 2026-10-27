@@ -47,7 +47,7 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="11" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="12" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
@@ -140,7 +140,11 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v11
+## Browser ABI v12
+
+Alpha.50 adds failure kind 5 (`RateLimited`) and the reserved read-only 429
+navigation shape. The 22 function signatures and four runtime assets remain;
+older ABI v11 modules and hydration roots are rejected. See [request quotas](rate-limits.md).
 
 Alpha.25 reuses the page ingress for transactional initial App hydration from
 an inert RVI1 snapshot. No export or ABI change is required. See
@@ -163,7 +167,7 @@ with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 11 |
+| `ruvane_abi_version()` | Returns 12 |
 | `ruvane_application_revision()` | Returns the application build revision as u64/BigInt |
 | `ruvane_boundary_mount(root, component, kind, value)` | Empty-seed, event-free presentation owner, or zero on rejection |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
@@ -172,7 +176,7 @@ with no host imports:
 | `ruvane_event_chunk(word, count)` | Append 1..=4 little-endian bytes |
 | `ruvane_action_begin(view, request, length)` | Stage at most 64 KiB for a live action |
 | `ruvane_action_chunk(word, count)` | Append 1..=4 little-endian reply bytes |
-| `ruvane_action_complete(view, request, kind)` | Commit RVA1 (0) or failure (1..=4); 1 handled, 2 handled malformed RVA1, 0 ABI error |
+| `ruvane_action_complete(view, request, kind)` | Commit RVA1 (0) or failure (1..=5); 1 handled, 2 handled malformed RVA1, 0 ABI error |
 | `ruvane_page_begin(length)` | Stage one RVP1/RVP2/RVP3 packet of at most 64 KiB |
 | `ruvane_page_chunk(word, count)` | Append 1..=4 little-endian page bytes |
 | `ruvane_page_validate()` | Check the staged packet without IDs, commands or retained instances |

@@ -263,7 +263,7 @@ pub struct NavigationPage {
     metadata: Option<Metadata>,
 }
 impl NavigationPage {
-    /// Constructs a bounded page. Guard failures additionally support 403 and 503.
+    /// Constructs a bounded page. Guard failures additionally support 403, 429 and 503.
     pub fn new(
         url: InternalUrl,
         title: &str,
@@ -278,6 +278,7 @@ impl NavigationPage {
                 | StatusCode::NotFound
                 | StatusCode::InternalServerError
                 | StatusCode::Forbidden
+                | StatusCode::TooManyRequests
                 | StatusCode::ServiceUnavailable
         ) || title.trim().is_empty()
             || title.len() > 1024
@@ -288,7 +289,9 @@ impl NavigationPage {
         let guard = props.component() == crate::GUARD_COMPONENT_ID
             || matches!(
                 status,
-                StatusCode::Forbidden | StatusCode::ServiceUnavailable
+                StatusCode::Forbidden
+                    | StatusCode::TooManyRequests
+                    | StatusCode::ServiceUnavailable
             );
         if guard
             && (props.component() != crate::GUARD_COMPONENT_ID
@@ -605,6 +608,7 @@ impl NavigationPage {
             400 => StatusCode::BadRequest,
             403 => StatusCode::Forbidden,
             404 => StatusCode::NotFound,
+            429 => StatusCode::TooManyRequests,
             500 => StatusCode::InternalServerError,
             503 => StatusCode::ServiceUnavailable,
             _ => return Err(NavigationError::InvalidData),

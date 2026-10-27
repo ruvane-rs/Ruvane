@@ -15,7 +15,7 @@ app.client_page_document_streaming(
 The generated application demonstrates this at `/tasks/live?delay=yes` through
 **Interactive streamed layouts**. `/tasks/document?delay=yes` keeps alpha.26's
 activation after parsing. Native-only requests and typed navigation retain
-their existing profiles. Rust/Wasm ABI v11 and all 22 exports are unchanged.
+their existing profiles. Rust/Wasm ABI v12 and all 22 exports are unchanged.
 
 ## Delivery and validation
 

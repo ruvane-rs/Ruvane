@@ -148,7 +148,7 @@ code; even then, in-flight server side effects are not a transaction.
 
 ## ABI and verification
 
-Browser ABI v11 provides `ruvane_page_validate() -> u32` after normal bounded page
+Browser ABI v12 provides `ruvane_page_validate() -> u32` after normal bounded page
 staging. It checks framing, registered route/props, application seed schema,
 view/resource budgets and absence of initial actions, then drops temporary state.
 It emits no commands, consumes no view IDs and retains no instances or scopes.

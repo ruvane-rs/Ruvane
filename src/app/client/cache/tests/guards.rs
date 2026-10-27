@@ -341,6 +341,7 @@ fn guard_failure_envelopes_are_closed_and_use_only_the_reserved_read_only_compon
     let (_, _, _, app) = setup();
     for (code, status, title) in [
         (403, StatusCode::Forbidden, "Access denied"),
+        (429, StatusCode::TooManyRequests, "Too many requests"),
         (503, StatusCode::ServiceUnavailable, "Service unavailable"),
         (500, StatusCode::InternalServerError, "Page unavailable"),
     ] {

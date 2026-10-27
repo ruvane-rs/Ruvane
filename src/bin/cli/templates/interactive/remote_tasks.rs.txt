@@ -235,6 +235,7 @@ impl Component for Tasks {
             Err(ActionFailure::Network) => "Network error. The server may have applied the change. Refresh before retrying.".into(),
             Err(ActionFailure::Protocol) => "Invalid server response. Refresh before retrying.".into(),
             Err(ActionFailure::Rejected) => "Server returned an unexpected response. Refresh before retrying.".into(),
+            Err(ActionFailure::RateLimited) => "Too many requests. Wait before trying again.".into(),
         };
         Ok(())
     }

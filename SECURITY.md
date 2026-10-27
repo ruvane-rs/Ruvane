@@ -1,5 +1,18 @@
 # Security
 
+Alpha.50 adds opt-in [native request quotas](docs/rate-limits.md), with bounded
+token buckets, monotonic integer refill, shared clones and no eviction of active
+debt. Per-session keys use native store/family identities and survive identifier
+rotation; anonymous or invalid identifiers share one global quota per limiter. Selected patterns
+and one unmatched scope prevent raw-path churn from creating arbitrary buckets.
+Entry/route-byte exhaustion fails closed with 503. Guards reject over-quota requests
+with no-store 429 and bounded Retry-After before cache lookup, loaders or handlers.
+Only POST guard failures emit the fixed pre-handler refusal marker; a manual 429
+does not assert non-execution. The bridge never retries POST automatically. This
+is process-local admission control after request parsing, not a distributed or
+network DDoS defense. Existing session, CSRF and origin checks remain separate.
+ABI v12 pairs the new typed action failure and closed read-only 429 navigation shape.
+
 Alpha.49 adds opt-in [session CSRF tokens](docs/csrf.md). Tokens use independent
 256-bit OS randomness and remain bound to one live session generation. Native forms
 use a reserved hidden field; configured browser actions fetch an empty same-origin,

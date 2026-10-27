@@ -21,6 +21,8 @@ pub enum GuardDecision {
     Forbidden,
     /// Stop before handlers/loaders and return 503 without caching.
     Unavailable,
+    /// Stop before handlers/loaders and return 429 with an explicit retry delay.
+    RateLimited(crate::RetryAfter),
 }
 /// Read-only validated request and selected application route.
 /// Headers are inputs to application authentication, not verified identity claims.
@@ -61,6 +63,7 @@ impl RouteGuard {
 pub(crate) fn guard_title(code: u32) -> Option<&'static str> {
     match code {
         403 => Some("Access denied"),
+        429 => Some("Too many requests"),
         503 => Some("Service unavailable"),
         500 => Some("Page unavailable"),
         _ => None,
@@ -89,6 +92,7 @@ impl Component for GuardMessage {
             BrowserTag::Span,
             match self.0 {
                 403 => "You do not have access to this page.",
+                429 => "Please wait before trying again.",
                 503 => "This page is temporarily unavailable.",
                 _ => "The request could not be completed.",
             },

@@ -23,7 +23,7 @@ await test("typed cookies roundtrip through native forms actions private pages a
   const wasm=await readFile(join(bundle,"resources/ruvane-runtime",BigInt(revision).toString(16).padStart(16,"0"),"app.wasm"));
   const module=await WebAssembly.compile(wasm),e=validateExports(new WebAssembly.Instance(module,{}).exports);
   await t.test("cookie transport adds no imports function exports or wire protocol fields",()=>{
-   assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),11);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
+   assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),12);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
   });
   await rename(join(project,"src"),join(project,"source-hidden"));
   const ready=join(directory,"ready");child=spawn(join(bundle,process.platform==="win32"?"ruvane-app.exe":"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,stdio:["pipe","ignore","pipe"]});

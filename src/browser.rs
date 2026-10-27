@@ -2,7 +2,7 @@
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 11;
+pub const BROWSER_ABI_VERSION: u32 = 12;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.

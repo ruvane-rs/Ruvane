@@ -9,6 +9,9 @@ or loader. It makes one typed decision:
 | `Private` | Continue with all page cache lookup, storage and refresh bypassed for this request. |
 | `Forbidden` | Stop with 403. No page loader or endpoint handler runs. |
 | `Unavailable` | Stop with 503. No page loader or endpoint handler runs. |
+| `RateLimited(retry)` | Stop with 429 and a bounded Retry-After delta before loaders and handlers. |
+
+See [native request quotas](rate-limits.md) for shared and per-session guards.
 
 An unwinding guard panic produces a generic 500. Guarded responses use
 `Cache-Control: no-store`, including successful `Allow` responses, so navigation

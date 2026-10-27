@@ -194,6 +194,25 @@ impl fmt::Debug for Request {
     }
 }
 
+/// Maximum supported Retry-After delta in seconds.
+pub const MAX_RETRY_AFTER_SECONDS: u32 = 24 * 60 * 60;
+
+/// A bounded, positive Retry-After delta. No raw header text is accepted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct RetryAfter(u32);
+impl RetryAfter {
+    /// Accepts 1 through MAX_RETRY_AFTER_SECONDS, inclusive.
+    pub fn new(seconds: u32) -> Option<Self> {
+        (1..=MAX_RETRY_AFTER_SECONDS)
+            .contains(&seconds)
+            .then_some(Self(seconds))
+    }
+    /// Returns the whole-second delta.
+    pub fn seconds(self) -> u32 {
+        self.0
+    }
+}
+
 /// A status supported by the initial HTTP response serializer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -224,6 +243,8 @@ pub enum StatusCode {
     UnsupportedMediaType,
     /// 417: request expectations are unsupported.
     ExpectationFailed,
+    /// 429: a request quota was exhausted.
+    TooManyRequests,
     /// 431: request headers exceed a byte or count limit.
     RequestHeaderFieldsTooLarge,
     /// 500: a handler failed or returned a body exceeding the output limit.
@@ -253,6 +274,7 @@ impl StatusCode {
             Self::UriTooLong => 414,
             Self::UnsupportedMediaType => 415,
             Self::ExpectationFailed => 417,
+            Self::TooManyRequests => 429,
             Self::RequestHeaderFieldsTooLarge => 431,
             Self::InternalServerError => 500,
             Self::NotImplemented => 501,
@@ -277,6 +299,7 @@ impl StatusCode {
             Self::UriTooLong => "URI Too Long",
             Self::UnsupportedMediaType => "Unsupported Media Type",
             Self::ExpectationFailed => "Expectation Failed",
+            Self::TooManyRequests => "Too Many Requests",
             Self::RequestHeaderFieldsTooLarge => "Request Header Fields Too Large",
             Self::InternalServerError => "Internal Server Error",
             Self::NotImplemented => "Not Implemented",
@@ -308,6 +331,8 @@ pub struct Response {
     navigation_variance: bool,
     cookies: Vec<crate::Cookie>,
     csrf_token: Option<crate::CsrfToken>,
+    retry_after: Option<RetryAfter>,
+    action_rate_rejected: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -328,6 +353,28 @@ impl AsRef<[u8]> for Body {
 }
 
 impl Response {
+    /// Returns a generic no-store 429 response with a bounded Retry-After delta.
+    /// This alone does not assert that an action handler has not run.
+    pub fn too_many_requests(retry_after: RetryAfter) -> Self {
+        Self::text("Too many requests. Please try again later.").with_retry_after(retry_after)
+    }
+    /// Sets status 429 and its Retry-After delta without accepting raw header text.
+    pub fn with_retry_after(mut self, retry_after: RetryAfter) -> Self {
+        self.status = StatusCode::TooManyRequests;
+        self.retry_after = Some(retry_after);
+        self
+    }
+    /// Returns the delta only when this response has status 429.
+    pub fn retry_after(&self) -> Option<RetryAfter> {
+        (self.status == StatusCode::TooManyRequests)
+            .then_some(self.retry_after)
+            .flatten()
+    }
+    pub(crate) fn guard_rate_limited(mut self, retry_after: RetryAfter, action: bool) -> Self {
+        self = self.with_retry_after(retry_after);
+        self.action_rate_rejected = action;
+        self
+    }
     /// Creates a script-blocking, no-store progressive HTML response.
     /// Only GET/HEAD transport supports this plan; HEAD executes no factory or producer.
     pub fn stream_html(plan: crate::HtmlStream) -> Self {
@@ -436,6 +483,8 @@ impl Response {
             navigation_variance: false,
             cookies: Vec::new(),
             csrf_token: None,
+            retry_after: None,
+            action_rate_rejected: false,
         }
     }
 
@@ -451,6 +500,8 @@ impl Response {
             navigation_variance: false,
             cookies: Vec::new(),
             csrf_token: None,
+            retry_after: None,
+            action_rate_rejected: false,
         }
     }
 
@@ -489,6 +540,8 @@ impl Response {
             navigation_variance: false,
             cookies: Vec::new(),
             csrf_token: None,
+            retry_after: None,
+            action_rate_rejected: false,
         }
     }
 
@@ -503,6 +556,8 @@ impl Response {
             navigation_variance: false,
             cookies: Vec::new(),
             csrf_token: None,
+            retry_after: None,
+            action_rate_rejected: false,
         }
     }
 
@@ -538,6 +593,8 @@ impl Response {
             navigation_variance: false,
             cookies: Vec::new(),
             csrf_token: None,
+            retry_after: None,
+            action_rate_rejected: false,
         }
     }
 
@@ -632,6 +689,14 @@ impl Response {
         let csrf = self.csrf_token.as_ref().map_or_else(String::new, |token| {
             format!("{}: {}\r\n", crate::CSRF_HEADER, token.as_str())
         });
+        let retry = self.retry_after().map_or_else(String::new, |retry| {
+            let marker = if self.action_rate_rejected {
+                "Ruvane-Action-Rejected: rate-limit\r\n"
+            } else {
+                ""
+            };
+            format!("Retry-After: {}\r\n{marker}", retry.seconds())
+        });
         let cookies = if self.cookies.is_empty() {
             String::new()
         } else {
@@ -642,7 +707,7 @@ impl Response {
             fields
         };
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}{}{}\r\n",
             self.status,
             self.content_type,
             framing,
@@ -650,6 +715,7 @@ impl Response {
             self.csp,
             cookies,
             csrf,
+            retry,
             allow,
             location,
             if self.navigation_variance {

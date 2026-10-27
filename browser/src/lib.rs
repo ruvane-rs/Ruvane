@@ -529,7 +529,7 @@ impl BrowserRuntime {
         Ok(())
     }
 
-    /// Commits RVA1 (kind 0) or ActionFailure (1..=4). False reports malformed RVA1.
+    /// Commits RVA1 (kind 0) or ActionFailure (1..=5). False reports malformed RVA1.
     pub fn complete_wire(
         &mut self,
         view: u32,
@@ -558,6 +558,7 @@ impl BrowserRuntime {
             2 => Err(ActionFailure::Timeout),
             3 => Err(ActionFailure::Protocol),
             4 => Err(ActionFailure::Rejected),
+            5 => Err(ActionFailure::RateLimited),
             _ => return Err(BrowserError::InvalidPayload),
         };
         let malformed = kind == 0 && outcome == Err(ActionFailure::Protocol);
@@ -972,6 +973,26 @@ mod tests {
         data.insert("count", ruvane::ActionValue::Number(0))
             .unwrap();
         ActionReply::success(data)
+    }
+    #[test]
+    fn wire_rate_limit_is_delivered_as_a_known_typed_failure() {
+        let mut runtime = BrowserRuntime::new(demo::create);
+        let id = runtime.mount(1, remote()).unwrap();
+        let (token, _) = runtime.instances[&id].action.unwrap();
+        runtime.clear_commands();
+        assert_eq!(runtime.complete_wire(id, token, 5), Ok(true));
+        assert!(
+            runtime.instances[&id]
+                .view
+                .render()
+                .unwrap()
+                .as_str()
+                .contains("Too many requests")
+        );
+        assert!(runtime.instances[&id].action.is_none());
+        runtime.clear_commands();
+        runtime.dispatch(id, 4).unwrap();
+        assert!(runtime.instances[&id].action.is_some());
     }
     #[test]
     fn action_tokens_staging_and_late_results_are_bound_to_live_owners() {

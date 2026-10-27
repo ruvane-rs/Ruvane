@@ -3,8 +3,14 @@
 Alpha.17 connects browser components to explicit server actions. The browser
 performs same-origin POST requests; Rust owns the model, validation results and
 view updates. There are no third-party crates, npm packages, host imports or
-input pointers. This profile uses browser ABI v11, RVN6 commands and RVA1 replies.
+input pointers. This profile uses browser ABI v12, RVN6 commands and RVA1 replies.
 Rebuild the Wasm and serve its matching bridge together.
+
+Alpha.50 adds `ActionFailure::RateLimited` for a confirmed quota-guard refusal.
+The bridge exposes `"rate-limited"` from `whenIdle()` and the bounded delta from
+`controller.retryAfter()`. It sends no automatic retry and keeps the mutation
+outcome known. An ordinary handler's manual 429 still has conservative uncertainty.
+See [native request quotas](rate-limits.md).
 
 ## Run the example
 
