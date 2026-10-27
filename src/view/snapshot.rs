@@ -82,6 +82,9 @@ impl ViewSnapshot {
             commands.disabled(view, entry.id, node.disabled)?;
         }
         if let Some(field) = &node.field {
+            if node.tag == BrowserTag::File {
+                commands.file_epoch(view, entry.id, field.epoch)?;
+            }
             if let Some(value) = &field.value {
                 commands.value(view, entry.id, value, field.epoch)?;
             }
@@ -128,6 +131,15 @@ impl ViewSnapshot {
             .any(|n| n.id == node && n.node.event == Some(event))
     }
 
+    /// Returns the reset epoch of one live file control, including disabled controls.
+    #[doc(hidden)]
+    pub fn file_epoch(&self, node: u32) -> Option<u32> {
+        self.nodes
+            .iter()
+            .find(|entry| entry.id == node && entry.node.tag == BrowserTag::File)
+            .and_then(|entry| entry.node.field.as_ref())
+            .map(|field| field.epoch)
+    }
     /// Validates typed event data against the live node binding.
     pub fn accepts_value(&self, node: u32, event: u32, value: &EventValue) -> bool {
         let Some(entry) = self
@@ -145,6 +157,7 @@ impl ViewSnapshot {
                 valid_value(entry.node.tag, value)
             }
             (BrowserTag::Checkbox, EventValue::Boolean(_)) => true,
+            (BrowserTag::File, EventValue::File(_)) => true,
             (BrowserTag::Button | BrowserTag::Form, EventValue::None) => true,
             _ => false,
         }
@@ -220,6 +233,9 @@ impl ViewSnapshot {
                         if let Some(checked) = field.checked {
                             commands.checked(view_id, entry.id, checked, field.epoch)?;
                         }
+                    }
+                    if entry.node.tag == BrowserTag::File && field.epoch != old.epoch {
+                        commands.file_epoch(view_id, entry.id, field.epoch)?;
                     }
                     if field.invalid != old.invalid {
                         commands.invalid(view_id, entry.id, field.invalid)?;

@@ -3,7 +3,7 @@
 `View` is a bounded tree shared by server rendering and Wasm. It leaves the
 existing `Html`, `Element` and `Document` APIs unchanged. Supported elements are
 sections, paragraphs, h2 headings, spans, outputs, buttons, lists, list items,
-forms, labels, text inputs, checkboxes, textareas and submit buttons.
+forms, labels, text inputs, checkboxes, textareas, file inputs and submit buttons.
 
 ```rust
 use ruvane::{BrowserTag, View};
@@ -87,13 +87,14 @@ button cannot trigger a new binding, even when an application reuses an event ID
 Public controller `dispatch(event)` resolves an explicitly requested action to
 one of its current live bindings.
 
-Fields use `dispatch_value(event, EventValue)` with `Text(String)` or
-`Boolean(bool)`. The default implementation forwards `None` to `dispatch` and
+Fields use `dispatch_value(event, EventValue)` with `Text(String)`,
+`Boolean(bool)` or bounded `File(FileSelection)` metadata. The default implementation forwards `None` to `dispatch` and
 rejects other values. The snapshot checks the field type, disabled state,
 UTF-8 quota and control characters before application code receives data.
-Use `form`, `input`, `textarea`, `checkbox` and `submit` with nonzero sibling
+Use `form`, `input`, `textarea`, `checkbox`, `file` and `submit` with nonzero sibling
 keys. Every field needs a wrapping `Label` with a nonblank `Span`.
 See [client forms](client-forms.md) for a complete example and browser behavior.
+See [component uploads](browser-uploads.md) for file references and explicit reset.
 
 The factory maps `ComponentProps` to `Box<dyn Component>`. Construct
 `BrowserRuntime::new(factory)` with it. The registry handles ownership, limits,
@@ -104,6 +105,8 @@ completion. Both have defaults for components without server I/O. The registry
 permits one action per component and checks the live request token before calling
 back. A component's pending/error state belongs in its Rust model. See
 [actions](actions.md) for the protocol, failure handling and disposal.
+`take_json`/`json_result` and `take_upload`/`upload_result` use that same pending
+slot for explicit JSON requests and file uploads.
 
 The shared examples in `examples/support/widgets.rs` include a counter, toggle
 and item list, plus a task form. The list has at most four logical items, with a child scope for

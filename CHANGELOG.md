@@ -1,6 +1,21 @@
 # Changelog
 
-## 0.1.0-alpha.56 — Unreleased
+## 0.1.0-alpha.57 — Unreleased
+
+- Add typed file controls, bounded BrowserFile metadata and explicit component
+  multipart requests. Keep file bytes in the browser and scope references to a
+  live view, control, reset epoch and monotonic selection identity.
+- Share one pending slot across forms, JSON and uploads; preserve selections on
+  validation and retire them on reset, removal, disposal and navigation.
+- Bound native FormData serialization before POST, use opaque file part types,
+  and retain revision, session, CSRF, quota, deadline and uncertainty semantics.
+- Add a Rust/Wasm uploader, JSON responses on the native demo, real-browser
+  lifecycle/navigation checks and source-hidden bundle tests without dependencies.
+- Move to ABI v14/RVN8 with RUF1 metadata and existing RVJ1 results. Keep 22
+  numeric exports, four core runtime assets and two local crates. Rebuild Wasm
+  with the matching bridge.
+
+## 0.1.0-alpha.56
 
 - Add explicit Router/FileEndpoint multipart POSTs with bounded text fields and
   one opaque 32 KiB file, under the existing 64 KiB HTTP body ceiling.

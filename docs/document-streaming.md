@@ -115,7 +115,7 @@ incomplete response. No diagnostic text or automatic retry is emitted. Incomplet
 metadata never activates a branch. Native-only buffered SSR keeps its actual HTTP
 error statuses and scoped rendering.
 
-ABI v13, the 22 exports, the four existing runtime assets and RVI1/RVP/RVS1/RVA1
+ABI v14, the 22 exports, the four existing runtime assets and RVI1/RVP/RVS1/RVA1
 formats are unchanged. Both crates remain first-party and need no Cargo/npm,
 codec, HTTP or browser-test dependency.
 

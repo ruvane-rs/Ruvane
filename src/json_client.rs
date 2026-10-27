@@ -255,7 +255,7 @@ fn decode(bytes: &[u8], mutation: bool) -> Option<JsonOutcome> {
     };
     let rejected = matches!(
         status,
-        400 | 401 | 403 | 404 | 405 | 409 | 412 | 415 | 422 | 428
+        400 | 401 | 403 | 404 | 405 | 409 | 412 | 413 | 415 | 422 | 428
     ) || flags & 2 != 0;
     Some(Ok(JsonReply {
         status,

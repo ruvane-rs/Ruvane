@@ -1,8 +1,8 @@
-//! RVN7 browser command encoding.
+//! RVN8 browser command encoding.
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 13;
+pub const BROWSER_ABI_VERSION: u32 = 14;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.
@@ -46,6 +46,8 @@ pub enum BrowserTag {
     Submit = 14,
     /// A normal internal link eligible for client navigation.
     Link = 15,
+    /// A single native file picker, without a default value.
+    File = 16,
 }
 
 /// Command encoding errors.
@@ -83,6 +85,48 @@ impl Default for BrowserCommands {
 }
 
 impl BrowserCommands {
+    /// Sets a file control's reset epoch without supplying a file value.
+    pub fn file_epoch(
+        &mut self,
+        view: u32,
+        node: u32,
+        epoch: u32,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, node])?;
+        self.push(15, &[view, node, epoch], &[])
+    }
+    /// Queues an upload referencing the current browser file control.
+    pub fn upload(
+        &mut self,
+        view: u32,
+        request: u32,
+        action: &crate::UploadRequest,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[
+            view,
+            request,
+            action.action(),
+            action.file().node,
+            action.file().token,
+        ])?;
+        let mut data = Vec::new();
+        for value in [action.url().as_str(), action.field(), action.fields()] {
+            data.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            data.extend_from_slice(value.as_bytes());
+        }
+        self.push(
+            16,
+            &[
+                view,
+                request,
+                action.action(),
+                action.file().node,
+                action.file().token,
+            ],
+            &data,
+        )
+    }
+
     /// Queues an explicit JSON request after this batch's DOM updates.
     pub fn json(
         &mut self,
@@ -143,10 +187,10 @@ impl BrowserCommands {
         data.extend_from_slice(body);
         self.push(11, &[view, request, action.action()], &data)
     }
-    /// Creates an empty batch with an RVN7 header.
+    /// Creates an empty batch with an RVN8 header.
     pub fn new() -> Self {
         Self {
-            bytes: b"RVN7\0\0\0\0".to_vec(),
+            bytes: b"RVN8\0\0\0\0".to_vec(),
             count: 0,
         }
     }

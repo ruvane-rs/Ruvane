@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { decodeCommands, validateExports, validateProps, planCommands, LIMITS } from "../../web/bridge.mjs";
 
 function frame(payload = [], count = 0) {
-  return new Uint8Array([82, 86, 78, 55, ...word(count), ...payload]);
+  return new Uint8Array([82, 86, 78, 56, ...word(count), ...payload]);
 }
 const word = n => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
 
@@ -52,7 +52,7 @@ test("compiled Rust module has no host imports and executes the real reactor", a
     assert.equal(e.ruvane_commands_clear(), 1);
     return commands;
   };
-  assert.equal(e.ruvane_abi_version(), 13);
+  assert.equal(e.ruvane_abi_version(), 14);
   assert.equal(e.ruvane_mount(0, 1, 1, 0), 0);
   assert.equal(e.ruvane_last_error(), 1);
   for (const args of [[1, 1, 2, 1], [1, 2, 2, 2], [1, 1, 1, 1001], [1, 99, 1, 0]]) {

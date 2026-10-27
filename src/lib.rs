@@ -35,6 +35,7 @@ mod server_cache;
 mod sessions;
 mod static_site;
 mod streaming;
+mod uploads;
 mod url;
 mod validation;
 mod view;
@@ -164,6 +165,10 @@ pub use static_site::{
 pub use streaming::{
     HtmlProducer, HtmlStream, MAX_STREAM_BODY_BYTES, MAX_STREAM_CHUNK_BYTES, MAX_STREAM_CHUNKS,
     StreamContext, StreamError, StreamLimits,
+};
+pub use uploads::{
+    BrowserFile, FileSelection, FileSelectionError, MAX_FILE_EVENT_BYTES, UploadOutcome,
+    UploadRequest,
 };
 pub use url::{
     InternalUrl, MAX_COMPONENT_BYTES, MAX_INTERNAL_URL_BYTES, MAX_PATH_PARAMS, MAX_QUERY_PAIRS,

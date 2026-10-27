@@ -1,5 +1,17 @@
 # Security
 
+Alpha.57 adds [component file uploads](docs/browser-uploads.md). A single bounded
+browser File remains behind a view/control/epoch/selection reference; Wasm receives
+only validated metadata. Replacement, reset, removal and disposal retire that
+reference. File bytes and OS paths never enter props or navigation seeds. The
+bridge bounds native multipart serialization before submitting a same-origin
+POST, uses an opaque part type and obtains header-only CSRF claims separately.
+Native parsing and session/origin/CSRF/quota checks remain authoritative. Uploads
+share the form/JSON pending slot, deadline and lifetime rules. Abort does not undo
+submitted effects; uncertain outcomes require inspection and no automatic retry.
+ABI v14/RVN8 requires matching rebuilt Wasm and bridge. This adds no uploaded-file
+mount, disk persistence, real authentication, MIME scanner or large-file protocol.
+
 Alpha.54 adds [typed JSON validation](docs/validation.md) with exact field presence
 and type checks, no coercion, UTF-8 text bounds and checked integer ranges. Reports
 retain at most sixteen fixed-code issues within 4 KiB, using only trusted declared
@@ -54,7 +66,7 @@ Only mutation guard failures emit the fixed pre-handler refusal marker; a manual
 does not assert non-execution. The bridge never retries POST automatically. This
 is process-local admission control after request parsing, not a distributed or
 network DDoS defense. Existing session, CSRF and origin checks remain separate.
-ABI v13 pairs the new typed action failure and closed read-only 429 navigation shape.
+ABI v14 pairs the new typed action failure and closed read-only 429 navigation shape.
 
 Alpha.49 adds opt-in [session CSRF tokens](docs/csrf.md). Tokens use independent
 256-bit OS randomness and remain bound to one live session generation. Native forms
@@ -286,7 +298,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v11/RVN7 isolate twenty-two reviewed numeric exports. The reply
+Browser ABI v14/RVN8 isolate twenty-two reviewed numeric exports. The reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts

@@ -1,0 +1,32 @@
+const originalFetch=globalThis.fetch.bind(globalThis),check=(value,message)=>{if(!value)throw Error(message);};
+const response=await originalFetch("/upload-probe",{cache:"no-store"}),parsed=new DOMParser().parseFromString(await response.text(),"text/html");
+for(const script of parsed.querySelectorAll("script"))script.remove();history.replaceState(null,"","/upload-probe");document.head.replaceChildren(...parsed.head.childNodes);document.body.replaceChildren(...parsed.body.childNodes);
+const root=document.getElementById("ruvane-application"),outlet=document.getElementById("ruvane-outlet"),picker=outlet.querySelector('input[type="file"]'),moduleURL=root.getAttribute("data-ruvane-module"),revision=root.getAttribute("data-ruvane-revision");
+const bridge=await import(new URL("./bridge.mjs",new URL(moduleURL,location.href))),nav=await import(new URL("./navigation.mjs",new URL(moduleURL,location.href)));
+const runtime=await bridge.createRuntime(moduleURL,{applicationRevision:revision,csrfEndpoint:root.getAttribute("data-ruvane-csrf")});
+for(const element of root.querySelectorAll('[data-ruvane-version]'))if(!outlet.contains(element))runtime.hydrate(element);
+const navigator=nav.createNavigator(runtime,{outlet,scope:root,status:document.getElementById("ruvane-status"),boundaries:nav.readBoundaries(root),progressive:true});
+await navigator.start({snapshot:nav.readInitialSnapshot(root)});root.querySelector("#ruvane-initial").remove();
+const panel=document.createElement("section"),heading=document.createElement("h1"),summary=document.createElement("p"),list=document.createElement("ol"),report=document.createElement("pre");heading.textContent="Ruvane alpha.57 — Upload navigation";summary.id="summary";report.id="report";report.hidden=true;panel.append(heading,summary,list,report);document.body.prepend(panel);
+const rows=[],pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+async function until(predicate){for(let i=0;i<300;i++){if(predicate())return;await pause(5);}throw Error("Expected navigation state did not arrive");}
+async function test(name,body){const item=document.createElement("li");list.append(item);try{await body();rows.push({name,passed:true});item.textContent="PASS — "+name;}catch(error){rows.push({name,passed:false,error:String(error)});item.textContent="FAIL — "+name+": "+error;}finally{globalThis.fetch=originalFetch;}report.textContent=JSON.stringify(rows,null,2);}
+function select(){const transfer=new DataTransfer();transfer.items.add(new File([new Uint8Array([0,255,128])],"navigation.bin"));outlet.querySelector('input[type="file"]').files=transfer.files;outlet.querySelector('input[type="file"]').dispatchEvent(new Event("change",{bubbles:true}));}
+function caption(value){const input=outlet.querySelector('input[type="text"]');input.value=value;input.dispatchEvent(new Event("input",{bubbles:true}));}
+const stats=async()=>await(await originalFetch("/uploads/state",{cache:"no-store"})).json();
+await test("packaged initial hydration adopts the native file control",async()=>{check(outlet.querySelector('input[type="file"]')===picker&&!picker.disabled,"existing picker activated");check(!picker.hasAttribute("value"),"file selection never seeded");});
+await test("an explicit upload crosses Rust, the packaged bridge and native CSRF guards once",async()=>{
+ [...outlet.querySelectorAll("button")].find(button=>button.textContent==="Open demo session").click();await until(()=>outlet.textContent.includes("Stored files inspected."));
+ caption("Packaged upload");select();outlet.querySelector("form").requestSubmit();await until(()=>outlet.textContent.includes("File uploaded."));check((await stats()).files.length===1&&runtime.fileState().selected===0,"one stored file and reset selection");
+});
+await test("navigation aborts a pending upload and late replies cannot reach the next page",async()=>{
+ caption("Navigation in flight");select();let release,signal,calls=0;globalThis.fetch=async(input,options)=>{if(new URL(typeof input==="string"?input:input.url,location.href).pathname==="/upload"){calls++;signal=options.signal;return new Promise(resolve=>{release=resolve;});}return originalFetch(input,options);};
+ outlet.querySelector("form").requestSubmit();await until(()=>calls===1);check(runtime.fileState().selected===1,"file retained while sending");
+ await navigator.navigate("/cookie");check(signal.aborted&&runtime.fileState().selected===0&&runtime.stats().pendingActions===0,"old owner and file released");check(outlet.textContent.includes("Cookie preference"),"destination mounted");const text=outlet.textContent;
+ release(new Response('{"caption":"Navigation in flight","filename":"navigation.bin","bytes":3}',{status:200,headers:{"Content-Type":"application/json","Cache-Control":"no-store"}}));await pause(30);check(outlet.textContent===text&&runtime.actionState().uncertain&&calls===1,"late response ignored and no mutation replay");
+ globalThis.fetch=originalFetch;await navigator.navigate("/upload-probe");check(outlet.querySelector('input[type="file"]').value===""&&runtime.fileState().selected===0,"return mounts an empty picker");check((await stats()).files.length===1,"mocked in-flight upload was never submitted");
+});
+await test("navigation during CSRF preflight retires the file before a POST can start",async()=>{
+ caption("Preflight navigation");select();let release,calls=0;globalThis.fetch=async(input,options)=>{const path=new URL(typeof input==="string"?input:input.url,location.href).pathname;if(path==="/csrf-token")return new Promise(resolve=>{release=resolve;});if(path==="/upload")calls++;return originalFetch(input,options);};outlet.querySelector("form").requestSubmit();await until(()=>Boolean(release));await navigator.navigate("/cookie");check(runtime.fileState().selected===0,"selection released on route change");release(new Response(null,{status:200,headers:{"Content-Type":bridge.CSRF_MEDIA_TYPE,"Cache-Control":"no-store","Content-Length":"0"}}));await pause(30);check(calls===0&&runtime.stats().pendingActions===0,"late preflight cannot submit");
+});
+navigator.dispose();runtime.dispose();check(runtime.stats().views===0&&runtime.fileState().selected===0,"all owners and files released");summary.textContent=`${rows.filter(row=>row.passed).length}/${rows.length} upload navigation checks passed`;report.textContent=JSON.stringify({revision,rows,files:runtime.fileState(),resources:runtime.stats()},null,2);document.documentElement.dataset.checksComplete="true";

@@ -47,7 +47,7 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="13" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="14" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
@@ -97,7 +97,10 @@ Reordering preserves the active field's subtree and restores selection where nee
 Insertion uses native element creation and sibling placement, without HTML strings.
 
 `dispatch(event, value?)` accepts only events declared by that view. Text fields take
-strings, checkboxes take booleans, and clicks/submissions take no value. The bridge
+strings, checkboxes take booleans, and clicks/submissions take no value. File
+events read the current native picker without accepting a supplied JavaScript
+value; Rust receives bounded metadata. See [component uploads](browser-uploads.md).
+The bridge
 validates values before encoding them; Rust checks their type, length and live binding
 again. Invalid payloads are local errors and leave the component active.
 See [client forms](client-forms.md) for validation, resets and composition behavior.
@@ -140,11 +143,12 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v13
+## Browser ABI v14
 
-Alpha.55 adds component-owned JSON transport in RVN7 commands and RVJ1 replies.
-The 22 function exports remain. Rebuild Wasm with its matching bridge; v12
-modules and hydration roots are rejected. See [component JSON](json-client.md).
+Alpha.57 adds component-owned file selections and uploads in RVN8 commands,
+RUF1 metadata events and RVJ1 replies. The 22 function exports remain. Rebuild
+Wasm with its matching bridge; v13 modules and hydration roots are rejected.
+See [component uploads](browser-uploads.md) and [component JSON](json-client.md).
 
 Alpha.50 adds failure kind 5 (`RateLimited`) and the reserved read-only 429
 navigation shape. The 22 function signatures and four runtime assets remain;
@@ -165,22 +169,22 @@ Alpha.22 adds read-only presentation mounts and RVP3 typed error scopes. See
 Alpha.21 adds RVP2 layout branches and segment selection through the existing
 page ingress. See [client layouts](client-layouts.md).
 
-Alpha.20 adds read-only page validation and explicit prefetch eligibility in RVN7 frames. Rebuild the Wasm and use its
+Alpha.20 added read-only page validation and explicit prefetch eligibility. Rebuild the Wasm and use its
 matching bridge together. The module exports memory and these twenty-two functions,
 with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 13 |
+| `ruvane_abi_version()` | Returns 14 |
 | `ruvane_application_revision()` | Returns the application build revision as u64/BigInt |
 | `ruvane_boundary_mount(root, component, kind, value)` | Empty-seed, event-free presentation owner, or zero on rejection |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
 | `ruvane_dispatch(view, node, event, kind, value)` | Commit an event; 1 on success, zero on error |
-| `ruvane_event_begin(view, node, event, length)` | Start one text payload of 0..=1024 bytes |
+| `ruvane_event_begin(view, node, event, length)` | Start text (0..1024 bytes) or file metadata (at most 400 bytes) for its typed binding |
 | `ruvane_event_chunk(word, count)` | Append 1..=4 little-endian bytes |
 | `ruvane_action_begin(view, request, length)` | Stage at most 64 KiB for a live action |
 | `ruvane_action_chunk(word, count)` | Append 1..=4 little-endian reply bytes |
-| `ruvane_action_complete(view, request, kind)` | Commit RVA1/RVJ1 (0) or failure (1..=5); 1 handled, 2 handled malformed RVA1, 0 ABI error |
+| `ruvane_action_complete(view, request, kind)` | Commit RVA1/RVJ1 (0) or failure (1..=5); 1 handled, 2 handled malformed frame, 0 ABI error |
 | `ruvane_page_begin(length)` | Stage one RVP1/RVP2/RVP3 packet of at most 64 KiB |
 | `ruvane_page_chunk(word, count)` | Append 1..=4 little-endian page bytes |
 | `ruvane_page_validate()` | Check the staged packet without IDs, commands or retained instances |
@@ -205,6 +209,8 @@ Payload kind 0 requires value 0 and carries no data. Kind 2 carries a boolean,
 value 0 or 1. Kind 1 requires value 0 and commits the staged text for the exact
 view/node/event supplied to `event_begin`. Text must have the exact declared
 byte length and valid UTF-8. Empty text needs begin and commit with no chunks.
+Kind 3 requires value zero and commits exact RUF1 metadata for a live file
+binding. It never carries file content. See [file event framing](browser-uploads.md#abi-migration).
 For short chunks, unused high bytes must be zero. Invalid chunks, malformed
 commits and `commands_clear` discard staged input. A pending input prevents other
 mutations until commit or clear; reads remain available. No input pointer crosses
@@ -221,9 +227,9 @@ memory view, checks ranges and copies the bounded batch before acknowledging
 it. Signed JavaScript i32 results are interpreted as u32 bit patterns; public
 JavaScript inputs are validated before crossing the ABI.
 
-## RVN7 command frames
+## RVN8 command frames
 
-Integers are little-endian. The header is `RVN7` plus a u32 count, with no trailing
+Integers are little-endian. The header is `RVN8` plus a u32 count, with no trailing
 bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 
 | Opcode | Remaining fields | Operation |
@@ -239,15 +245,15 @@ bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 | 9 | node u32, epoch u32, boolean u8 | Set a checkbox's live checked state |
 | 10 | node u32, boolean u8 | Set a field's aria-invalid state |
 | 11 | request u32, action u32, URL length u32 + UTF-8, body length u32 + ASCII | Queue an internal POST action |
-
 | 12 | node u32, target length u32, encoded ASCII target | Set an internal link href |
-
 | 13 | node u32, boolean u8 | Set explicit link prefetch eligibility |
 | 14 | request/action u32, method u8, URL/body/If-Match each u32 length + bytes | Queue a bounded JSON request |
+| 15 | node u32, epoch u32 | Set a file control's reset epoch |
+| 16 | request/action/node/selection u32, URL/field/encoded fields each u32 length + bytes | Queue one bounded multipart POST |
 
 Tags are section=1, h2=2, p=3, span=4, output=5, button=6, ul=7, li=8,
-form=9, label=10, text input=11, checkbox=12, textarea=13, submit button=14 and
-internal link=15. New
+form=9, label=10, text input=11, checkbox=12, textarea=13, submit button=14,
+internal link=15 and file input=16. New
 handles must increase beyond every handle previously allocated in that view.
 Keys are nonzero u32 values unique among siblings. They are separate from node
 handles and unkeyed positions. A tag/event change creates a new node lifetime.
@@ -256,7 +262,8 @@ Initial batches can create nodes, set text/disabled/field state and bind events.
 Patch batches can also remove and place nodes. Bindings are created only on new
 event targets; removal retires a binding. Each text leaf has text. Buttons,
 forms and fields have one binding, except submit buttons which use their form's
-binding. Each field has disabled, invalid, epoch and typed value state. Epochs
+binding. Each field has disabled, invalid and epoch state. Text and checkbox
+fields also have typed values; file controls have no prefilled value. Epochs
 cannot decrease during a field's lifetime. Labels wrap exactly one field and a
 nonblank span label. Forms cannot nest; submit buttons require a form ancestor.
 Disposal remains exactly one opcode-5 command.
@@ -266,8 +273,8 @@ keys, invalid parents, list nesting, sibling targets and incomplete nodes before
 DOM changes. Removal is recursive; placing a node cannot reparent it or form a
 cycle. Native patches remove obsolete subtrees first, create replacements, then
 order siblings. Text remains inert. Action URLs must pass the internal path profile;
-no arbitrary HTML or DOM attributes are encoded. At most one opcode-11 command
-is allowed per batch and per pending owner. Action metadata is checked before
+no arbitrary HTML or DOM attributes are encoded. At most one request command
+(11, 14 or 16) is allowed per batch and per pending owner. Request metadata is checked before
 DOM changes, then extracted before the structural planner runs. Fetch starts
 after that batch has been applied. See [actions](actions.md) for RVA1 and lifecycle rules.
 DOM-application failures stop the runtime; validated batches do not promise a
@@ -286,6 +293,8 @@ transactional rollback of arbitrary application state or host side effects.
 | DOM listeners per view | At most 48; text fields use 3 per binding |
 | Command frame | 64 KiB including header, 256 commands |
 | One text leaf, field value or event payload | 1024 UTF-8 bytes |
+| One file metadata event / file payload | 400 bytes / 32 KiB |
+| File controls per view | 1 |
 | Pending actions | 1 per view |
 | Action URL / request body / reply | 1024 bytes / 16 KiB / 64 KiB |
 | Reported signals/effects per component | 1024 each |
@@ -294,7 +303,7 @@ Factories and components are trusted Rust code. These limits do not bound all
 CPU, allocations or reference cycles, and a fetch timeout cannot preempt Wasm.
 The adapter calls typed [actions](actions.md) through the same native POST
 origin/body policy. Ordinary [POST forms](post-forms.md) retain their native flow.
-Sessions and cryptography remain outside this profile.
+Native session and CSRF guards are documented separately.
 Nested islands and richer initial props remain future work.
 
 Python 3.9+, Node 18+ built-ins and a real browser are test tools; no npm or Python

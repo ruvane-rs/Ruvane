@@ -13,6 +13,8 @@ use std::fmt;
 mod abi;
 #[cfg(test)]
 mod json_tests;
+#[cfg(test)]
+mod upload_tests;
 /// ABI version used by application exports.
 pub const ABI_VERSION: u32 = ruvane::BROWSER_ABI_VERSION;
 #[doc(hidden)]
@@ -92,12 +94,29 @@ struct Instance {
     component: Box<dyn Component>,
     view: View,
     snapshot: ViewSnapshot,
-    action: Option<(u32, u32, Option<bool>)>,
+    action: Option<(u32, u32, RequestKind)>,
+    file: Option<ruvane::BrowserFile>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RequestKind {
+    Form,
+    Json(bool),
+    Upload,
+}
+impl RequestKind {
+    fn json(self) -> Option<bool> {
+        match self {
+            Self::Form => None,
+            Self::Json(mutation) => Some(mutation),
+            Self::Upload => Some(true),
+        }
+    }
+}
 enum Completion {
     Form(ActionOutcome),
     Json(ruvane::JsonOutcome),
+    Upload(ruvane::UploadOutcome),
 }
 
 struct PendingText {
@@ -130,6 +149,7 @@ pub struct BrowserRuntime {
     pending: Option<PendingText>,
     reply: Option<PendingReply>,
     next_action: u32,
+    next_file: u32,
     page_validator: Option<PageValidator>,
     page_input: Option<PendingPage>,
 }
@@ -145,6 +165,7 @@ impl BrowserRuntime {
             pending: None,
             reply: None,
             next_action: 0,
+            next_file: 0,
             page_validator: None,
             page_input: None,
         }
@@ -242,8 +263,12 @@ impl BrowserRuntime {
             .commands(id)
             .map_err(|_| BrowserError::InvalidView)?;
         let mut action = None;
+        let mut file = None;
         if seed.is_some() {
-            if component.take_action().is_some() || component.take_json().is_some() {
+            if component.take_action().is_some()
+                || component.take_json().is_some()
+                || component.take_upload().is_some()
+            {
                 return Err(BrowserError::InvalidPage);
             }
         } else {
@@ -253,6 +278,8 @@ impl BrowserRuntime {
                 &mut self.next_action,
                 &mut commands,
                 id,
+                &snapshot,
+                &mut file,
             )?;
         }
         self.instances.insert(
@@ -263,6 +290,7 @@ impl BrowserRuntime {
                 view,
                 snapshot,
                 action,
+                file,
             },
         );
         self.buffer = commands;
@@ -336,7 +364,10 @@ impl BrowserRuntime {
                 .map_err(|_| BrowserError::InvalidView)?
                 .commands(1)
                 .map_err(|_| BrowserError::InvalidView)?;
-            if component.take_action().is_some() || component.take_json().is_some() {
+            if component.take_action().is_some()
+                || component.take_json().is_some()
+                || component.take_upload().is_some()
+            {
                 return Err(BrowserError::InvalidPage);
             }
         }
@@ -391,6 +422,22 @@ impl BrowserRuntime {
         if !instance.snapshot.accepts_value(node, event, &value) {
             return Err(BrowserError::InvalidPayload);
         }
+        if let EventValue::File(selection) = &value {
+            instance.file = match selection {
+                ruvane::FileSelection::Selected(file) => {
+                    let epoch = instance
+                        .snapshot
+                        .file_epoch(node)
+                        .ok_or(BrowserError::InvalidPayload)?;
+                    if file.identity() <= self.next_file || !file.is_bound_to(view, node, epoch) {
+                        return Err(BrowserError::InvalidPayload);
+                    }
+                    self.next_file = file.identity();
+                    Some(file.clone())
+                }
+                _ => None,
+            };
+        }
         let update = (|| {
             instance.component.dispatch_value(event, value)?;
             Self::resources(instance.component.as_ref())?;
@@ -405,6 +452,8 @@ impl BrowserRuntime {
                 &mut self.next_action,
                 &mut commands,
                 view,
+                &snapshot,
+                &mut instance.file,
             )?;
             Ok::<_, BrowserError>((next, snapshot, commands))
         })();
@@ -425,29 +474,52 @@ impl BrowserRuntime {
 
     fn queue_action(
         component: &mut dyn Component,
-        active: &mut Option<(u32, u32, Option<bool>)>,
+        active: &mut Option<(u32, u32, RequestKind)>,
         next: &mut u32,
         commands: &mut BrowserCommands,
         view: u32,
+        snapshot: &ViewSnapshot,
+        file: &mut Option<ruvane::BrowserFile>,
     ) -> Result<(), BrowserError> {
+        if file
+            .as_ref()
+            .is_some_and(|selected| !selected.is_current(view, snapshot, file.as_ref()))
+        {
+            *file = None;
+        }
+        let upload = component.take_upload();
         let form = component.take_action();
         let json = component.take_json();
-        if form.is_some() || json.is_some() {
-            if active.is_some() || (form.is_some() && json.is_some()) {
+        let count = usize::from(form.is_some())
+            + usize::from(json.is_some())
+            + usize::from(upload.is_some());
+        if count != 0 {
+            if active.is_some() || count != 1 {
                 return Err(BrowserError::InvalidView);
             }
             *next = next.checked_add(1).ok_or(BrowserError::Limit)?;
-            let (action, kind) = if let Some(json) = json {
+            let (action, kind) = if let Some(upload) = upload {
+                if !upload.file().is_current(view, snapshot, file.as_ref()) {
+                    return Err(BrowserError::InvalidView);
+                }
+                commands
+                    .upload(view, *next, &upload)
+                    .map_err(|_| BrowserError::InvalidView)?;
+                (upload.action(), RequestKind::Upload)
+            } else if let Some(json) = json {
                 commands
                     .json(view, *next, &json)
                     .map_err(|_| BrowserError::InvalidView)?;
-                (json.action(), Some(json.method().is_mutation()))
+                (
+                    json.action(),
+                    RequestKind::Json(json.method().is_mutation()),
+                )
             } else {
                 let form = form.unwrap();
                 commands
                     .action(view, *next, &form)
                     .map_err(|_| BrowserError::InvalidView)?;
-                (form.action(), None)
+                (form.action(), RequestKind::Form)
             };
             *active = Some((*next, action, kind));
         }
@@ -475,8 +547,14 @@ impl BrowserRuntime {
             .instances
             .get_mut(&view)
             .ok_or(BrowserError::InvalidAction)?;
-        let (token, action, json) = instance.action.ok_or(BrowserError::InvalidAction)?;
-        if token != request || matches!(&outcome, Completion::Json(_)) != json.is_some() {
+        let (token, action, request_kind) = instance.action.ok_or(BrowserError::InvalidAction)?;
+        let compatible = matches!(
+            (&outcome, request_kind),
+            (Completion::Form(_), RequestKind::Form)
+                | (Completion::Json(_), RequestKind::Json(_))
+                | (Completion::Upload(_), RequestKind::Upload)
+        );
+        if token != request || !compatible {
             return Err(BrowserError::InvalidAction);
         }
         instance.action = None;
@@ -484,6 +562,7 @@ impl BrowserRuntime {
             match outcome {
                 Completion::Form(outcome) => instance.component.action_result(action, outcome)?,
                 Completion::Json(outcome) => instance.component.json_result(action, outcome)?,
+                Completion::Upload(outcome) => instance.component.upload_result(action, outcome)?,
             }
             Self::resources(instance.component.as_ref())?;
             let next = instance.component.view()?;
@@ -497,6 +576,8 @@ impl BrowserRuntime {
                 &mut self.next_action,
                 &mut commands,
                 view,
+                &snapshot,
+                &mut instance.file,
             )?;
             Ok::<_, BrowserError>((next, snapshot, commands))
         })();
@@ -531,7 +612,7 @@ impl BrowserRuntime {
         {
             return Err(BrowserError::InvalidAction);
         }
-        let json = self.instances[&view].action.unwrap().2;
+        let json = self.instances[&view].action.unwrap().2.json();
         if length as usize
             > if json.is_some() {
                 ruvane::MAX_JSON_REPLY_BYTES
@@ -581,14 +662,14 @@ impl BrowserRuntime {
         {
             return Err(BrowserError::InvalidPayload);
         }
-        if let Some(mutation) = self
+        let request_kind = self
             .instances
             .get(&view)
             .and_then(|instance| instance.action)
             .filter(|(token, _, _)| *token == request)
             .ok_or(BrowserError::InvalidAction)?
-            .2
-        {
+            .2;
+        if let Some(mutation) = request_kind.json() {
             if kind > 5 {
                 return Err(BrowserError::InvalidPayload);
             }
@@ -609,7 +690,15 @@ impl BrowserRuntime {
                     .as_ref()
                     .err()
                     .is_some_and(|error| error.kind() == ActionFailure::Protocol);
-            self.complete_request(view, request, Completion::Json(outcome))?;
+            self.complete_request(
+                view,
+                request,
+                if request_kind == RequestKind::Upload {
+                    Completion::Upload(outcome)
+                } else {
+                    Completion::Json(outcome)
+                },
+            )?;
             return Ok(!malformed);
         }
         let outcome = match kind {
@@ -644,20 +733,28 @@ impl BrowserRuntime {
         length: u32,
     ) -> Result<(), BrowserError> {
         self.ready()?;
-        if length as usize > ruvane::MAX_BROWSER_TEXT_BYTES {
-            return Err(BrowserError::InvalidPayload);
-        }
         let instance = self
             .instances
             .get(&view)
             .ok_or(BrowserError::InvalidHandle)?;
+        let is_file = instance.snapshot.file_epoch(node).is_some();
+        let maximum = if is_file {
+            ruvane::MAX_FILE_EVENT_BYTES
+        } else {
+            ruvane::MAX_BROWSER_TEXT_BYTES
+        };
+        if length as usize > maximum {
+            return Err(BrowserError::InvalidPayload);
+        }
         if !instance.snapshot.has_event(node, event) {
             return Err(BrowserError::InvalidEvent);
         }
-        if !instance
-            .snapshot
-            .accepts_value(node, event, &EventValue::Text(String::new()))
-        {
+        let sample = if is_file {
+            EventValue::File(ruvane::FileSelection::Empty)
+        } else {
+            EventValue::Text(String::new())
+        };
+        if !instance.snapshot.accepts_value(node, event, &sample) {
             return Err(BrowserError::InvalidPayload);
         }
         self.pending = Some(PendingText {
@@ -699,7 +796,7 @@ impl BrowserRuntime {
             (0, 0) => EventValue::None,
             (2, 0) => EventValue::Boolean(false),
             (2, 1) => EventValue::Boolean(true),
-            (1, 0) => {
+            (1 | 3, 0) => {
                 let pending = self.pending.take().ok_or(BrowserError::InvalidPayload)?;
                 if pending.view != view
                     || pending.node != node
@@ -708,9 +805,22 @@ impl BrowserRuntime {
                 {
                     return Err(BrowserError::InvalidPayload);
                 }
-                EventValue::Text(
-                    String::from_utf8(pending.bytes).map_err(|_| BrowserError::InvalidPayload)?,
-                )
+                if kind == 3 {
+                    let epoch = self
+                        .instances
+                        .get(&view)
+                        .and_then(|instance| instance.snapshot.file_epoch(node))
+                        .ok_or(BrowserError::InvalidPayload)?;
+                    EventValue::File(
+                        ruvane::FileSelection::decode(view, node, epoch, &pending.bytes)
+                            .map_err(|_| BrowserError::InvalidPayload)?,
+                    )
+                } else {
+                    EventValue::Text(
+                        String::from_utf8(pending.bytes)
+                            .map_err(|_| BrowserError::InvalidPayload)?,
+                    )
+                }
             }
             _ => {
                 self.pending = None;
@@ -964,7 +1074,7 @@ mod tests {
             };
             assert_eq!(runtime.dispatch(id, 42), Err(expected));
             assert_eq!(runtime.live_instances(), 0);
-            assert_eq!(runtime.command_bytes(), b"RVN7\0\0\0\0");
+            assert_eq!(runtime.command_bytes(), b"RVN8\0\0\0\0");
             assert_eq!(runtime.dispatch(id, 42), Err(BrowserError::InvalidHandle));
         }
         assert_eq!(runtime.mount(1, counter(1)), Err(BrowserError::Limit));

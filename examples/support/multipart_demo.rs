@@ -90,6 +90,18 @@ impl Uploads {
                 .render(),
         )
     }
+    fn state(&self) -> Response {
+        let Ok(entries) = self.entries.lock() else {
+            return failure();
+        };
+        let values = entries
+            .iter()
+            .map(|entry| file_value(&entry.caption, &entry.file))
+            .collect();
+        Response::json(
+            &JsonValue::object(vec![("files".into(), JsonValue::array(values).unwrap())]).unwrap(),
+        )
+    }
     fn upload(&self, request: &Request) -> Response {
         let data = request.multipart().unwrap();
         let fields = data.fields();
@@ -99,26 +111,56 @@ impl Uploads {
             || caption.len() > 80
             || caption.chars().any(char::is_control)
         {
+            if request.header("accept") == Some(JSON_MEDIA_TYPE) {
+                let mut errors = ValidationErrors::new();
+                errors.add(Some("caption"), ValidationCode::InvalidValue);
+                return Response::validation_errors(&errors);
+            }
             return self.page(request,caption,Some(("caption","Enter a nonblank caption of at most 80 bytes. Select the file again before submitting."))).with_status(StatusCode::BadRequest);
         }
         let Some(file) = data
             .file()
             .filter(|file| file.field_name() == "attachment" && !file.file_name().is_empty())
         else {
+            if request.header("accept") == Some(JSON_MEDIA_TYPE) {
+                let mut errors = ValidationErrors::new();
+                errors.add(Some("attachment"), ValidationCode::Required);
+                return Response::validation_errors(&errors);
+            }
             return self.page(request,caption,Some(("attachment","Select one file. File selections cannot be restored after a form submission."))).with_status(StatusCode::BadRequest);
         };
         let Ok(mut entries) = self.entries.lock() else {
             return failure();
         };
         if entries.len() == MAX_FILES {
+            if request.header("accept") == Some(JSON_MEDIA_TYPE) {
+                return Response::json(&JsonValue::string("Upload capacity reached.").unwrap())
+                    .with_status(StatusCode::Conflict);
+            }
             return failure();
         }
+        let reply = Response::json(&file_value(caption, file));
         entries.push(Entry {
             caption: caption.to_owned(),
             file: file.clone(),
         });
-        Response::see_other(InternalUrl::new("/").unwrap())
+        if request.header("accept") == Some(JSON_MEDIA_TYPE) {
+            reply
+        } else {
+            Response::see_other(InternalUrl::new("/").unwrap())
+        }
     }
+}
+fn file_value(caption: &str, file: &UploadedFile) -> JsonValue {
+    JsonValue::object(vec![
+        ("caption".into(), JsonValue::string(caption).unwrap()),
+        (
+            "filename".into(),
+            JsonValue::string(file.file_name()).unwrap(),
+        ),
+        ("bytes".into(), JsonValue::from(file.len() as u64)),
+    ])
+    .unwrap()
 }
 pub fn app() -> Result<App, Box<dyn std::error::Error>> {
     let sessions = SessionStore::new(
@@ -138,6 +180,73 @@ pub fn app() -> Result<App, Box<dyn std::error::Error>> {
         MediaType::Css,
     )?;
     let mut routes = FileRouteRegistry::new(&mut app);
+    let state = uploads.clone();
+    routes.endpoint(
+        "uploads/state/route.rs",
+        "/uploads/state",
+        FileEndpoint::new()
+            .get(move |_| state.state())
+            .guard(sessions.csrf_guard())
+            .guard(quota.session_guard(sessions.clone())),
+    )?;
+    let csrf = sessions.clone();
+    routes.endpoint(
+        "csrf-token/route.rs",
+        "/csrf-token",
+        FileEndpoint::new().get(move |request| csrf.csrf_response(request)),
+    )?;
+    let open_json = sessions.clone();
+    routes.endpoint(
+        "upload-session/route.rs",
+        "/upload-session",
+        FileEndpoint::new()
+            .post_json(move |request| {
+                if !request
+                    .json()
+                    .and_then(JsonValue::as_object)
+                    .is_some_and(|fields| fields.is_empty())
+                {
+                    return Response::text("Invalid session request.")
+                        .with_status(StatusCode::BadRequest);
+                }
+                let response = Response::json(&true.into());
+                match open_json.lookup(request) {
+                    Ok(Some(_)) => response,
+                    Ok(None) => match open_json.create(SessionData::default()) {
+                        Ok(cookie) => response.with_cookie(cookie).unwrap(),
+                        Err(_) => failure(),
+                    },
+                    Err(_) => failure(),
+                }
+            })
+            .guard(public.guard()),
+    )?;
+    let close_json = sessions.clone();
+    routes.endpoint(
+        "upload-logout/route.rs",
+        "/upload-logout",
+        FileEndpoint::new()
+            .post_json(move |request| {
+                if !request
+                    .json()
+                    .and_then(JsonValue::as_object)
+                    .is_some_and(|fields| fields.is_empty())
+                {
+                    return Response::text("Invalid session request.")
+                        .with_status(StatusCode::BadRequest);
+                }
+                match close_json.lookup(request) {
+                    Ok(Some(session)) if close_json.revoke(&session).is_ok() => {
+                        Response::json(&false.into())
+                            .with_cookie(close_json.removal_cookie())
+                            .unwrap()
+                    }
+                    _ => failure(),
+                }
+            })
+            .guard(sessions.csrf_guard())
+            .guard(quota.session_guard(sessions.clone())),
+    )?;
     let page = uploads.clone();
     routes.endpoint(
         "root/route.rs",

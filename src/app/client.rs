@@ -684,7 +684,10 @@ impl App {
         }
         view.snapshot()
             .map_err(|_| PageError::InternalServerError)?;
-        if component.take_action().is_some() || component.take_json().is_some() {
+        if component.take_action().is_some()
+            || component.take_json().is_some()
+            || component.take_upload().is_some()
+        {
             return Err(PageError::InternalServerError);
         }
         (if editable {

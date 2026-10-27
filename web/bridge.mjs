@@ -1,7 +1,7 @@
-// DOM and action bridge for RVN7 commands.
-export const ABI_VERSION = 13;
+// DOM and action bridge for RVN8 commands.
+export const ABI_VERSION = 14;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
-const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a" });
+const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a", 16: "input" });
 const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision", "ruvane_page_validate", "ruvane_boundary_mount"];
 export const ACTION_MEDIA_TYPE = "application/vnd.ruvane.action";
 export const CSRF_MEDIA_TYPE = "application/vnd.ruvane.csrf";
@@ -116,6 +116,18 @@ function actionPath(path) {
   }
   return path;
 }
+function uploadFields(name, body) {
+  const validName=name=>/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(name)&&name!=="_ruvane_csrf";
+  if(!validName(name)||/[^\x21-\x7e]/.test(body))throw invalid();
+  const fields=[],seen=new Set([name]);
+  if(body!=="")for(const pair of body.split("&")) {
+    const equal=pair.indexOf("=");if(equal<1)throw invalid();
+    let key,value;try{key=decodeURIComponent(pair.slice(0,equal).replace(/\+/g," "));value=decodeURIComponent(pair.slice(equal+1).replace(/\+/g," "));}catch{throw invalid();}
+    if(!validName(key)||seen.has(key)||fields.length===16||new TextEncoder().encode(value).length>1024||/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(value))throw invalid();
+    seen.add(key);fields.push([key,value]);
+  }
+  return fields;
+}
 const invalid = () => new Error("Invalid Ruvane browser protocol");
 function uint(value, zero = false) {
   if (!Number.isInteger(value) || value < (zero ? 0 : 1) || value > 0xffffffff) throw invalid();
@@ -139,7 +151,7 @@ export function validateExports(exports) {
 /** Decodes a batch before touching the DOM. */
 export function decodeCommands(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 8 || bytes.length > LIMITS.bytes) throw invalid();
-  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 55) throw invalid();
+  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 56) throw invalid();
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 4;
   const u8 = () => { if (offset >= bytes.length) throw invalid(); return bytes[offset++]; };
@@ -168,9 +180,17 @@ export function decodeCommands(bytes) {
       if ((["GET", "DELETE"].includes(method) ? body !== "" : body === "") || (etag !== "" && !/^"[\x21\x23-\x7e]*"$/.test(etag))) throw invalid();
       commands.push({ op, view, request, action, method, url, body, etag, mutation: method !== "GET" }); continue;
     }
-    if (![1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13].includes(op)) throw invalid();
+    if (op === 16) {
+      const request=uint(u32()), action=uint(u32()), node=uint(u32()), file=uint(u32());
+      const text=limit=>{const size=u32();if(size>limit||offset+size>bytes.length)throw invalid();const value=decoder.decode(bytes.subarray(offset,offset+size));offset+=size;return value;};
+      const url=internalTarget(text(1024)), name=text(64), body=text(16384);
+      const fields=uploadFields(name,body);
+      commands.push({op,view,request,action,node,file,url,name,body,fields,method:"POST",mutation:true,etag:""});continue;
+    }
+    if (![1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13, 15].includes(op)) throw invalid();
     const node = uint(u32());
-    if (op === 12) {
+    if (op === 15) {commands.push({op,view,node,epoch:u32()});}
+    else if (op === 12) {
       const size = u32(); if (size > 4096 || offset + size > bytes.length) throw invalid();
       const url = internalTarget(decoder.decode(bytes.subarray(offset, offset + size))); offset += size;
       commands.push({ op, view, node, url });
@@ -244,10 +264,10 @@ class MountRejected extends Error {
 }
 const mismatch = () => { throw new HydrationMismatch(); };
 const container = tag => [0, 1, 3, 7, 8, 9, 10].includes(tag);
-const field = tag => [11, 12, 13].includes(tag);
+const field = tag => [11, 12, 13, 16].includes(tag);
 const textField = tag => tag === 11 || tag === 13;
 const disableable = tag => field(tag) || tag === 6 || tag === 14;
-const eventName = tag => tag === 9 ? "submit" : tag === 12 ? "change" : textField(tag) ? "input" : "click";
+const eventName = tag => tag === 9 ? "submit" : (tag === 12 || tag === 16) ? "change" : textField(tag) ? "input" : "click";
 const eventAttribute = tag => `data-ruvane-${eventName(tag)}`;
 class PayloadRejected extends Error { constructor() { super("Invalid Ruvane event payload"); } }
 function validText(tag, value) {
@@ -342,6 +362,8 @@ export function planCommands(commands, id, previous, initial = false) {
       if (node.epoch !== null && epoch < node.epoch) throw invalid();
       node.value = command.value; node.epoch = epoch;
       if (fresh.has(command.node)) node.seed = command.value;
+    } else if (command.op === 15 && node.tag === 16) {
+      const epoch=uint(command.epoch,true);if(node.epoch!==null&&epoch<node.epoch)throw invalid();node.epoch=epoch;
     } else if (command.op === 9 && node.tag === 12 && typeof command.checked === "boolean") {
       const epoch = uint(command.epoch, true);
       if (node.epoch !== null && epoch < node.epoch) throw invalid();
@@ -367,14 +389,14 @@ export function planCommands(commands, id, previous, initial = false) {
   for (const command of commands) {
     if (command.op !== 6 && (!nodes.has(command.node) || (command.op === 7 && command.before && !nodes.has(command.before)))) throw invalid();
   }
-  if (nodes.size < 2) throw invalid();
+  if (nodes.size < 2 || [...nodes.values()].filter(node=>node.tag===16).length>1) throw invalid();
   let listeners = 0;
   for (const [id, node] of nodes) {
     if (node.tag === 15 && (node.url === null || node.prefetch === null)) throw invalid();
     if (id && leaf(node.tag) && node.text === null) throw invalid();
     if ((node.tag === 6 || node.tag === 9 || field(node.tag)) && (node.event === null || ++listeners > LIMITS.listeners)) throw invalid();
     if (disableable(node.tag) && node.disabled === null) throw invalid();
-    if (field(node.tag) && (node.epoch === null || node.invalid === null || (textField(node.tag) ? node.value === null : node.checked === null))) throw invalid();
+    if (field(node.tag) && (node.epoch === null || node.invalid === null || (textField(node.tag) ? node.value === null : node.tag===12 && node.checked === null))) throw invalid();
     if (node.tag === 10 && (node.children.filter(id => field(nodes.get(id).tag)).length !== 1 || !node.children.some(id => nodes.get(id).tag === 4 && nodes.get(id).text?.trim()))) throw invalid();
   }
   return { nodes, nextNode };
@@ -395,6 +417,7 @@ function matchDom(nodes, root, inert) {
       if (field(node.tag)) {
         attributes["aria-invalid"] = String(node.invalid); attributes["data-ruvane-epoch"] = String(node.epoch);
         if (textField(node.tag)) attributes.maxlength = "1024";
+        if (node.tag === 16) { attributes.type="file";if(inert&&actual.files.length) mismatch(); }
         if (node.tag === 11) { attributes.type = "text"; attributes.value = node.seed; }
         if (node.tag === 12) { attributes.type = "checkbox"; if (node.seed) attributes.checked = ""; }
       }
@@ -406,7 +429,7 @@ function matchDom(nodes, root, inert) {
       if (actual.attributes.length !== Object.keys(attributes).length || Object.entries(attributes).some(([key, value]) => actual.getAttribute(key) !== value)) mismatch();
       node.element = actual;
       if (container(node.tag)) children(node, actual);
-      else if (node.tag === 11 || node.tag === 12) { if (actual.childNodes.length) mismatch(); }
+      else if (node.tag === 11 || node.tag === 12 || node.tag === 16) { if (actual.childNodes.length) mismatch(); }
       else {
         const expected = node.tag === 13 ? node.seed : node.text;
         if (expected === "") { if (actual.childNodes.length) mismatch(); }
@@ -435,6 +458,7 @@ export async function createRuntime(url, options = {}) {
     const state = actionState(); for (const observer of [...actionObservers]) { try { observer(state); } catch { /* Observers do not control delivery. */ } }
   }
   function endAction(operation, uncertain = false) { if (!operation.ended) { operation.ended = true; if(operation.op !== 14 || operation.mutation) { uncertainActions ||= uncertain; actionChanged(); } } }
+  let nextFile = 0;
   let nextRoot = 0, busy = false, closed = false, faulted = false, finalRust = null, hydratingBranch = false;
 
   function live() { if (closed) throw new Error("Ruvane browser runtime disposed"); }
@@ -442,6 +466,8 @@ export async function createRuntime(url, options = {}) {
     const view = views.get(id);
     if (!view) return;
     if (view.action) { const operation = view.action; clearTimeout(operation.timer); operation.controller.abort(); view.action = null; endAction(operation,operation.sent); }
+    if(view.file){view.nodes.get(view.file.node)?.element&&(view.nodes.get(view.file.node).element.value="");view.file=null;}
+    for(const node of view.nodes.values())if(node.tag===16&&node.element)node.element.value="";
     view.resolveIdle?.("disposed"); view.idlePromise = null; view.resolveIdle = null;
     for (const [node, listeners] of view.listeners) for (const [type, listener] of listeners) view.nodes.get(node).element.removeEventListener(type, listener);
     view.listeners.clear();
@@ -517,12 +543,12 @@ export async function createRuntime(url, options = {}) {
       if (![1, 2].includes(completed)) throw invalid();
       if (completed === 2) kind = 3;
       drain(id, "dispatch");
-      const transport = operation.op === 14 && kind === 0 ? bytes[4] : kind;
-      const status = operation.op === 14 && bytes && bytes[4] === 0 ? bytes[6] | bytes[7] << 8 : 0;
-      const outcome = transport ? ["", "network", "timeout", "protocol", "rejected", "rate-limited"][transport] : operation.op === 14 ? status < 300 ? "success" : status === 400 ? "validation" : status === 412 ? "conflict" : status === 428 ? "precondition-required" : status === 429 ? "rate-limited" : "rejected" : bytes[4] === 1 ? "validation" : "success";
+      const transport = (operation.op === 14 || operation.op === 16) && kind === 0 ? bytes[4] : kind;
+      const status = (operation.op === 14 || operation.op === 16) && bytes && bytes[4] === 0 ? bytes[6] | bytes[7] << 8 : 0;
+      const outcome = transport ? ["", "network", "timeout", "protocol", "rejected", "rate-limited"][transport] : (operation.op === 14 || operation.op === 16) ? status < 300 ? "success" : status === 400 ? "validation" : status === 412 ? "conflict" : status === 428 ? "precondition-required" : status === 429 ? "rate-limited" : "rejected" : bytes[4] === 1 ? "validation" : "success";
       settle(view, outcome, outcome === "rate-limited" ? operation.retryAfter : null); delivered = true;
     } catch { stop(true); }
-    finally { busy = false; endAction(operation,operation.op === 14 ? operation.mutation && (operation.uncertain || (operation.sent && (!delivered || kind !== 0))) : operation.sent && (!delivered || (kind !== 0 && !(kind === 5 && operation.rateRejected)))); }
+    finally { busy = false; endAction(operation,(operation.op === 14 || operation.op === 16) ? operation.mutation && (operation.uncertain || (operation.sent && (!delivered || kind !== 0))) : operation.sent && (!delivered || (kind !== 0 && !(kind === 5 && operation.rateRejected)))); }
   }
   class TransportError extends Error { constructor(kind) { super("Ruvane action transport failed"); this.kind = kind; } }
   function cancelOnAbort(reader, signal) {
@@ -557,16 +583,20 @@ export async function createRuntime(url, options = {}) {
     let frame;
     try {
       const headers = { Accept: "application/json", ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) };
-      if (operation.body !== "") headers["Content-Type"] = "application/json";
+      if (operation.op===16) selectedUpload(view,operation);
+      else if (operation.body !== "") headers["Content-Type"] = "application/json";
       if (operation.etag !== "") headers["If-Match"] = operation.etag;
       if (operation.mutation) await csrfHeaders(headers, operation);
       if (operation.controller.signal.aborted) throw new TransportError(4);
+      const payload=operation.op===16?await uploadBody(view,operation):operation.body;
+      if(operation.controller.signal.aborted)throw new TransportError(4);
+      if(operation.op===16){selectedUpload(view,operation);headers["Content-Type"]=payload.contentType;}
       operation.sent = true;
-      const response = await fetch(operation.url, { method: operation.method, mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers, ...(operation.body === "" ? {} : { body: operation.body }), signal: operation.controller.signal });
+      const response = await fetch(operation.url, { method: operation.method, mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers, ...(payload === "" ? {} : { body: operation.op===16?payload.bytes:payload }), signal: operation.controller.signal });
       operation.retryAfter = readRetryAfter(response);
       operation.rateRejected = operation.retryAfter !== null && response.headers.get("ruvane-action-rejected") === "rate-limit";
       const json = response.headers.get("content-type")?.trim().toLowerCase() === "application/json";
-      operation.uncertain = operation.mutation && response.status >= 300 && ![400,401,403,404,405,409,412,415,422,428].includes(response.status) && !operation.rateRejected;
+      operation.uncertain = operation.mutation && response.status >= 300 && ![400,401,403,404,405,409,412,413,415,422,428].includes(response.status) && !operation.rateRejected;
       if (response.status >= 400 && response.status < 600 && !json && response.headers.get("cache-control")?.trim().toLowerCase() === "no-store") {
         await response.body?.cancel();
         frame = jsonFrame(operation, 0, response.status); frame[5] |= 4;
@@ -585,7 +615,7 @@ export async function createRuntime(url, options = {}) {
       if (operation.controller.signal.aborted) throw new TransportError(operation.timedOut ? 2 : 4);
       const body = new Uint8Array(total); let offset = 0;
       for (const part of parts) { body.set(part, offset); offset += part.length; }
-      operation.uncertain = operation.mutation && response.status >= 300 && ![400,401,403,404,405,409,412,415,422,428].includes(response.status) && !operation.rateRejected;
+      operation.uncertain = operation.mutation && response.status >= 300 && ![400,401,403,404,405,409,412,413,415,422,428].includes(response.status) && !operation.rateRejected;
       frame = jsonFrame(operation, 0, response.status, tag, body);
       }
     } catch (error) {
@@ -640,19 +670,62 @@ export async function createRuntime(url, options = {}) {
     view.action = operation; view.lastAction = command.request; if(command.op !== 14 || command.mutation) actionChanged();
     operation.timer = setTimeout(() => {
       operation.timedOut = true; operation.controller.abort();
-      if (operation.op === 14) {
+      if ((operation.op === 14 || operation.op === 16)) {
         operation.retryAfter = null; operation.uncertain = operation.mutation && operation.sent;
         deliver(id, view, operation, jsonFrame(operation, 2), 0);
       }
     }, actionTimeout);
-    void (command.op === 14 ? performJson(id, view, operation) : perform(id, view, operation));
+    void ((command.op === 14 || command.op === 16) ? performJson(id, view, operation) : perform(id, view, operation));
+  }
+  function selectedUpload(view,operation) {
+    const selected=view.file,node=view.nodes.get(operation.node);
+    if(!selected||selected.id!==operation.file||selected.node!==operation.node||!node||node.tag!==16||selected.epoch!==node.epoch||node.element.files.length!==1||node.element.files[0]!==selected.file)throw new TransportError(4);
+    return selected.file;
+  }
+  async function uploadBody(view,operation) {
+    try {
+      const file=selectedUpload(view,operation),form=new FormData();
+      for(const [name,value] of operation.fields)form.append(name,value);
+      form.append(operation.name,new Blob([file],{type:"application/octet-stream"}),file.name);
+      const encoded=new Request(new URL(operation.url,location.href),{method:"POST",body:form});
+      const contentType=encoded.headers.get("content-type"),reader=encoded.body.getReader(),detach=cancelOnAbort(reader,operation.controller.signal),parts=[];let total=0;
+      try {
+        while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>65536){await reader.cancel();throw new TransportError(4);}parts.push(value);}
+        if(operation.controller.signal.aborted)throw new TransportError(4);
+        return {bytes:new Blob(parts),contentType};
+      } finally {detach();reader.releaseLock();}
+    } catch {throw new TransportError(4);}
+  }
+  function captureFile(id,nodeId) {
+    const view=views.get(id),node=view?.nodes.get(nodeId);
+    if(!node||node.tag!==16||node.disabled||busy)throw new PayloadRejected();
+    view.file=null;
+    let bytes=new Uint8Array([82,85,70,49,0]);
+    try {
+      const files=node.element.files;
+      if(files.length>1)bytes[4]=3;
+      else if(files.length===1) {
+        const file=files[0],name=new TextEncoder().encode(file.name),mime=new TextEncoder().encode(file.type);
+        if(!Number.isInteger(file.size)||file.size<0||file.size>32768)bytes[4]=2;
+        else if(name.length===0||name.length>255||mime.length>127||/[\u0000-\u001f\u007f-\u009f/\\:]/.test(file.name)||[".",".."].includes(file.name)||/[^\x20-\x7e]/.test(file.type))bytes[4]=3;
+        else if(nextFile===0xffffffff)bytes[4]=4;
+        else {
+          const token=++nextFile;bytes=new Uint8Array(17+name.length+mime.length);bytes.set([82,85,70,49,1]);const data=new DataView(bytes.buffer);
+          data.setUint32(5,token,true);data.setUint32(9,file.size,true);data.setUint16(13,name.length,true);bytes.set(name,15);data.setUint16(15+name.length,mime.length,true);bytes.set(mime,17+name.length);
+          view.file={node:nodeId,id:token,epoch:node.epoch,file};
+        }
+      }
+    } catch {bytes=new Uint8Array([82,85,70,49,4]);}
+    if(bytes[4]!==1)node.element.value="";
+    try {return dispatchNode(id,nodeId,node.event,undefined,bytes);}
+    catch(error){view.file=null;node.element.value="";throw error;}
   }
   function context(view, id) {
     if (!view.edits.has(id)) view.edits.set(id, { composing: false, pending: null });
     return view.edits.get(id);
   }
   function selection(element) {
-    if (!element || !["input", "textarea"].includes(element.localName) || element.type === "checkbox") return null;
+    if (!element || !["input", "textarea"].includes(element.localName) || ["checkbox","file"].includes(element.type)) return null;
     return { start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection };
   }
   function restoreSelection(element, saved) {
@@ -674,6 +747,7 @@ export async function createRuntime(url, options = {}) {
   function input(view, id, nodeId, type, event) {
     const node = view.nodes.get(nodeId);
     if (!node || closed) return;
+    if(node.tag===16){if(node.disabled)return;try{captureFile(id,nodeId);}catch(error){if(!(error instanceof PayloadRejected))stop(true);}return;}
     const edit = context(view, nodeId);
     if (type === "compositionstart") { edit.composing = true; return; }
     if (type === "input" && (event.isComposing || edit.composing)) { edit.composing = true; return; }
@@ -703,11 +777,12 @@ export async function createRuntime(url, options = {}) {
     if ([...view.edits.values()].some(edit => edit.composing)) return;
     const edits = [];
     for (const [key, node] of view.nodes) {
-      if (!field(node.tag) || node.disabled) continue;
+      if (!field(node.tag) || node.tag===16 || node.disabled) continue;
       const value = node.tag === 12 ? node.element.checked : node.element.value;
       if (value !== (node.tag === 12 ? node.checked : node.value)) edits.push([key, value]);
     }
     adopt(view, id, edits);
+    for(const [key,field] of view.nodes)if(field.tag===16&&!field.disabled){const file=field.element.files[0];if(file!==view.file?.file||(file&&view.file?.node!==key))captureFile(id,key);}
     const node = view.nodes.get(nodeId);
     if (node) dispatchNode(id, nodeId, node.event);
   }
@@ -736,6 +811,7 @@ export async function createRuntime(url, options = {}) {
     if (node.tag === 6 || node.tag === 14) node.element.type = node.tag === 6 ? "button" : "submit";
     if (node.tag === 9) node.element.noValidate = true;
     if (textField(node.tag)) { node.element.maxLength = LIMITS.text; if (node.tag === 11) node.element.type = "text"; node.element.defaultValue = node.seed; }
+    if (node.tag === 16) node.element.type="file";
     if (node.tag === 12) { node.element.type = "checkbox"; node.element.defaultChecked = node.seed; }
     if (disableable(node.tag)) node.element.disabled = true;
     nodes.get(node.parent).element.appendChild(node.element);
@@ -757,7 +833,7 @@ export async function createRuntime(url, options = {}) {
   }
   function drain(id, phase, decoded = commands()) {
     const view = views.get(id);
-    const actions = decoded.filter(command => command.op === 11 || command.op === 14), batch = decoded.filter(command => command.op !== 11 && command.op !== 14);
+    const actions = decoded.filter(command => command.op === 11 || command.op === 14 || command.op === 16), batch = decoded.filter(command => command.op !== 11 && command.op !== 14 && command.op !== 16);
     if(hydratingBranch&&actions.length)throw new HydrationMismatch();
     if (actions.length > 1 || (phase === "dispose" && actions.length) || actions.some(command => command.view !== id || command.request <= view.lastAction || view.action)) throw invalid();
     if (phase === "dispose") {
@@ -777,6 +853,7 @@ export async function createRuntime(url, options = {}) {
     for (const [nodeId, listeners] of view.listeners) {
       if (!nodes.has(nodeId)) { for (const [type, listener] of listeners) old.get(nodeId).element.removeEventListener(type, listener); view.listeners.delete(nodeId); view.edits.delete(nodeId); }
     }
+    if(view.file&&(!nodes.has(view.file.node)||nodes.get(view.file.node).epoch!==view.file.epoch)){old.get(view.file.node).element.value="";view.file=null;}
     view.nodes = nodes; view.nextNode = plan.nextNode;
     if (phase !== "hydrate") {
       for (const command of batch) {
@@ -798,6 +875,7 @@ export async function createRuntime(url, options = {}) {
       if (!field(node.tag)) continue;
       node.element.setAttribute("aria-invalid", String(node.invalid)); node.element.setAttribute("data-ruvane-epoch", String(node.epoch));
       const edit = context(view, nodeId), previous = old.get(nodeId);
+      if(node.tag===16){if(!previous||previous.epoch!==node.epoch)node.element.value="";continue;}
       if (phase === "hydrate" && !node.disabled) {
         const value = node.tag === 12 ? node.element.checked : node.element.value;
         if (value !== (node.tag === 12 ? node.checked : node.value)) edits.push([nodeId, value]);
@@ -861,13 +939,13 @@ export async function createRuntime(url, options = {}) {
         throw invalid();
       }
       if (views.has(id)) throw invalid();
-      views.set(id, { root, hydrated, nodes: new Map([[0, { element: root, tag: 0, depth: 0, children: [], key: 0 }]]), nextNode: 0, listeners: new Map(), events: new Set(), edits: new Map(), ingress: new Set(), hydrationEdits: [], action: null, lastAction: 0, lastOutcome: "success", idlePromise: null, resolveIdle: null });
+      views.set(id, { root, hydrated, nodes: new Map([[0, { element: root, tag: 0, depth: 0, children: [], key: 0 }]]), nextNode: 0, listeners: new Map(), events: new Set(), edits: new Map(), ingress: new Set(), hydrationEdits: [], action: null, file: null, lastAction: 0, lastOutcome: "success", idlePromise: null, resolveIdle: null });
       CLAIMS.add(root);
       if(prepare){
         const decoded=commands(),view=views.get(id);
         if(decoded.some(command=>command.op===11))throw new HydrationMismatch();
         const plan=planCommands(decoded,id,view,true);matchDom(plan.nodes,root,true);
-        for(const node of plan.nodes.values())if(field(node.tag)){const value=node.tag===12?node.element.checked:node.element.value;if(node.tag!==12&&!validText(node.tag,value))throw new HydrationMismatch();}
+        for(const node of plan.nodes.values())if(field(node.tag)&&node.tag!==16){const value=node.tag===12?node.element.checked:node.element.value;if(node.tag!==12&&!validText(node.tag,value))throw new HydrationMismatch();}
         if(result(exports.ruvane_commands_clear())!==1)throw invalid();
         view.prepared=decoded;
       }else drain(id, hydrated ? "hydrate" : "mount");
@@ -890,12 +968,13 @@ export async function createRuntime(url, options = {}) {
     if (found[1].tag === 9 && value === undefined) return submit(view, id, found[0]);
     return dispatchNode(id, found[0], event, value);
   }
-  function dispatchNode(id, nodeId, event, value) {
+  function dispatchNode(id, nodeId, event, value, fileBytes) {
     live(); uint(id); uint(nodeId); uint(event);
     const view = views.get(id), node = view?.nodes.get(nodeId);
     if (!node || node.event !== event) throw new RangeError("Expired Ruvane event binding");
     let kind = 0, scalar = 0, bytes;
-    if (textField(node.tag)) { if (!validText(node.tag, value) || node.disabled) throw new PayloadRejected(); kind = 1; bytes = new TextEncoder().encode(value); }
+    if(node.tag===16){if(value!==undefined||node.disabled)throw new PayloadRejected();if(!fileBytes)return captureFile(id,nodeId);kind=3;bytes=fileBytes;}
+    else if (textField(node.tag)) { if (!validText(node.tag, value) || node.disabled) throw new PayloadRejected(); kind = 1; bytes = new TextEncoder().encode(value); }
     else if (node.tag === 12) { if (typeof value !== "boolean" || node.disabled) throw new PayloadRejected(); kind = 2; scalar = Number(value); }
     else if (value !== undefined) throw new PayloadRejected();
     if (busy) throw new Error("Ruvane bridge busy");
@@ -1096,6 +1175,10 @@ export async function createRuntime(url, options = {}) {
       }
       adopt(view, controller.id, valid);
       return controller;
+    },
+    fileState() {
+      const selected=[...views.values()].filter(view=>view.file);
+      return Object.freeze({selected:selected.length,bytes:selected.reduce((sum,view)=>sum+view.file.file.size,0)});
     },
     stats() {
       let domHandles = 0, eventListeners = 0;

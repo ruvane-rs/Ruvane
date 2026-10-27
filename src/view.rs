@@ -440,7 +440,7 @@ impl View {
                 BrowserTag::ListItem => "li",
                 BrowserTag::Form => "form",
                 BrowserTag::Label => "label",
-                BrowserTag::Input | BrowserTag::Checkbox => "input",
+                BrowserTag::Input | BrowserTag::Checkbox | BrowserTag::File => "input",
                 BrowserTag::TextArea => "textarea",
                 BrowserTag::Link => "a",
             };
@@ -463,6 +463,7 @@ impl View {
                 BrowserTag::Form => output.push_str(" novalidate"),
                 BrowserTag::Input => output.push_str(" type=\"text\" maxlength=\"1024\""),
                 BrowserTag::Checkbox => output.push_str(" type=\"checkbox\""),
+                BrowserTag::File => output.push_str(" type=\"file\""),
                 BrowserTag::TextArea => output.push_str(" maxlength=\"1024\""),
                 _ => {}
             }
@@ -470,7 +471,7 @@ impl View {
                 let name = match node.tag {
                     BrowserTag::Form => "submit",
                     BrowserTag::Input | BrowserTag::TextArea => "input",
-                    BrowserTag::Checkbox => "change",
+                    BrowserTag::Checkbox | BrowserTag::File => "change",
                     _ => "click",
                 };
                 write!(output, " data-ruvane-{name}=\"{event}\"").unwrap();
@@ -503,7 +504,10 @@ impl View {
                 output.push_str(" disabled");
             }
             output.push('>');
-            if matches!(node.tag, BrowserTag::Input | BrowserTag::Checkbox) {
+            if matches!(
+                node.tag,
+                BrowserTag::Input | BrowserTag::Checkbox | BrowserTag::File
+            ) {
                 continue;
             }
             if let Some(label) = &node.text {
@@ -612,7 +616,20 @@ impl From<ViewError> for ComponentError {
 
 /// A reusable component. Dropping it must release its owned resources.
 pub trait Component {
-    /// Takes one queued JSON request. Shares the pending slot with form actions.
+    /// Takes one queued upload, sharing the pending slot with forms and JSON.
+    fn take_upload(&mut self) -> Option<crate::UploadRequest> {
+        None
+    }
+    /// Receives a completion after the live upload owner and request token are checked.
+    fn upload_result(
+        &mut self,
+        _action: u32,
+        _outcome: crate::UploadOutcome,
+    ) -> Result<(), ComponentError> {
+        Err(ComponentError::InvalidEvent)
+    }
+
+    /// Takes one queued JSON request. Shares the pending slot with forms and uploads.
     fn take_json(&mut self) -> Option<crate::JsonRequest> {
         None
     }

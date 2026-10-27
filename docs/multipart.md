@@ -145,6 +145,7 @@ Tests exercise binary preservation, native FormData encoding, quoted and Unicode
 filenames, delimiter lookalikes, truncation, every budget, duplicate namespaces,
 CSRF header/field ambiguity, origins, quotas, deadlines and capacity. CLI tests
 serve a compiled bundle with source files hidden and check that native upload
-handlers stay out of Wasm. ABI v13, its 22 numeric function exports and four core
-runtime assets are unchanged. Large-file streaming and component-owned browser
-file transfers are outside this initial native profile.
+handlers stay out of Wasm. Alpha.56 retained ABI v13 and its 22 numeric function
+exports. Alpha.57 adds [component-owned browser uploads](browser-uploads.md) with
+ABI v14; the native multipart profile and four core runtime assets stay the same.
+Large-file streaming remains outside this profile.

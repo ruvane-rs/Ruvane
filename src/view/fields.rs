@@ -10,6 +10,8 @@ pub enum EventValue {
     Text(String),
     /// A checkbox value.
     Boolean(bool),
+    /// A bounded change from one live file picker.
+    File(crate::FileSelection),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,7 +25,7 @@ pub(super) struct Control {
 pub(super) fn is_control(tag: BrowserTag) -> bool {
     matches!(
         tag,
-        BrowserTag::Input | BrowserTag::Checkbox | BrowserTag::TextArea
+        BrowserTag::Input | BrowserTag::Checkbox | BrowserTag::TextArea | BrowserTag::File
     )
 }
 pub(super) fn valid_value(tag: BrowserTag, value: &str) -> bool {
@@ -44,15 +46,40 @@ pub(super) fn accepts(parent: Option<BrowserTag>, tag: BrowserTag) -> bool {
         return matches!(tag, Span | Output | Button | Link);
     }
     if parent == Some(Label) {
-        return matches!(tag, Span | Input | Checkbox | TextArea);
+        return matches!(tag, Span | Input | Checkbox | TextArea | File);
     }
-    if matches!(tag, Input | Checkbox | TextArea) {
+    if matches!(tag, Input | Checkbox | TextArea | File) {
         return parent == Some(Label);
     }
     parent.is_none() || matches!(parent, Some(Section | ListItem | Form))
 }
 
 impl View {
+    /// Adds one labeled file picker. Each view supports at most one selected file.
+    pub fn file(
+        &mut self,
+        parent: u32,
+        key: u32,
+        event: u32,
+        invalid: bool,
+    ) -> Result<u32, ViewError> {
+        if self.nodes.iter().any(|node| node.tag == BrowserTag::File) {
+            return Err(ViewError::Limit);
+        }
+        self.control(
+            parent,
+            key,
+            BrowserTag::File,
+            Control {
+                value: None,
+                checked: None,
+                invalid,
+                epoch: 0,
+            },
+            event,
+        )
+    }
+
     /// Adds a client form with a submission event. Forms cannot be nested.
     pub fn form(&mut self, parent: u32, key: u32, event: u32) -> Result<u32, ViewError> {
         if key == 0 || event == 0 {

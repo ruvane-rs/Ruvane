@@ -102,7 +102,7 @@ native SSR and one hundred startup/cleanup cycles. The fixture model, routes and
 assets are removed from the generated demo after verification. The normal browser
 regressions also cover the previous default and early-hydration paths.
 
-The workspace remains two first-party crates using `std`, with ABI v13, 22 numeric
+The workspace remains two first-party crates using `std`, with ABI v14, 22 numeric
 exports, four versioned runtime assets, and no third-party Cargo/npm/build/test
 dependency.
 

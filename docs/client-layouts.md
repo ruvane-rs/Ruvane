@@ -98,7 +98,7 @@ layouts, without adding a history entry; local drafts can be discarded.
 
 ## Wire contract
 
-ABI v13 provides 22 numeric exports, RVN7 commands and RVA1 seeds. RVP1 is still
+ABI v14 provides 22 numeric exports, RVN8 commands and RVA1 seeds. RVP1 is still
 used for pages with no layouts. RVP2 contains:
 
 1. Four magic bytes `RVP2`, then a selected-segment u8.

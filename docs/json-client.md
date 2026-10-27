@@ -24,7 +24,7 @@ runtime checks the live owner and monotonically increasing transport token.
 Update pending state and the model there. A completion may queue a subsequent
 read; it must never silently retry an uncertain mutation.
 
-Form actions and JSON share one pending slot per component. Queuing both, or
+Form actions, JSON and [uploads](browser-uploads.md) share one pending slot per component. Queuing two, or
 queuing another while one is active, rejects that component. Synchronous dispatch
 of unrelated state remains available. Seeded App pages and loading/error
 presentations cannot queue initial requests, so server rendering and client
@@ -71,7 +71,7 @@ No request obtains or substitutes an ETag automatically.
   Both replies and failures expose `uncertain()` for submitted mutations.
 
 A successful response and ordinary HTTP rejection statuses
-400/401/403/404/405/409/412/415/422/428 are treated according to their rejection
+400/401/403/404/405/409/412/413/415/422/428 are treated according to their rejection
 semantics. A 429 is a confirmed pre-handler refusal only with Ruvane's fixed
 rate-limit marker and valid Retry-After. A handler's unmarked 429, a server error,
 a network failure after submission, a malformed reply or an elapsed deadline may
@@ -102,9 +102,9 @@ profile. Declared and streamed body sizes are checked against 64 KiB, followed
 by Rust's JSON depth, value, string, member and number limits. ETags have the
 existing 128-byte profile. Transport metadata adds at most 142 bytes.
 
-Browser ABI v13 retains the same 22 numeric exports and four core runtime assets.
-Rebuild modules and use the matching bridge together; v12 modules and hydration
-roots are rejected. RVN7 adds opcode 14 after view/request/action u32 identifiers:
+Browser ABI v14 retains the same 22 numeric exports and four core runtime assets.
+Rebuild modules and use the matching bridge together; v13 modules and hydration
+roots are rejected. RVN8 retains opcode 14 after view/request/action u32 identifiers:
 method u8 (GET=0, POST=1, PUT=2, PATCH=3, DELETE=4), then URL, body and If-Match,
 each as u32 byte length plus UTF-8 bytes. An empty validator means absent.
 

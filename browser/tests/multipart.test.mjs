@@ -31,9 +31,9 @@ pub fn route()->FileEndpoint {
 `);
   }});project=fixture.project;
   const module=await WebAssembly.compile(await readFile(join(fixture.bundle,"resources/ruvane-runtime",BigInt(fixture.revision).toString(16).padStart(16,"0"),"app.wasm")));
-  await t.test("Wasm keeps ABI v13 and excludes native upload code",()=>{
+  await t.test("Wasm keeps ABI v14 and excludes native upload code",()=>{
    assert.deepEqual(WebAssembly.Module.imports(module),[]);const exports=new WebAssembly.Instance(module,{}).exports;
-   assert.equal(exports.ruvane_abi_version(),13);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
+   assert.equal(exports.ruvane_abi_version(),14);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
   });
   const wasm=await readFile(join(fixture.bundle,"resources/ruvane-runtime",BigInt(fixture.revision).toString(16).padStart(16,"0"),"app.wasm"));assert.equal(wasm.includes(Buffer.from("SERVER_MULTIPART_BACKEND_ALPHA56")),false);
   hidden=join(project,"source-hidden");await rename(join(project,"src"),hidden);

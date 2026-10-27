@@ -449,6 +449,106 @@ fn multipart_registration_shares_the_post_namespace_and_failure_is_atomic() {
 #[path = "../examples/support/multipart_demo.rs"]
 mod demo;
 #[test]
+fn demo_json_uploads_share_native_sessions_validation_and_revocation() {
+    let server = Running::new(
+        demo::app().unwrap().router(None).unwrap(),
+        ServerConfig::default(),
+    );
+    let anonymous = server.raw("GET", "/uploads/state", "", b"");
+    assert_eq!(status(&anonymous), 403);
+    let opened = server.raw(
+        "POST",
+        "/upload-session",
+        &format!(
+            "Origin: http://{}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n",
+            server.address
+        ),
+        b"{}",
+    );
+    assert_eq!(status(&opened), 200);
+    assert_eq!(opened.1, b"true");
+    let cookie = header(&opened, "set-cookie")
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap();
+    let token = server.raw("GET", "/csrf-token", &format!("Cookie: {cookie}\r\n"), b"");
+    assert_eq!(status(&token), 200);
+    assert!(token.1.is_empty());
+    assert_eq!(header(&token, "cache-control"), Some("no-store"));
+    let claim = header(&token, CSRF_HEADER).unwrap();
+    let headers =
+        format!("Cookie: {cookie}\r\n{CSRF_HEADER}: {claim}\r\nAccept: application/json\r\n");
+    let missing = server.post("/upload", &headers, &body(None, "", b""));
+    assert_eq!(status(&missing), 400);
+    let errors = JsonValue::parse(&missing.1).unwrap();
+    assert_eq!(
+        errors.get("errors").unwrap().as_array().unwrap()[0]
+            .get("field")
+            .unwrap()
+            .as_str(),
+        Some("attachment")
+    );
+    let uploaded = server.post(
+        "/upload",
+        &headers,
+        &body(None, "Rust 🦀.bin", b"\0\xff\x80"),
+    );
+    assert_eq!(status(&uploaded), 200);
+    assert_eq!(header(&uploaded, "content-type"), Some("application/json"));
+    let record = JsonValue::parse(&uploaded.1).unwrap();
+    assert_eq!(
+        record.get("filename").unwrap().as_str(),
+        Some("Rust 🦀.bin")
+    );
+    assert_eq!(
+        record
+            .get("bytes")
+            .unwrap()
+            .as_number()
+            .unwrap()
+            .to_u64()
+            .unwrap(),
+        3
+    );
+    let stored = server.raw(
+        "GET",
+        "/uploads/state",
+        &format!("Cookie: {cookie}\r\n"),
+        b"",
+    );
+    assert_eq!(
+        JsonValue::parse(&stored.1)
+            .unwrap()
+            .get("files")
+            .unwrap()
+            .as_array()
+            .unwrap(),
+        &[record]
+    );
+    let closed = server.raw(
+        "POST",
+        "/upload-logout",
+        &format!(
+            "Origin: http://{}\r\nContent-Type: application/json\r\nContent-Length: 2\r\n{headers}",
+            server.address
+        ),
+        b"{}",
+    );
+    assert_eq!(status(&closed), 200);
+    assert_eq!(closed.1, b"false");
+    assert!(header(&closed, "set-cookie").unwrap().contains("Max-Age=0"));
+    assert_eq!(
+        status(&server.raw(
+            "GET",
+            "/uploads/state",
+            &format!("Cookie: {cookie}\r\n"),
+            b""
+        )),
+        403
+    );
+}
+#[test]
 fn demo_requires_a_session_validates_fields_and_stops_at_eight_memory_entries() {
     let server = Running::new(
         demo::app().unwrap().router(None).unwrap(),

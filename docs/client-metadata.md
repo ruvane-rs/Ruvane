@@ -88,5 +88,5 @@ Wasm decoders enforce the same structure. The JavaScript decoder performs its
 own bounded preflight, followed by the authoritative Wasm origin/schema checks.
 The navigator manages at most 32 existing head nodes and five replacements.
 
-ABI v13, 22 Wasm exports, four runtime assets and two first-party workspace
+ABI v14, 22 Wasm exports, four runtime assets and two first-party workspace
 packages remain. Tests use Rust, Node and the browser without external libraries.
