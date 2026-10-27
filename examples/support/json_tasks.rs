@@ -1,4 +1,7 @@
-use ruvane::{FileEndpoint, JsonError, JsonValue, Method, Request, Response, StatusCode};
+use ruvane::{
+    EntityTag, EntityTagSource, EntityTagSourceError, FileEndpoint, JsonError, JsonValue, Method,
+    Request, Response, StatusCode,
+};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -10,14 +13,15 @@ struct Task {
     id: u64,
     title: String,
     completed: bool,
+    tag: EntityTag,
 }
 #[derive(Default)]
 struct State {
     next: u64,
     tasks: Vec<Task>,
 }
-#[derive(Default)]
 pub struct Tasks {
+    versions: EntityTagSource,
     state: Mutex<State>,
     calls: AtomicUsize,
     writes: AtomicUsize,
@@ -44,6 +48,14 @@ fn valid_title(title: &str) -> bool {
         && !title.chars().any(char::is_control)
 }
 impl Tasks {
+    pub fn new() -> Result<Self, EntityTagSourceError> {
+        Ok(Self {
+            versions: EntityTagSource::new()?,
+            state: Mutex::new(State::default()),
+            calls: AtomicUsize::new(0),
+            writes: AtomicUsize::new(0),
+        })
+    }
     pub fn read(&self) -> Response {
         let Ok(state) = self.state.lock() else {
             return error(StatusCode::ServiceUnavailable);
@@ -80,10 +92,14 @@ impl Tasks {
         let Some(id) = state.next.checked_add(1) else {
             return error(StatusCode::ServiceUnavailable);
         };
+        let Ok(tag) = self.versions.next_tag() else {
+            return error(StatusCode::ServiceUnavailable);
+        };
         let task = Task {
             id,
             title: title.into(),
             completed: false,
+            tag,
         };
         let Ok(value) = value(&task) else {
             return error(StatusCode::ServiceUnavailable);
@@ -136,6 +152,20 @@ impl Tasks {
         let Some(index) = state.tasks.iter().position(|task| task.id == id) else {
             return error(StatusCode::NotFound);
         };
+        let current = &state.tasks[index].tag;
+        if request.method().is_mutation() {
+            let Some(condition) = request.if_match().filter(|condition| !condition.is_any()) else {
+                return error(StatusCode::PreconditionRequired);
+            };
+            if !condition.matches(Some(current)) {
+                return error(StatusCode::PreconditionFailed);
+            }
+        } else if request
+            .if_match()
+            .is_some_and(|condition| !condition.matches(Some(current)))
+        {
+            return error(StatusCode::PreconditionFailed);
+        }
         if request.method() == Method::Delete {
             let response =
                 Response::json(&JsonValue::object(vec![("deleted".into(), id.into())]).unwrap());
@@ -148,6 +178,14 @@ impl Tasks {
             id,
             title: title.unwrap_or(&old.title).into(),
             completed: completed.unwrap_or(old.completed),
+            tag: if request.method().is_mutation() {
+                match self.versions.next_tag() {
+                    Ok(tag) => tag,
+                    Err(_) => return error(StatusCode::ServiceUnavailable),
+                }
+            } else {
+                old.tag.clone()
+            },
         };
         let Ok(value) = value(&task) else {
             return error(StatusCode::ServiceUnavailable);
@@ -156,8 +194,10 @@ impl Tasks {
         if request.method().is_mutation() {
             state.tasks[index] = task;
             self.writes.fetch_add(1, Ordering::SeqCst);
+            response
+        } else {
+            response.with_etag(task.tag)
         }
-        response
     }
     #[allow(dead_code)]
     pub fn counts(&self) -> Option<(usize, usize, usize)> {

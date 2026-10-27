@@ -69,7 +69,8 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
    const responses=await Promise.all(Array.from({length:8},(_,n)=>post(JSON.stringify({title:`parallel ${n}`}),cookie,claim)));const items=[];for(const response of responses){assert.equal(response.status,200);items.push(await response.json());}assert.equal(new Set(items.map(item=>item.id)).size,8);assert.equal(new Set(items.map(item=>item.title)).size,8);
    const list=await(await get("/api/tasks",cookie)).json();for(const item of items)assert.ok(list.tasks.some(value=>value.id===item.id&&value.title===item.title));
   });
-  const mutate=(method,id,body,value=claim,extra={})=>fetch(base+`/api/tasks/${id}`,{method,headers:{Origin:base,Cookie:cookie,...(value?{"Ruvane-Csrf-Token":value}:{}),...(method==="DELETE"?{}:{"Content-Type":"application/json"}),...extra},...(method==="DELETE"?{}:{body:JSON.stringify(body)})});
+  const version=async id=>{const response=await get(`/api/tasks/${id}`,cookie);assert.equal(response.status,200);const tag=response.headers.get("etag");assert.ok(tag&&!tag.startsWith("W/"));await response.arrayBuffer();return tag;};
+  const mutate=async(method,id,body,value=claim,extra={})=>{let tag;if(Object.hasOwn(extra,"If-Match"))tag=extra["If-Match"];else{const current=await get(`/api/tasks/${id}`,cookie);tag=current.headers.get("etag");await current.arrayBuffer();}const headers={...extra};delete headers["If-Match"];return fetch(base+`/api/tasks/${id}`,{method,headers:{Origin:base,Cookie:cookie,...(value?{"Ruvane-Csrf-Token":value}:{}),...(tag?{"If-Match":tag}:{}),...(method==="DELETE"?{}:{"Content-Type":"application/json"}),...headers},...(method==="DELETE"?{}:{body:JSON.stringify(body)})});};
   await t.test("resource GET HEAD and exact Allow expose independent method slots",async()=>{
    const before=await stats(),getResponse=await get("/api/tasks/1",cookie);assert.equal(getResponse.status,200);assert.deepEqual(await getResponse.json(),{id:1,title:'Rust 🦀 "quotes" \\ slash </script>',completed:false});
    const head=await get("/api/tasks/1",cookie,"HEAD");assert.equal(head.status,200);assert.equal((await head.arrayBuffer()).byteLength,0);assert.equal((await stats()).writes,before.writes);
@@ -91,19 +92,23 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
    const before=await stats();for(const method of ["PUT","PATCH","DELETE"]){const body={title:"blocked",completed:true};for(const value of [null,"forged"]){const response=await mutate(method,1,body,value);assert.equal(response.status,403);await response.arrayBuffer();}const revisionResponse=await mutate(method,1,body,claim,{"Ruvane-Application-Revision":String(BigInt(revision)+1n)});assert.equal(revisionResponse.status,409);await revisionResponse.arrayBuffer();}
    assert.equal((await stats()).writes,before.writes);
   });
-  await t.test("concurrent patches preserve independent fields and replacements never publish mixed fields",async()=>{
-   await(await mutate("PUT",1,{title:"base",completed:false})).arrayBuffer();
-   const patches=await Promise.all([mutate("PATCH",1,{title:"parallel"}),mutate("PATCH",1,{completed:true})]);for(const response of patches){assert.equal(response.status,200);await response.arrayBuffer();}assert.deepEqual(await(await get("/api/tasks/1",cookie)).json(),{id:1,title:"parallel",completed:true});
-   const replacements=Array.from({length:8},(_,n)=>({title:`pair ${n}`,completed:n%2===0}));
-   const responses=await Promise.all(replacements.map(body=>mutate("PUT",1,body)));for(let n=0;n<responses.length;n++){assert.equal(responses[n].status,200);assert.deepEqual(await responses[n].json(),{id:1,...replacements[n]});}
-   const final=await(await get("/api/tasks/1",cookie)).json();assert.ok(replacements.some(item=>item.title===final.title&&item.completed===final.completed));
+  await t.test("precise preconditions reject missing wildcard weak and stale versions without writes",async()=>{
+   const before=await stats(),tag=await version(1);for(const method of ["PUT","PATCH","DELETE"]){for(const [condition,status] of [[null,428],["*",428],["W/"+tag,412],['"stale"',412]]){const response=await mutate(method,1,{title:"blocked",completed:true},claim,{"If-Match":condition});assert.equal(response.status,status);assert.equal(response.headers.get("etag"),null);assert.equal(response.headers.get("cache-control"),"no-store");await response.arrayBuffer();}}assert.equal((await stats()).writes,before.writes);
   });
-  await t.test("concurrent delete and patch are atomic and deleted IDs are never reused",async()=>{
-   const task=await(await post('{"title":"delete race"}',cookie,claim)).json();const before=await stats();
-   const [deleted,patched]=await Promise.all([mutate("DELETE",task.id),mutate("PATCH",task.id,{title:"race update"})]);assert.equal(deleted.status,200);assert.deepEqual(await deleted.json(),{deleted:task.id});assert.ok([200,404].includes(patched.status));await patched.arrayBuffer();
-   const missing=await get(`/api/tasks/${task.id}`,cookie);assert.equal(missing.status,404);await missing.arrayBuffer();
-   const repeat=await mutate("DELETE",task.id);assert.equal(repeat.status,404);await repeat.arrayBuffer();const after=await stats();assert.equal(after.tasks,before.tasks-1);assert.ok([1,2].includes(after.writes-before.writes));
-   const created=await post('{"title":"new after delete"}',cookie,claim);assert.equal(created.status,200);assert.ok((await created.json()).id>task.id);
+  await t.test("one simultaneous writer succeeds and stale drafts cannot overwrite it",async()=>{
+   const tag=await version(1),before=await stats();const drafts=Array.from({length:8},(_,n)=>({title:`pair ${n}`,completed:n%2===0}));
+   const responses=await Promise.all(drafts.map(body=>mutate("PUT",1,body,claim,{"If-Match":tag})));assert.equal(responses.filter(response=>response.status===200).length,1);assert.equal(responses.filter(response=>response.status===412).length,7);
+   let winner;for(let n=0;n<responses.length;n++){if(responses[n].status===200){winner={id:1,...drafts[n]};assert.deepEqual(await responses[n].json(),winner);assert.equal(responses[n].headers.get("etag"),null);}else await responses[n].arrayBuffer();}assert.deepEqual(await(await get("/api/tasks/1",cookie)).json(),winner);assert.equal((await stats()).writes,before.writes+1);assert.notEqual(await version(1),tag);
+  });
+  await t.test("parallel patches require an explicit fresh read before applying a second edit",async()=>{
+   const tag=await version(1),before=await stats();const responses=await Promise.all([mutate("PATCH",1,{title:"parallel"},claim,{"If-Match":tag}),mutate("PATCH",1,{completed:true},claim,{"If-Match":tag})]);assert.equal(responses.filter(response=>response.status===200).length,1);assert.equal(responses.filter(response=>response.status===412).length,1);for(const response of responses)await response.arrayBuffer();assert.equal((await stats()).writes,before.writes+1);
+   const fresh=await version(1),response=await mutate("PATCH",1,{title:"parallel",completed:true},claim,{"If-Match":fresh});assert.equal(response.status,200);await response.arrayBuffer();assert.deepEqual(await(await get("/api/tasks/1",cookie)).json(),{id:1,title:"parallel",completed:true});
+  });
+  await t.test("a delete and patch race cannot both apply the same resource version",async()=>{
+   const task=await(await post('{"title":"delete race"}',cookie,claim)).json(),tag=await version(task.id),before=await stats();
+   const [deleted,patched]=await Promise.all([mutate("DELETE",task.id,undefined,claim,{"If-Match":tag}),mutate("PATCH",task.id,{title:"race update"},claim,{"If-Match":tag})]);assert.equal([deleted,patched].filter(response=>response.status===200).length,1);assert.ok(deleted.status===200?patched.status===404:deleted.status===412&&patched.status===200);await deleted.arrayBuffer();await patched.arrayBuffer();assert.equal((await stats()).writes,before.writes+1);
+   if(deleted.status!==200){const cleanup=await mutate("DELETE",task.id);assert.equal(cleanup.status,200);await cleanup.arrayBuffer();}
+   const repeat=await mutate("DELETE",task.id,undefined,claim,{"If-Match":tag});assert.equal(repeat.status,404);await repeat.arrayBuffer();const created=await post('{"title":"new after delete"}',cookie,claim);assert.equal(created.status,200);assert.ok((await created.json()).id>task.id);
   });
   await t.test("PUT PATCH POST and DELETE share one quota and each refusal skips the handler",async()=>{
    await(await fetch(base+"/json-reset",{method:"POST",headers:{Origin:base,"Content-Type":"application/x-www-form-urlencoded"},body:""})).arrayBuffer();const before=await stats();
@@ -112,7 +117,8 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
   await t.test("task capacity rejects further creation without partial writes",async()=>{
    let count=(await stats()).tasks;while(count<32){const response=await post(JSON.stringify({title:`capacity ${count}`}),cookie,claim);assert.equal(response.status,200);await response.arrayBuffer();count++;}const before=await stats(),response=await post('{"title":"overflow"}',cookie,claim);assert.equal(response.status,503);await response.arrayBuffer();assert.equal((await stats()).writes,before.writes);assert.equal((await stats()).tasks,32);
   });
+  const retiredVersion=await version(1);
   await session("close",cookie);await stop();base=await start();
-  await t.test("restart drops demo data and sessions without needing source files",async()=>{assert.equal((await stats()).tasks,0);const response=await get("/api/tasks",cookie);assert.equal(response.status,403);await response.arrayBuffer();});
+  await t.test("restart drops demo data and sessions and retired versions cannot target recreated IDs",async()=>{assert.equal((await stats()).tasks,0);const denied=await get("/api/tasks",cookie);assert.equal(denied.status,403);await denied.arrayBuffer();cookie=await session("open");claim=await token(cookie);const created=await post('{"title":"new process"}',cookie,claim);assert.equal(created.status,200);assert.equal((await created.json()).id,1);assert.notEqual(await version(1),retiredVersion);const before=await stats(),stale=await mutate("PATCH",1,{title:"old process draft"},claim,{"If-Match":retiredVersion});assert.equal(stale.status,412);await stale.arrayBuffer();assert.equal((await stats()).writes,before.writes);});
  } finally {await stop();await rm(directory,{recursive:true,force:true});}
 });

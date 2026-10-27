@@ -87,6 +87,10 @@ native forms, navigation and Wasm actions. Browser ABI v12 keeps 22 exports.
 checked construction and explicit native POST/PUT/PATCH JSON routes plus bodyless DELETE. Fixed no-store
 responses and the existing session/CSRF/quota guards support the task API example.
 
+[Conditional resource updates](docs/conditional-requests.md) add bounded ETag and
+If-Match types, atomic version checks and explicit conflicts that preserve browser
+drafts. Native OS-random version namespaces prevent accidental reuse after restart.
+
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
 URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
 

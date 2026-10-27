@@ -273,6 +273,7 @@ fn serve(
     // HEAD omits error bodies too, if its request line was readable.
     let mut head = bytes.starts_with(b"HEAD ");
     let mut stream_allowed = false;
+    let mut put = false;
     let path = std::str::from_utf8(bytes.split(|byte| *byte == b'\n').next().unwrap_or(&[]))
         .ok()
         .and_then(|line| line.split(' ').nth(1))
@@ -305,6 +306,7 @@ fn serve(
     }) {
         Ok(request) => {
             head = request.method() == Method::Head;
+            put = request.method() == Method::Put;
             stream_allowed = matches!(request.method(), Method::Get | Method::Head);
             match catch_unwind(AssertUnwindSafe(|| router.dispatch(request))) {
                 Ok(response) if response.body().len() <= config.max_response_body_bytes => response,
@@ -313,6 +315,9 @@ fn serve(
         }
         Err(status) => Response::error(status),
     };
+    if put {
+        response.omit_etag();
+    }
     let mut plan = response.stream_plan();
     let duration = plan.as_ref().map_or(config.write_timeout, |plan| {
         plan.configured_limits().duration.min(config.write_timeout)

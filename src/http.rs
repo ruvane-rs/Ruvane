@@ -59,6 +59,7 @@ pub struct Request {
     pub(crate) form: Option<FormData>,
     pub(crate) json: Option<crate::JsonValue>,
     pub(crate) guard_private: bool,
+    if_match: Option<crate::IfMatch>,
 }
 
 impl Request {
@@ -74,6 +75,7 @@ impl Request {
             form: None,
             json: None,
             guard_private: false,
+            if_match: None,
         }
     }
     pub(crate) fn background_get(&self) -> Self {
@@ -88,11 +90,17 @@ impl Request {
             form: None,
             json: None,
             guard_private: false,
+            if_match: None,
         }
     }
     /// Returns the request method. GET handlers also receive HEAD requests.
     pub fn method(&self) -> Method {
         self.method
+    }
+    /// Borrows the parsed If-Match condition. It is untrusted until compared with current state.
+    /// Applications must evaluate it under the same lock as their mutation, after authorization.
+    pub fn if_match(&self) -> Option<&crate::IfMatch> {
+        self.if_match.as_ref()
     }
     /// Requests carrying credentials or marked Private by a guard bypass public caches.
     /// This flag is not an authentication result.
@@ -191,7 +199,7 @@ impl fmt::Debug for Request {
                     name,
                     if matches!(
                         name.as_str(),
-                        "cookie" | "authorization" | "ruvane-csrf-token"
+                        "cookie" | "authorization" | "ruvane-csrf-token" | "if-match"
                     ) {
                         "[redacted]"
                     } else {
@@ -256,14 +264,18 @@ pub enum StatusCode {
     Conflict,
     /// 411: a body-bearing mutation has no declared content length.
     LengthRequired,
+    /// 412: a supplied resource precondition does not match current state.
+    PreconditionFailed,
     /// 413: the request body exceeds the supported budget.
     ContentTooLarge,
     /// 414: the request line exceeds the configured limit.
     UriTooLong,
-    /// 415: the request is not an uncompressed UTF-8 URL-encoded form.
+    /// 415: the request does not fit the registered MIME/encoding profile.
     UnsupportedMediaType,
     /// 417: request expectations are unsupported.
     ExpectationFailed,
+    /// 428: this resource requires a precise mutation precondition.
+    PreconditionRequired,
     /// 429: a request quota was exhausted.
     TooManyRequests,
     /// 431: request headers exceed a byte or count limit.
@@ -291,10 +303,12 @@ impl StatusCode {
             Self::RequestTimeout => 408,
             Self::Conflict => 409,
             Self::LengthRequired => 411,
+            Self::PreconditionFailed => 412,
             Self::ContentTooLarge => 413,
             Self::UriTooLong => 414,
             Self::UnsupportedMediaType => 415,
             Self::ExpectationFailed => 417,
+            Self::PreconditionRequired => 428,
             Self::TooManyRequests => 429,
             Self::RequestHeaderFieldsTooLarge => 431,
             Self::InternalServerError => 500,
@@ -316,10 +330,12 @@ impl StatusCode {
             Self::RequestTimeout => "Request Timeout",
             Self::Conflict => "Conflict",
             Self::LengthRequired => "Length Required",
+            Self::PreconditionFailed => "Precondition Failed",
             Self::ContentTooLarge => "Content Too Large",
             Self::UriTooLong => "URI Too Long",
             Self::UnsupportedMediaType => "Unsupported Media Type",
             Self::ExpectationFailed => "Expectation Failed",
+            Self::PreconditionRequired => "Precondition Required",
             Self::TooManyRequests => "Too Many Requests",
             Self::RequestHeaderFieldsTooLarge => "Request Header Fields Too Large",
             Self::InternalServerError => "Internal Server Error",
@@ -354,6 +370,7 @@ pub struct Response {
     csrf_token: Option<crate::CsrfToken>,
     retry_after: Option<RetryAfter>,
     action_rate_rejected: bool,
+    etag: Option<crate::EntityTag>,
 }
 impl fmt::Debug for Response {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -396,6 +413,21 @@ impl AsRef<[u8]> for Body {
 }
 
 impl Response {
+    /// Attaches a validated representation tag. This does not enable caching or evaluate preconditions.
+    /// The transport conservatively omits validators on PUT responses; read the saved representation.
+    pub fn with_etag(mut self, tag: crate::EntityTag) -> Self {
+        self.etag = Some(tag);
+        self
+    }
+    /// Returns the tag only for a successful buffered response. Errors and streams omit validators.
+    pub fn etag(&self) -> Option<&crate::EntityTag> {
+        (self.status == StatusCode::Ok && !self.is_streaming())
+            .then_some(self.etag.as_ref())
+            .flatten()
+    }
+    pub(crate) fn omit_etag(&mut self) {
+        self.etag = None;
+    }
     /// Returns validated UTF-8 JSON with fixed MIME, no-store and the blocking CSP.
     /// JSON is data; this constructor does not permit HTML or JavaScript embedding.
     pub fn json(value: &crate::JsonValue) -> Self {
@@ -535,6 +567,7 @@ impl Response {
             csrf_token: None,
             retry_after: None,
             action_rate_rejected: false,
+            etag: None,
         }
     }
 
@@ -552,6 +585,7 @@ impl Response {
             csrf_token: None,
             retry_after: None,
             action_rate_rejected: false,
+            etag: None,
         }
     }
 
@@ -592,6 +626,7 @@ impl Response {
             csrf_token: None,
             retry_after: None,
             action_rate_rejected: false,
+            etag: None,
         }
     }
 
@@ -608,6 +643,7 @@ impl Response {
             csrf_token: None,
             retry_after: None,
             action_rate_rejected: false,
+            etag: None,
         }
     }
 
@@ -645,6 +681,7 @@ impl Response {
             csrf_token: None,
             retry_after: None,
             action_rate_rejected: false,
+            etag: None,
         }
     }
 
@@ -736,6 +773,9 @@ impl Response {
         } else {
             format!("Content-Length: {}\r\n", self.body().len())
         };
+        let etag = self
+            .etag()
+            .map_or_else(String::new, |tag| format!("ETag: {}\r\n", tag.as_str()));
         let csrf = self.csrf_token.as_ref().map_or_else(String::new, |token| {
             format!("{}: {}\r\n", crate::CSRF_HEADER, token.as_str())
         });
@@ -757,13 +797,14 @@ impl Response {
             fields
         };
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}{}{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}{}{}{}\r\n",
             self.status,
             self.content_type,
             framing,
             self.cache_control(),
             self.csp,
             cookies,
+            etag,
             csrf,
             retry,
             allow,
@@ -941,6 +982,13 @@ pub(crate) fn parse(
             }
             _ => BadRequest,
         })?;
+    let if_match = header("if-match")
+        .map(crate::IfMatch::parse)
+        .transpose()
+        .map_err(|e| match e {
+            crate::EntityTagError::InvalidSyntax => BadRequest,
+            _ => RequestHeaderFieldsTooLarge,
+        })?;
     Ok(Request {
         method,
         target: target.to_owned(),
@@ -953,6 +1001,7 @@ pub(crate) fn parse(
         form: None,
         json: None,
         guard_private: false,
+        if_match,
     })
 }
 

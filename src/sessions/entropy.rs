@@ -10,7 +10,7 @@ use std::{fs::File, io::Read};
     )),
     allow(dead_code)
 )]
-pub(super) enum Entropy {
+pub(crate) enum Entropy {
     System(File),
     #[cfg(test)]
     Scripted(std::collections::VecDeque<Result<[u8; SESSION_ID_BYTES], SessionError>>),
@@ -23,7 +23,7 @@ impl Entropy {
             any(target_arch = "x86_64", target_arch = "aarch64")
         )
     ))]
-    pub(super) fn open() -> Result<Self, SessionError> {
+    pub(crate) fn open() -> Result<Self, SessionError> {
         use std::os::unix::fs::FileTypeExt;
         #[cfg(target_os = "linux")]
         let file = {
@@ -58,10 +58,10 @@ impl Entropy {
             any(target_arch = "x86_64", target_arch = "aarch64")
         )
     )))]
-    pub(super) fn open() -> Result<Self, SessionError> {
+    pub(crate) fn open() -> Result<Self, SessionError> {
         Err(SessionError::UnsupportedPlatform)
     }
-    pub(super) fn read(&mut self) -> Result<[u8; SESSION_ID_BYTES], SessionError> {
+    pub(crate) fn read(&mut self) -> Result<[u8; SESSION_ID_BYTES], SessionError> {
         match self {
             Self::System(file) => {
                 let mut bytes = [0; SESSION_ID_BYTES];

@@ -6,6 +6,7 @@ mod actions;
 mod app;
 mod assets;
 mod browser;
+mod conditional;
 mod content;
 mod cookies;
 mod csrf;
@@ -51,6 +52,11 @@ pub use browser::{
     BROWSER_ABI_VERSION, BROWSER_BRIDGE_MODULE, BrowserCommandError, BrowserCommands, BrowserTag,
     MAX_BROWSER_COMMAND_BYTES, MAX_BROWSER_COMMANDS, MAX_BROWSER_TEXT_BYTES,
 };
+pub use conditional::{
+    EntityTag, EntityTagError, IfMatch, MAX_ENTITY_TAG_BYTES, MAX_IF_MATCH_BYTES, MAX_IF_MATCH_TAGS,
+};
+#[cfg(not(target_family = "wasm"))]
+pub use conditional::{EntityTagSource, EntityTagSourceError};
 pub use content::{
     ContentBundle, ContentCollection, ContentEntry, ContentError, ContentErrorKind, ContentSlug,
     ContentSource, MAX_CONTENT_FILE_BYTES, MAX_CONTENT_FILES, MAX_CONTENT_HTML_BYTES,

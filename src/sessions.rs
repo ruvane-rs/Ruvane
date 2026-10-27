@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
-mod entropy;
+pub(crate) mod entropy;
 use entropy::Entropy;
 
 /// Maximum live sessions in one store.

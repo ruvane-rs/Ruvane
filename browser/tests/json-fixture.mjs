@@ -14,7 +14,7 @@ use std::sync::{Arc,OnceLock,atomic::{AtomicUsize,Ordering}};
 use ruvane::{RateLimiter,RateLimitPolicy,RateLimitLimits,JsonValue};
 pub static GUARDS:AtomicUsize=AtomicUsize::new(0);
 pub static ECHOES:AtomicUsize=AtomicUsize::new(0);
-pub fn tasks()->Arc<crate::json_tasks::Tasks>{static TASKS:OnceLock<Arc<crate::json_tasks::Tasks>>=OnceLock::new();TASKS.get_or_init(||Arc::new(Default::default())).clone()}
+pub fn tasks()->Arc<crate::json_tasks::Tasks>{static TASKS:OnceLock<Arc<crate::json_tasks::Tasks>>=OnceLock::new();TASKS.get_or_init(||Arc::new(crate::json_tasks::Tasks::new().expect("native version source"))).clone()}
 pub fn quota()->&'static RateLimiter {static QUOTA:OnceLock<RateLimiter>=OnceLock::new();QUOTA.get_or_init(||RateLimiter::new(RateLimitPolicy::new(512,60).unwrap(),RateLimitLimits::default()))}
 pub fn low()->&'static RateLimiter {static QUOTA:OnceLock<RateLimiter>=OnceLock::new();QUOTA.get_or_init(||RateLimiter::new(RateLimitPolicy::new(2,60).unwrap(),RateLimitLimits::default()))}
 pub fn audit()->ruvane::RouteGuard {ruvane::RouteGuard::new(|context|{
@@ -40,6 +40,8 @@ pub fn json_checks()->bool {
  && ruvane::JsonValue::parse(br#"{"x":1,"\u0078":2}"#)==Err(ruvane::JsonError::DuplicateKey)
  && ruvane::JsonValue::parse(br#""\uD800""#).is_err()
  && ruvane::JsonNumber::parse("1e9999").unwrap().to_f64().is_err()
+ && ruvane::IfMatch::parse("\"version\"").unwrap().matches(Some(&ruvane::EntityTag::strong("version").unwrap()))
+ && !ruvane::IfMatch::parse("W/\"version\"").unwrap().matches(Some(&ruvane::EntityTag::strong("version").unwrap()))
 }
 impl ruvane::Component for JsonProbe {
  fn page_data(&mut self,data:ruvane::ActionData)->Result<(),ruvane::ComponentError>{if data.is_empty(){Ok(())}else{Err(ruvane::ComponentError::InvalidProps)}}

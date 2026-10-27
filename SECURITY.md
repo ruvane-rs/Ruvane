@@ -1,5 +1,16 @@
 # Security
 
+Alpha.53 adds [conditional resource updates](docs/conditional-requests.md).
+Typed ASCII ETag/If-Match values have fixed byte/member limits and reject malformed
+conditions before callbacks. Strong comparison never accepts weak tags. Protected
+task writes require a precise matching version under the mutation lock, after
+session/CSRF/quota guards; failed conditions cannot modify state. Browser conflicts
+retain drafts and require explicit reload without replay. Native version sources
+use independent OS-random namespaces and checked shared counters, failing closed
+on initialization failure, exhaustion or poisoning. Tags are public versions,
+not authorization or session credentials. The transport omits PUT validators
+because it cannot attest that request bytes were stored without transformation.
+
 Alpha.52 extends explicit mutation profiles to JSON PUT/PATCH and bodyless DELETE.
 All mutations share mandatory source validation, current-session CSRF verification
 when guarded, and route/family quotas. DELETE refuses positive declared lengths

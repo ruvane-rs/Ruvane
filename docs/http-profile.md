@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.52 implements a small development profile based on the
+Ruvane 0.1.0-alpha.53 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -199,3 +199,9 @@ cookie cache-reset signal. Arbitrary header strings remain unsupported.
 Alpha.51 adds the explicit [bounded JSON profile](json.md). Body decoding is
 selected by route registration before native guards; Content-Type cannot change
 a route's profile. Existing source, framing, byte and deadline checks remain.
+
+Alpha.53 adds [typed conditional resource updates](conditional-requests.md).
+If-Match syntax and budgets validate before callbacks. Applications evaluate
+preconditions against current data under their own mutation lock after guards.
+Typed ETag never enables caching implicitly; errors, streams and PUT responses
+omit it. If-None-Match, 304 and date validators remain outside this profile.

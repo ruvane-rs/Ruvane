@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let quota = RateLimiter::new(RateLimitPolicy::new(20, 60)?, RateLimitLimits::default());
     let public = RateLimiter::new(RateLimitPolicy::new(5, 60)?, RateLimitLimits::default());
-    let tasks = Arc::new(json_tasks::Tasks::default());
+    let tasks = Arc::new(json_tasks::Tasks::new()?);
     let mut app = App::new();
     app.asset(
         "/json-demo.mjs",

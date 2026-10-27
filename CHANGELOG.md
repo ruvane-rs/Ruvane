@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.1.0-alpha.52 — Unreleased
+## 0.1.0-alpha.53 — Unreleased
+
+- Add bounded typed entity tags, strong If-Match comparisons and 412/428 statuses.
+  Validate request conditions before native callbacks and omit validators on PUT.
+- Add a native version source with independent OS-random namespaces, shared
+  checked counters and no fallback on entropy, counter or lock failure.
+- Check task versions under the mutation lock before atomic replacement, patch
+  or deletion. Retired versions cannot target new store lifecycles or recreated IDs.
+- Preserve browser drafts on conflicts and require explicit reload before another
+  edit. Never fetch a fresh tag to automatically replay an old mutation.
+- Extend native, Wasm, source-free bundle and real-browser conflict coverage.
+  Keep zero third-party dependencies, ABI v12 and 22 exports.
+
+## 0.1.0-alpha.52
 
 - Add JSON PUT/PATCH and bodyless DELETE in Router and FileEndpoint, with separate
   method slots, atomic registration and precise 405/Allow responses.

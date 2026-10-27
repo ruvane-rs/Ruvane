@@ -174,9 +174,11 @@ unknown or removed resources return 404. Creation never reuses deleted IDs.
 
 The store caps entries at 32 and titles at 256 UTF-8 bytes. It validates the entire
 schema and builds the response before committing a change under one mutex.
-Concurrent partial updates preserve independent fields; concurrent replacements
-use last-writer-wins order. There are no conditional requests or conflict detection
-for stale client reads. Data is shared demo memory and disappears on restart;
+Individual reads carry ETag. PUT/PATCH/DELETE require precise If-Match conditions
+checked under the same lock as the mutation. Concurrent stale writes fail with
+412; missing or wildcard-only conditions fail with 428. See
+[conditional resource updates](conditional-requests.md) for version generation,
+error precedence and the two-tab conflict example. Data is shared demo memory and disappears on restart;
 this is not real user authentication or a database. The browser module uses text
 nodes and sends each mutation once, with no automatic retry.
 
