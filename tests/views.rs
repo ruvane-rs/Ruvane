@@ -12,7 +12,7 @@ fn shared_components_render_their_initial_state_and_update_independently() {
     let view = counter.view().unwrap();
     let html = view.hydratable(props).unwrap();
     assert!(html.as_str().starts_with(
-        "<div data-ruvane-version=\"14\" data-ruvane-component=\"1\" data-ruvane-state=\"1:5\">"
+        "<div data-ruvane-version=\"15\" data-ruvane-component=\"1\" data-ruvane-state=\"1:5\">"
     ));
     assert!(html.as_str().contains(">5</output>"));
     assert!(html.as_str().contains(">10</output>"));
@@ -448,4 +448,49 @@ fn task_form_validates_and_keeps_user_strings_as_text() {
     component.dispatch(3).unwrap();
     component.dispatch(21).unwrap();
     assert_eq!(component.stats().signals, 0);
+}
+
+#[test]
+fn download_views_emit_native_links_with_checked_retained_targets() {
+    use ruvane::InternalUrl;
+    let mut view = View::new();
+    let paragraph = view.element(0, Paragraph).unwrap();
+    view.download(
+        paragraph,
+        1,
+        &InternalUrl::new("/private/files/a")
+            .unwrap()
+            .query("x", "1")
+            .unwrap()
+            .query("y", "2")
+            .unwrap(),
+        "Download <&",
+    )
+    .unwrap();
+    let html = view.render().unwrap();
+    assert!(
+        html.as_str()
+            .contains("download=\"\" href=\"/private/files/a?x=1&amp;y=2\">Download &lt;&amp;</a>")
+    );
+    assert!(!html.as_str().contains("data-ruvane-nav"));
+    assert!(!html.as_str().contains("prefetch"));
+    assert!(!html.as_str().contains("disabled"));
+    let mut next = View::new();
+    let paragraph = next.element(0, Paragraph).unwrap();
+    next.download(
+        paragraph,
+        1,
+        &InternalUrl::new("/private/files/b").unwrap(),
+        "Download <&",
+    )
+    .unwrap();
+    let updates = next.updates(&view, 1).unwrap();
+    assert!(updates.as_bytes().starts_with(b"RVN9"));
+    assert!(
+        updates
+            .as_bytes()
+            .windows(16)
+            .any(|bytes| bytes == b"/private/files/b")
+    );
+    assert_eq!(view.element(0, Download), Err(ViewError::InvalidStructure));
 }

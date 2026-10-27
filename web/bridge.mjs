@@ -1,7 +1,7 @@
-// DOM and action bridge for RVN8 commands.
-export const ABI_VERSION = 14;
+// DOM and action bridge for RVN9 commands.
+export const ABI_VERSION = 15;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
-const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a", 16: "input" });
+const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a", 16: "input", 17: "a" });
 const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision", "ruvane_page_validate", "ruvane_boundary_mount"];
 export const ACTION_MEDIA_TYPE = "application/vnd.ruvane.action";
 export const CSRF_MEDIA_TYPE = "application/vnd.ruvane.csrf";
@@ -151,7 +151,7 @@ export function validateExports(exports) {
 /** Decodes a batch before touching the DOM. */
 export function decodeCommands(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 8 || bytes.length > LIMITS.bytes) throw invalid();
-  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 56) throw invalid();
+  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 57) throw invalid();
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 4;
   const u8 = () => { if (offset >= bytes.length) throw invalid(); return bytes[offset++]; };
@@ -278,7 +278,7 @@ function validText(tag, value) {
   }
   return !(tag === 13 ? /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/ : /[\u0000-\u001f\u007f-\u009f]/).test(value);
 }
-const leaf = tag => [2, 4, 5, 6, 14, 15].includes(tag);
+const leaf = tag => [2, 4, 5, 6, 14, 15, 17].includes(tag);
 
 /** Checks and copies public mount props. */
 export function validateProps(props) {
@@ -312,7 +312,7 @@ function host(root) {
 function accepts(parent, tag) {
   if (parent === 7) return tag === 8;
   if (tag === 8) return false;
-  if (parent === 3) return [4, 5, 6, 15].includes(tag);
+  if (parent === 3) return [4, 5, 6, 15, 17].includes(tag);
   if (parent === 10) return tag === 4 || field(tag);
   if (field(tag)) return false;
   return [0, 1, 8, 9].includes(parent);
@@ -348,9 +348,9 @@ export function planCommands(commands, id, previous, initial = false) {
     if (command.op === 2 && leaf(node.tag)) {
       if (typeof command.text !== "string" || command.text.length > LIMITS.text || new TextEncoder().encode(command.text).length > LIMITS.text) throw invalid();
       node.text = command.text;
-    } else if (command.op === 12 && node.tag === 15) {
+    } else if (command.op === 12 && [15,17].includes(node.tag)) {
       node.url = internalTarget(command.url);
-    } else if (command.op === 13 && node.tag === 15 && typeof command.prefetch === "boolean") {
+    } else if (command.op === 13 && [15,17].includes(node.tag) && typeof command.prefetch === "boolean" && !(node.tag===17&&command.prefetch)) {
       node.prefetch = command.prefetch;
     } else if (command.op === 3 && (node.tag === 6 || node.tag === 9 || field(node.tag)) && fresh.has(command.node) && node.event === null) {
       node.event = uint(command.event);
@@ -392,7 +392,7 @@ export function planCommands(commands, id, previous, initial = false) {
   if (nodes.size < 2 || [...nodes.values()].filter(node=>node.tag===16).length>1) throw invalid();
   let listeners = 0;
   for (const [id, node] of nodes) {
-    if (node.tag === 15 && (node.url === null || node.prefetch === null)) throw invalid();
+    if ([15,17].includes(node.tag) && (node.url === null || node.prefetch === null)) throw invalid();
     if (id && leaf(node.tag) && node.text === null) throw invalid();
     if ((node.tag === 6 || node.tag === 9 || field(node.tag)) && (node.event === null || ++listeners > LIMITS.listeners)) throw invalid();
     if (disableable(node.tag) && node.disabled === null) throw invalid();
@@ -413,7 +413,7 @@ function matchDom(nodes, root, inert) {
       if (node.event !== null) attributes[eventAttribute(node.tag)] = String(node.event);
       if (node.tag === 6 || node.tag === 14) attributes.type = node.tag === 6 ? "button" : "submit";
       if (node.tag === 9) attributes.novalidate = "";
-      if (node.tag === 15) { attributes.href = node.url; attributes["data-ruvane-nav"] = ""; if (node.prefetch) attributes["data-ruvane-prefetch"] = ""; }
+      if ([15,17].includes(node.tag)) { attributes.href = node.url; if(node.tag===17)attributes.download=""; else {attributes["data-ruvane-nav"] = ""; if (node.prefetch) attributes["data-ruvane-prefetch"] = "";} }
       if (field(node.tag)) {
         attributes["aria-invalid"] = String(node.invalid); attributes["data-ruvane-epoch"] = String(node.epoch);
         if (textField(node.tag)) attributes.maxlength = "1024";
@@ -861,7 +861,7 @@ export async function createRuntime(url, options = {}) {
         if (command.op === 1) { createElement(nodes, command); continue; }
         const node = nodes.get(command.node);
         if (command.op === 13) { if (node.prefetch) node.element.setAttribute("data-ruvane-prefetch", ""); else node.element.removeAttribute("data-ruvane-prefetch"); }
-        if (command.op === 12) { node.element.setAttribute("href", node.url); node.element.setAttribute("data-ruvane-nav", ""); }
+        if (command.op === 12) { node.element.setAttribute("href", node.url); node.element.setAttribute(node.tag===17?"download":"data-ruvane-nav", ""); }
         if (command.op === 2) node.element.textContent = command.text;
         else if (command.op === 3) node.element.setAttribute(eventAttribute(node.tag), String(command.event));
       }

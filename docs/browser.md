@@ -47,7 +47,7 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="14" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="15" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
@@ -143,11 +143,17 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v14
+## Browser ABI v15
 
-Alpha.57 adds component-owned file selections and uploads in RVN8 commands,
-RUF1 metadata events and RVJ1 replies. The 22 function exports remain. Rebuild
-Wasm with its matching bridge; v13 modules and hydration roots are rejected.
+Alpha.59 adds native download tag 17 in RVN9. Links use the existing URL opcode
+12 and explicit false prefetch opcode 13, without navigation markers or events.
+The bridge rejects true prefetch on downloads. Rebuild Wasm and the matching
+bridge together; ABI v14 modules, hydration roots and RVN8 frames are rejected.
+See the [persistent file manager](file-manager.md).
+
+Component-owned file selections and uploads reuse RVN9 commands, RUF1 metadata
+events and RVJ1 replies. The 22 function exports remain. Rebuild
+Wasm with its matching bridge; older modules and hydration roots are rejected.
 See [component uploads](browser-uploads.md) and [component JSON](json-client.md).
 
 Alpha.50 adds failure kind 5 (`RateLimited`) and the reserved read-only 429
@@ -175,7 +181,7 @@ with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 14 |
+| `ruvane_abi_version()` | Returns 15 |
 | `ruvane_application_revision()` | Returns the application build revision as u64/BigInt |
 | `ruvane_boundary_mount(root, component, kind, value)` | Empty-seed, event-free presentation owner, or zero on rejection |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
@@ -227,9 +233,9 @@ memory view, checks ranges and copies the bounded batch before acknowledging
 it. Signed JavaScript i32 results are interpreted as u32 bit patterns; public
 JavaScript inputs are validated before crossing the ABI.
 
-## RVN8 command frames
+## RVN9 command frames
 
-Integers are little-endian. The header is `RVN8` plus a u32 count, with no trailing
+Integers are little-endian. The header is `RVN9` plus a u32 count, with no trailing
 bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 
 | Opcode | Remaining fields | Operation |
@@ -253,7 +259,7 @@ bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 
 Tags are section=1, h2=2, p=3, span=4, output=5, button=6, ul=7, li=8,
 form=9, label=10, text input=11, checkbox=12, textarea=13, submit button=14,
-internal link=15 and file input=16. New
+internal link=15, file input=16 and native download link=17. New
 handles must increase beyond every handle previously allocated in that view.
 Keys are nonzero u32 values unique among siblings. They are separate from node
 handles and unkeyed positions. A tag/event change creates a new node lifetime.

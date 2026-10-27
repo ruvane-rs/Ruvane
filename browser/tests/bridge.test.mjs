@@ -4,12 +4,13 @@ import { readFile } from "node:fs/promises";
 import { decodeCommands, validateExports, validateProps, planCommands, LIMITS } from "../../web/bridge.mjs";
 
 function frame(payload = [], count = 0) {
-  return new Uint8Array([82, 86, 78, 56, ...word(count), ...payload]);
+  return new Uint8Array([82, 86, 78, 57, ...word(count), ...payload]);
 }
 const word = n => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
 
 test("strict command framing, identifiers and UTF-8", () => {
   assert.deepEqual(decodeCommands(frame()), []);
+  assert.throws(() => decodeCommands(new Uint8Array([82, 86, 78, 56, 0, 0, 0, 0])));
   const text = new TextEncoder().encode("Rust <script> 🌱");
   assert.equal(decodeCommands(frame([2, ...word(1), ...word(2), ...word(text.length), ...text], 1))[0].text, "Rust <script> 🌱");
   const bom = new TextEncoder().encode("\uFEFFtext");
@@ -46,13 +47,14 @@ test("compiled Rust module has no host imports and executes the real reactor", a
   assert.deepEqual(WebAssembly.Module.imports(module), []);
   const e = validateExports(new WebAssembly.Instance(module, {}).exports);
   assert.throws(() => validateExports({ ...e, ruvane_abi_version: () => 0 }));
+  assert.throws(() => validateExports({ ...e, ruvane_abi_version: () => 14 }));
   assert.throws(() => validateExports({ ...e, ruvane_dispatch: null }));
   const drain = () => {
     const commands = decodeCommands(new Uint8Array(e.memory.buffer, e.ruvane_commands_ptr() >>> 0, e.ruvane_commands_len() >>> 0).slice());
     assert.equal(e.ruvane_commands_clear(), 1);
     return commands;
   };
-  assert.equal(e.ruvane_abi_version(), 14);
+  assert.equal(e.ruvane_abi_version(), 15);
   assert.equal(e.ruvane_mount(0, 1, 1, 0), 0);
   assert.equal(e.ruvane_last_error(), 1);
   for (const args of [[1, 1, 2, 1], [1, 2, 2, 2], [1, 1, 1, 1001], [1, 99, 1, 0]]) {
@@ -369,4 +371,12 @@ test("JSON commands validate methods, internal targets, body profiles and retain
     assert.throws(()=>decodeCommands(new Uint8Array([...bytes,0])));
   }
   for (const bytes of [json(5,"/api","{}"),json(0,"//other/api",""),json(0,"/api/../secret",""),json(0,"/api","{}"),json(4,"/api","{}"),json(1,"/api",""),json(1,"/api","{}",'W/"weak"'),json(1,"/api","{}",'"bad\r\nheader"'),json(1,"/api","x".repeat(16385))]) assert.throws(()=>decodeCommands(bytes));
+});
+
+test('native download plans require explicit targets and prohibit prefetch or event bindings',()=>{
+ const link=[create(1,1,0,17,1),{op:2,view:1,node:1,text:'Download'}, {op:12,view:1,node:1,url:'/private-files/files/a'}, {op:13,view:1,node:1,prefetch:false}];
+ const initial=planCommands(link,1,blank(),true);assert.equal(initial.nodes.get(1).tag,17);assert.equal(initial.nodes.get(1).prefetch,false);
+ for(const change of [{op:13,view:1,node:1,prefetch:true},{op:3,view:1,node:1,event:1}])assert.throws(()=>planCommands([change],1,initial));
+ for(const index of [1,2,3])assert.throws(()=>planCommands(link.filter((_,n)=>n!==index),1,blank(),true));
+ assert.equal(planCommands([{op:12,view:1,node:1,url:'/private-files/files/b'}],1,initial).nodes.get(1).url,'/private-files/files/b');
 });

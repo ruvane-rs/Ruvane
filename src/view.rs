@@ -137,6 +137,21 @@ pub struct View {
 }
 
 impl View {
+    /// Adds an internal attachment link handled directly by the browser.
+    pub fn download(
+        &mut self,
+        parent: u32,
+        key: u32,
+        url: &crate::InternalUrl,
+        label: &str,
+    ) -> Result<u32, ViewError> {
+        if key == 0 {
+            return Err(ViewError::InvalidIdentifier);
+        }
+        let id = self.push(parent, key, BrowserTag::Download, Some(label), None, false)?;
+        self.nodes[id as usize - 1].link = Some(url.clone());
+        Ok(id)
+    }
     /// Adds an internal link with a nonzero sibling key.
     pub fn link(
         &mut self,
@@ -383,7 +398,9 @@ impl View {
             Err(ViewError::Empty)
         } else {
             for (index, node) in self.nodes.iter().enumerate() {
-                if (node.tag == BrowserTag::Link) != node.link.is_some() {
+                if matches!(node.tag, BrowserTag::Link | BrowserTag::Download)
+                    != node.link.is_some()
+                {
                     return Err(ViewError::InvalidStructure);
                 }
                 if node.tag == BrowserTag::Label {
@@ -442,15 +459,19 @@ impl View {
                 BrowserTag::Label => "label",
                 BrowserTag::Input | BrowserTag::Checkbox | BrowserTag::File => "input",
                 BrowserTag::TextArea => "textarea",
-                BrowserTag::Link => "a",
+                BrowserTag::Link | BrowserTag::Download => "a",
             };
             write!(output, "<{tag} data-ruvane-node=\"{id}\"").unwrap();
             if node.key != 0 {
                 write!(output, " data-ruvane-key=\"{}\"", node.key).unwrap();
             }
             match node.tag {
-                BrowserTag::Link => {
-                    output.push_str(" data-ruvane-nav=\"\"");
+                BrowserTag::Link | BrowserTag::Download => {
+                    output.push_str(if node.tag == BrowserTag::Download {
+                        " download=\"\""
+                    } else {
+                        " data-ruvane-nav=\"\""
+                    });
                     if node.prefetch {
                         output.push_str(" data-ruvane-prefetch=\"\"");
                     }

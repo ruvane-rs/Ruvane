@@ -1,10 +1,12 @@
 //! Native uploads and private attachments with two public demo identities.
 use ruvane::*;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 const BASE: &str = "/private-files";
 struct Demo {
     files: FileStore,
     sessions: SessionStore,
+    manager: AtomicBool,
 }
 fn fail(status: StatusCode, message: &str) -> Response {
     Response::text(message).with_status(status)
@@ -22,17 +24,42 @@ fn url(path: &str) -> InternalUrl {
     InternalUrl::new(&format!("{BASE}{path}")).unwrap()
 }
 fn json(info: &FileInfo) -> JsonValue {
-    JsonValue::object(vec![
-        (
-            "id".into(),
-            JsonValue::string(info.id().to_string()).unwrap(),
-        ),
-        ("name".into(), JsonValue::string(info.name()).unwrap()),
-        ("bytes".into(), (info.len() as u64).into()),
-    ])
-    .unwrap()
+    info.to_json()
 }
+
 impl Demo {
+    fn listing(&self, request: &Request) -> Result<FileListing, StatusCode> {
+        if request
+            .query_params()
+            .iter()
+            .any(|(name, _)| name != "after")
+        {
+            return Err(StatusCode::BadRequest);
+        }
+        let cursor = request
+            .query_params()
+            .get("after")
+            .map(FileId::parse)
+            .transpose()
+            .map_err(|_| StatusCode::BadRequest)?;
+        let owner = self.owner(request)?;
+        let mut files = self
+            .files
+            .list(&owner)
+            .map_err(|_| StatusCode::ServiceUnavailable)?
+            .into_iter()
+            .filter(|file| cursor.is_none_or(|cursor| file.id() > cursor))
+            .take(MAX_FILE_LIST_ENTRIES + 1)
+            .collect::<Vec<_>>();
+        let more = files.len() > MAX_FILE_LIST_ENTRIES;
+        files.truncate(MAX_FILE_LIST_ENTRIES);
+        let next = if more {
+            files.last().map(FileInfo::id)
+        } else {
+            None
+        };
+        FileListing::new(files, next).map_err(|_| StatusCode::ServiceUnavailable)
+    }
     fn owner(&self, request: &Request) -> Result<FileOwner, StatusCode> {
         let session = self
             .sessions
@@ -83,6 +110,12 @@ impl Demo {
                         .unwrap()
                         .render(),
                 );
+            if self.manager.load(Ordering::Relaxed) {
+                body = body.child(link(
+                    &InternalUrl::new("/file-manager").unwrap(),
+                    "Open Rust/Wasm file manager",
+                ));
+            }
             let files = match self.files.list(&owner) {
                 Ok(files) => files,
                 Err(_) => return unavailable(),
@@ -213,6 +246,55 @@ impl Demo {
     }
 }
 pub fn register(app: &mut App, files: FileStore) -> Result<(), Box<dyn std::error::Error>> {
+    register_service(app, files).map(|_| ())
+}
+#[derive(Clone)]
+pub struct DemoService {
+    demo: Arc<Demo>,
+    quota: RateLimiter,
+}
+impl DemoService {
+    pub fn register_manager(&self, app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+        let service = self.clone();
+        let mut routes = FileRouteRegistry::new(app);
+        routes.page(
+            "file-manager/page.rs",
+            "/file-manager",
+            None,
+            FilePage::client(
+                "file-manager",
+                30,
+                |_| Ok(InitialState::Number(0)),
+                move |context| {
+                    let request = context.request().ok_or(PageError::InternalServerError)?;
+                    if !request.query_params().is_empty() {
+                        return Err(PageError::BadRequest);
+                    }
+                    let listing = service
+                        .demo
+                        .listing(request)
+                        .map_err(|_| PageError::InternalServerError)?;
+                    Ok(ClientPageData::new(
+                        "Private file manager",
+                        listing
+                            .to_seed()
+                            .map_err(|_| PageError::InternalServerError)?,
+                    )
+                    .fallback(link(&url(""), "Native file forms")))
+                },
+            )
+            .guard(self.demo.sessions.csrf_guard())
+            .guard(self.quota.session_guard(self.demo.sessions.clone())),
+        )?;
+        routes.finish()?;
+        self.demo.manager.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+}
+pub fn register_service(
+    app: &mut App,
+    files: FileStore,
+) -> Result<DemoService, Box<dyn std::error::Error>> {
     let sessions = SessionStore::new(
         SessionLimits::default(),
         SessionCookie::local_http("ruvane_files_demo")?,
@@ -220,6 +302,7 @@ pub fn register(app: &mut App, files: FileStore) -> Result<(), Box<dyn std::erro
     let demo = Arc::new(Demo {
         files,
         sessions: sessions.clone(),
+        manager: AtomicBool::new(false),
     });
     let quota = RateLimiter::new(RateLimitPolicy::new(128, 60)?, RateLimitLimits::default());
     let public = RateLimiter::new(RateLimitPolicy::new(16, 60)?, RateLimitLimits::default());
@@ -296,6 +379,18 @@ pub fn register(app: &mut App, files: FileStore) -> Result<(), Box<dyn std::erro
             .guard(quota.session_guard(sessions.clone())),
     )?;
     let list = demo.clone();
+    let page_list = demo.clone();
+    routes.endpoint(
+        "private-files/list/route.rs",
+        &format!("{BASE}/list"),
+        FileEndpoint::new()
+            .get(move |request| match page_list.listing(request) {
+                Ok(listing) => Response::json(&listing.to_json()),
+                Err(status) => fail(status, "File listing unavailable or denied."),
+            })
+            .guard(sessions.csrf_guard())
+            .guard(quota.session_guard(sessions.clone())),
+    )?;
     let save = demo.clone();
     routes.endpoint(
         "private-files/files/route.rs",
@@ -317,16 +412,17 @@ pub fn register(app: &mut App, files: FileStore) -> Result<(), Box<dyn std::erro
             .guard(sessions.csrf_guard())
             .guard(quota.session_guard(sessions.clone())),
     )?;
+    let remove = demo.clone();
     routes.endpoint(
         "private-files/files/[id]/remove/route.rs",
         &format!("{BASE}/files/{{id}}/remove"),
         FileEndpoint::new()
-            .post_form(move |request| demo.remove(request))
+            .post_form(move |request| remove.remove(request))
             .guard(sessions.csrf_guard())
-            .guard(quota.session_guard(sessions)),
+            .guard(quota.session_guard(sessions.clone())),
     )?;
     routes.finish()?;
-    Ok(())
+    Ok(DemoService { demo, quota })
 }
 pub fn app(files: FileStore) -> Result<App, Box<dyn std::error::Error>> {
     let mut app = App::new();

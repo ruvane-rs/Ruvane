@@ -66,8 +66,8 @@ pub fn route()->ruvane::FileEndpoint {
     const revision=manifest.match(/^revision\t([0-9]+)$/m)[1];
     const wasm=await readFile(join(bundle,"resources/ruvane-runtime",BigInt(revision).toString(16).padStart(16,"0"),"app.wasm"));
     const module=await WebAssembly.compile(wasm),e=validateExports(new WebAssembly.Instance(module,{}).exports);
-    await t.test("shared policy declarations preserve import-free ABI v14 and 22 exports",()=>{
-      assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),14);
+    await t.test("shared policy declarations preserve import-free ABI v15 and 22 exports",()=>{
+      assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),15);
       assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
       assert.equal(e.ruvane_application_revision(),BigInt(revision));
     });

@@ -121,7 +121,7 @@ or ambiguous 429 metadata. An ordinary response must never assert non-execution
 just because its status is 429. If a CSRF token GET returns a valid no-store 429,
 the bridge delivers RateLimited without sending the subsequent POST.
 
-ABI v14 includes action failure kind 5 and the closed 429 navigation error shape. It
+ABI v15 includes action failure kind 5 and the closed 429 navigation error shape. It
 keeps the same 22 function exports and four runtime assets. Rebuild the Wasm and
 use its matching bridge; ABI v11 modules and hydration roots are rejected.
 

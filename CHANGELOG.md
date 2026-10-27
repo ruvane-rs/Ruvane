@@ -1,6 +1,22 @@
 # Changelog
 
-## 0.1.0-alpha.58 — Unreleased
+## 0.1.0-alpha.59 — Unreleased
+
+- Add strict shared FileInfo/FileListing metadata and bounded paginated seeds.
+  Keep server-assigned owners, storage paths and payload bytes native-only.
+- Add typed View::download anchors that hydrate existing nodes and bypass client
+  navigation and prefetch. Move to ABI v15/RVN9 with tag 17, retaining 22 exports
+  and four runtime assets. Rebuild Wasm and bridge together.
+- Add a persistent Rust/Wasm file manager with cursor pagination, refresh, upload
+  and deletion. Retain selections on rejection, clear private state on authorization
+  loss and require explicit inspection after uncertain mutation outcomes.
+- Connect the manager to FileStore with session/CSRF/quota guards, private SSR seeds,
+  opaque native downloads and script-free native forms. Add a standalone example,
+  source-hidden packaging/restart/isolation tests and real-browser lifecycle checks.
+- Keep zero third-party Cargo/npm dependencies and the RFS1 storage format.
+  FileId::parse/FromStr now return shared FileMetadataError instead of FileStoreError.
+
+## 0.1.0-alpha.58
 
 - Add a native bounded FileStore with stable server-assigned owners, opaque
   OS-random file IDs, global/per-owner quotas and redacted metadata.

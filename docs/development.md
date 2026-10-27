@@ -2,7 +2,7 @@
 
 Alpha.33 adds compiler diagnostics and guarded full-document reloads to new
 interactive starters. No Cargo or JavaScript dependencies are added. The native
-and Wasm code still share ABI v14 and 22 exports. Production bundles keep their
+and Wasm code still share ABI v15 and 22 exports. Production bundles keep their
 four versioned runtime assets.
 
 Alpha.34 adds CSS updates without compilation or server restart. New interactive

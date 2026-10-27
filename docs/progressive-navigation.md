@@ -110,7 +110,7 @@ revision, token, order, counts, props and immutable prefixes.
 RVP4 starts with magic, selected-segment u8 and expected-layout-count u8. The
 remaining fields match RVP2, including an explicit layout count that can be zero.
 Status is 200 and the pending leaf's RVA1 seed is empty. The App validator checks
-the expected chain length and explicit page opt-in. ABI v14 keeps the same 22
+the expected chain length and explicit page opt-in. ABI v15 keeps the same 22
 numeric exports: validation accepts prefixes, while mounting accepts only their
 already loaded layouts. Leaf mounting requires a complete packet. Rebuild the
 application Wasm and matching bridge together.

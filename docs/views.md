@@ -3,7 +3,8 @@
 `View` is a bounded tree shared by server rendering and Wasm. It leaves the
 existing `Html`, `Element` and `Document` APIs unchanged. Supported elements are
 sections, paragraphs, h2 headings, spans, outputs, buttons, lists, list items,
-forms, labels, text inputs, checkboxes, textareas, file inputs and submit buttons.
+forms, labels, text inputs, checkboxes, textareas, file inputs, submit buttons,
+internal navigation links and native download links.
 
 ```rust
 use ruvane::{BrowserTag, View};
@@ -63,7 +64,7 @@ Use ordinary Rust `if` and loops to describe the current tree. A conditional
 branch is added when present and removed when absent, including its DOM handlers.
 Keep a container when an entire branch can be empty; an entirely empty `View`
 is still rejected. List containers accept list items only; list items require a
-list parent. Paragraphs accept spans, outputs and buttons. Leaves contain plain
+list parent. Paragraphs accept spans, outputs, buttons and links. Leaves contain plain
 text. Controls other than tabs and LF are rejected so text round-trips through HTML.
 
 `render()` emits HTML with node markers and optional numeric key markers.
@@ -135,3 +136,12 @@ and effects per component. Factories, callbacks, rendering and Drop remain
 trusted application code; these counts do not sandbox all CPU or allocations.
 
 See [browser](browser.md) for the versioned protocol and hydration lifecycle.
+
+## Native download links
+
+Use `view.download(parent, key, &internal_url, label)` for a browser attachment
+request. It emits an internal `<a download="" href="…">` with text content,
+without navigation or prefetch markers. The link remains usable before Wasm
+activation and is adopted during hydration. It has no component event or prefetch
+eligibility. The native handler still authorizes the current owner and sets the
+attachment response headers. See the [file manager](file-manager.md).

@@ -49,6 +49,7 @@ jobs:
           node --test browser/tests/multipart.test.mjs
           node --test browser/tests/uploads.test.mjs
           node --test browser/tests/file-store.test.mjs
+          node --test browser/tests/file-manager.test.mjs
           node --test browser/tests/progressive.test.mjs
           node --test browser/tests/initial.test.mjs
           node --test browser/tests/layout-snapshot.test.mjs

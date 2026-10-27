@@ -43,7 +43,7 @@ pub(super) fn accepts(parent: Option<BrowserTag>, tag: BrowserTag) -> bool {
         return false;
     }
     if parent == Some(Paragraph) {
-        return matches!(tag, Span | Output | Button | Link);
+        return matches!(tag, Span | Output | Button | Link | Download);
     }
     if parent == Some(Label) {
         return matches!(tag, Span | Input | Checkbox | TextArea | File);

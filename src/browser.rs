@@ -1,8 +1,8 @@
-//! RVN8 browser command encoding.
+//! RVN9 browser command encoding.
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 14;
+pub const BROWSER_ABI_VERSION: u32 = 15;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.
@@ -48,6 +48,8 @@ pub enum BrowserTag {
     Link = 15,
     /// A single native file picker, without a default value.
     File = 16,
+    /// An internal native download, excluded from client navigation and prefetch.
+    Download = 17,
 }
 
 /// Command encoding errors.
@@ -187,10 +189,10 @@ impl BrowserCommands {
         data.extend_from_slice(body);
         self.push(11, &[view, request, action.action()], &data)
     }
-    /// Creates an empty batch with an RVN8 header.
+    /// Creates an empty batch with an RVN9 header.
     pub fn new() -> Self {
         Self {
-            bytes: b"RVN8\0\0\0\0".to_vec(),
+            bytes: b"RVN9\0\0\0\0".to_vec(),
             count: 0,
         }
     }

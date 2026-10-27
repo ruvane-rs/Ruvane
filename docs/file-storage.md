@@ -2,7 +2,7 @@
 
 Alpha.58 adds a native `FileStore`, typed attachment names and opaque downloads.
 The backend uses only `std` and the existing native OS entropy source. File bytes,
-owner keys, paths and storage I/O remain outside Wasm. The browser ABI stays v14,
+owner keys, paths and storage I/O remain outside Wasm. The current browser ABI is v15,
 with 22 numeric exports and four core runtime assets.
 
 ## Open a private store
@@ -151,3 +151,8 @@ HTTP tests cover exact binary GET/HEAD, native forms, CSRF, owner isolation,
 deletion and restarts. The CLI fixture serves a compiled source-hidden bundle,
 kills its writer process, verifies normal startup refusal and performs explicit
 recovery. Its Wasm module excludes the native backend.
+
+For private SSR metadata and a Rust/Wasm interface over the same backend, see the
+[persistent file manager](file-manager.md). FileId and FileInfo are now shared
+metadata types. FileId::parse and FromStr return FileMetadataError; FileOwner and
+storage operations retain FileStoreError. RFS1 disk snapshots are unchanged.

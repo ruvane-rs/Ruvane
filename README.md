@@ -81,7 +81,7 @@ independent OS-generated tokens, generation checks and automatic same-origin ret
 
 [Native request quotas](docs/rate-limits.md) add bounded per-route and per-session
 token buckets, rotation-stable session quotas and typed 429 responses across
-native forms, navigation and Wasm actions. Browser ABI v14 keeps 22 exports.
+native forms, navigation and Wasm actions. Browser ABI v15 keeps 22 exports.
 
 [Bounded JSON APIs](docs/json.md) add immutable values, exact number text,
 checked construction and explicit native POST/PUT/PATCH JSON routes plus bodyless DELETE. Fixed no-store
@@ -96,12 +96,17 @@ the bounded demo keeps uploads in process memory.
 explicit multipart requests from Rust/Wasm without a page reload. Selections stay
 in the browser, survive validation, and expire on reset, removal or navigation.
 The runtime shares the form/JSON pending slot, aborts retired transports and
-never retries an upload automatically. ABI v14 requires matching Wasm and bridge.
+never retries an upload automatically. ABI v15 requires matching Wasm and bridge.
 
 [Private persistent files](docs/file-storage.md) add a bounded native FileStore,
 stable application-owner checks, disk quotas, atomic snapshots and explicit offline
 recovery. Opaque downloads use typed attachment names and fixed security headers;
 the native demo supports upload, download, deletion and restart without scripts.
+
+[The persistent file manager](docs/file-manager.md) connects Rust/Wasm to that
+store with private SSR metadata, cursor pagination, upload, deletion and refresh.
+Typed native download links bypass navigation and prefetch. File selections
+survive rejected requests and expire when their component leaves the page.
 
 [Component JSON requests](docs/json-client.md) add explicit GET/POST/PUT/PATCH/DELETE
 from Rust/Wasm, exact response decoding, retained versions, bounded transport and
@@ -789,8 +794,8 @@ headers; a metadata manifest cannot enforce them.
 
 Form query decoding is selected by route registration, never inferred from
 request fields. Native POST actions require same-origin verification and bounded
-form bodies. Session CSRF protection is opt-in; see [CSRF tokens](docs/csrf.md). Uploads and
-credential verification are not provided.
+form bodies. Session CSRF protection is opt-in; see [CSRF tokens](docs/csrf.md). Credential verification is not provided. The bounded multipart upload profile
+is described in [native multipart forms](docs/multipart.md).
 Do not place secrets in GET fields. See [server forms](docs/post-forms.md).
 
 Embedded assets are explicitly selected application data, not a filesystem

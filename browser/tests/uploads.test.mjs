@@ -11,7 +11,7 @@ import {decodeCommands,validateExports,planCommands} from "../../web/bridge.mjs"
 const root=fileURLToPath(new URL("../../",import.meta.url)),cli=resolve(process.env.RUVANE_CLI||join(root,"target/debug/ruvane"));
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms)),word=n=>[n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255];
 const text=value=>{const bytes=new TextEncoder().encode(value);return [...word(bytes.length),...bytes];};
-const upload=(field="attachment",body="caption=Rust%20%2B%20%2541",url="/upload")=>new Uint8Array([82,86,78,56,...word(1),16,...word(1),...word(1),...word(1),...word(2),...word(3),...text(url),...text(field),...text(body)]);
+const upload=(field="attachment",body="caption=Rust%20%2B%20%2541",url="/upload")=>new Uint8Array([82,86,78,57,...word(1),16,...word(1),...word(1),...word(1),...word(2),...word(3),...text(url),...text(field),...text(body)]);
 test("upload commands reject truncated frames and ambiguous fields",()=>{
  const frame=upload(),command=decodeCommands(frame)[0];assert.deepEqual(command.fields,[["caption","Rust + %41"]]);assert.equal(command.method,"POST");assert.equal(command.mutation,true);
  for(let n=0;n<frame.length;n++)assert.throws(()=>decodeCommands(frame.slice(0,n)));
@@ -35,7 +35,7 @@ test("packaged Rust uploads keep browser references separate from guarded native
   const fixture=await uploadsFixture({directory,root,cli});project=fixture.project;
   const wasm=await readFile(join(fixture.bundle,"resources/ruvane-runtime",BigInt(fixture.revision).toString(16).padStart(16,"0"),"app.wasm")),module=await WebAssembly.compile(wasm),e=validateExports(new WebAssembly.Instance(module,{}).exports);
   const drain=()=>{const commands=decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr()>>>0,e.ruvane_commands_len()>>>0).slice());assert.equal(e.ruvane_commands_clear(),1);return commands;};
-  await t.test("ABI v14 has 22 numeric exports and no imports or upload backend",()=>{assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),14);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);assert.equal(wasm.includes(Buffer.from("SERVER_UPLOAD_BACKEND_ALPHA57")),false);});
+  await t.test("ABI v15 has 22 numeric exports and no imports or upload backend",()=>{assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),15);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);assert.equal(wasm.includes(Buffer.from("SERVER_UPLOAD_BACKEND_ALPHA57")),false);});
   await t.test("numeric file metadata reaches Rust without copying file bytes",()=>{
    const id=e.ruvane_mount(1,29,1,0);assert.ok(id);const initial=drain(),node=initial.find(command=>command.tag===16).node;
    const name=new TextEncoder().encode("Rust 🦀.bin"),bytes=new Uint8Array([82,85,70,49,1,...word(1),...word(3),name.length,0,...name,0,0]);
@@ -49,7 +49,7 @@ test("packaged Rust uploads keep browser references separate from guarded native
   let base;for(let i=0;i<500;i++){try{base=readinessURL(await readFile(ready,"utf8"));}catch(error){if(error.code!=="ENOENT")throw error;}if(base)break;if(child.exitCode!==null)throw Error(logs);await pause(10);}assert.ok(base,"server readiness");
   let cookie,claim;
   await t.test("file SSR and native endpoint work from the source-hidden bundle",async()=>{
-   const page=await fetch(base+"/upload-probe");assert.equal(page.status,200);const html=await page.text();assert.match(html,/type="file"/);assert.match(html,/data-ruvane-version="14"/);assert.match(html,/<input[^>]*type="file"[^>]*disabled/);assert.doesNotMatch(html,/<input[^>]*type="file"[^>]*value=/);
+   const page=await fetch(base+"/upload-probe");assert.equal(page.status,200);const html=await page.text();assert.match(html,/type="file"/);assert.match(html,/data-ruvane-version="15"/);assert.match(html,/<input[^>]*type="file"[^>]*disabled/);assert.doesNotMatch(html,/<input[^>]*type="file"[^>]*value=/);
    const denied=await fetch(base+"/uploads/state");assert.equal(denied.status,403);await denied.arrayBuffer();
    const session=await fetch(base+"/upload-session",{method:"POST",headers:{Origin:base,"Content-Type":"application/json"},body:"{}"});assert.equal(session.status,200);cookie=session.headers.getSetCookie()[0].split(";")[0];assert.equal(await session.text(),"true");
    const token=await fetch(base+"/csrf-token",{headers:{Cookie:cookie}});claim=token.headers.get("Ruvane-Csrf-Token");await token.arrayBuffer();assert.match(claim,/^[a-f0-9]{64}$/);

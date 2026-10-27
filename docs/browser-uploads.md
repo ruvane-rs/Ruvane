@@ -92,14 +92,14 @@ marker preserves a bounded Retry-After hint; the hint does not schedule a retry.
 `runtime.fileState()` returns only aggregate selected-file and byte counts for
 lifecycle checks. Counts describe live runtime references, not garbage collection
 or immediate browser memory reclamation. File content is never placed in props,
-seeds, navigation cache entries or Wasm ingress. This profile has no disk writes,
+seeds, navigation cache entries or Wasm ingress. This transport itself has no disk writes,
 public uploaded-file routes, MIME verification, large-file streaming, resumable
 transfers or byte-progress reporting.
 
 ## ABI migration
 
-Rebuild application Wasm and its matching bridge together. ABI v14/RVN8 rejects
-ABI v13 modules and hydration roots. The 22 numeric function exports, four core
+Rebuild application Wasm and its matching bridge together. ABI v15/RVN9 rejects
+ABI v14 modules and hydration roots. The 22 numeric function exports, four core
 runtime assets and two local crates are unchanged. Tag 16 is the file input;
 opcode 15 carries its reset epoch and opcode 16 queues an upload. Results reuse
 RVJ1, while file changes use payload kind 3 and the existing numeric chunk ingress:
@@ -130,7 +130,7 @@ shared files in process memory; it provides no real account authentication or
 per-user file isolation. Enter stops the server.
 
 For persistent owner-scoped attachments and downloads, use the separate
-[private file store](file-storage.md) and its native demo. The original shared
+[private file store](file-storage.md) and [Rust/Wasm manager](file-manager.md). The original shared
 memory uploader remains a transport/lifecycle example.
 
 `/upload-tests` runs real-browser selection, validation, quota, deadline, disposal

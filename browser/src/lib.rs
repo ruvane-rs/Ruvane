@@ -1074,7 +1074,7 @@ mod tests {
             };
             assert_eq!(runtime.dispatch(id, 42), Err(expected));
             assert_eq!(runtime.live_instances(), 0);
-            assert_eq!(runtime.command_bytes(), b"RVN8\0\0\0\0");
+            assert_eq!(runtime.command_bytes(), b"RVN9\0\0\0\0");
             assert_eq!(runtime.dispatch(id, 42), Err(BrowserError::InvalidHandle));
         }
         assert_eq!(runtime.mount(1, counter(1)), Err(BrowserError::Limit));

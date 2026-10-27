@@ -19,7 +19,7 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
   const wasm=await readFile(join(bundle,"resources/ruvane-runtime",BigInt(revision).toString(16).padStart(16,"0"),"app.wasm"));
   const module=await WebAssembly.compile(wasm),e=validateExports(new WebAssembly.Instance(module,{}).exports);
   await t.test("the shared parser executes inside Wasm without native backends or new exports",()=>{
-   assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),14);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);assert.equal(wasm.includes(Buffer.from("SERVER_JSON_BACKEND_ALPHA51")),false);
+   assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),15);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);assert.equal(wasm.includes(Buffer.from("SERVER_JSON_BACKEND_ALPHA51")),false);
    const id=e.ruvane_mount(1,25,1,0);assert.ok(id,`Wasm JSON probe failed with ${e.ruvane_last_error()}`);const commands=decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr()>>>0,e.ruvane_commands_len()>>>0).slice());assert.ok(commands.some(command=>command.text==="Rust JSON checks passed"));assert.equal(e.ruvane_commands_clear(),1);assert.equal(e.ruvane_dispose(id),1);assert.equal(e.ruvane_commands_clear(),1);
   });
   await rename(join(project,"src"),join(project,"source-hidden"));let generation=0;

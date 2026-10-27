@@ -5,6 +5,7 @@
         any(target_arch = "x86_64", target_arch = "aarch64")
     )
 ))]
+#[allow(dead_code)]
 #[path = "../examples/support/file_store_demo.rs"]
 mod demo;
 use ruvane::*;

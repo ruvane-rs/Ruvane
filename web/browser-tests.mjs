@@ -24,7 +24,7 @@ const load = () => createRuntime("/assets/app.wasm");
 await test("real Wasm ABI, props, invalid events and stale handles", async () => {
   const { instance } = await WebAssembly.instantiate(await (await fetch("/assets/app.wasm")).arrayBuffer(), {});
   const e = validateExports(instance.exports);
-  equal(e.ruvane_abi_version(), 14, "ABI");
+  equal(e.ruvane_abi_version(), 15, "ABI");
   equal(e.ruvane_mount(0, 1, 1, 0), 0, "invalid root");
   equal(e.ruvane_last_error(), 1, "root error");
   equal(e.ruvane_mount(1, 2, 2, 2), 0, "invalid boolean");
@@ -111,7 +111,7 @@ await test("wrong MIME, old ABI and cross-origin module rejection", async () => 
   await rejects(() => createRuntime("https://invalid.example/module.wasm"));
 });
 await test("strict command framing and typed mount props", async () => {
-  const header = new Uint8Array([82, 86, 78, 56, 0, 0, 0, 0]);
+  const header = new Uint8Array([82, 86, 78, 57, 0, 0, 0, 0]);
   equal(decodeCommands(header), [], "empty batch");
   const bom = new TextEncoder().encode("\uFEFFtext"), frame = new Uint8Array(21 + bom.length);
   frame.set([82,86,78,54,1,0,0,0,2,1,0,0,0,1,0,0,0]);

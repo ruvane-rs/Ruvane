@@ -24,7 +24,7 @@ test("private file storage persists inside a source-hidden native/Wasm bundle",{
  try {
   fixture=await fileStoreFixture({directory,root,cli});
   const wasm=await readFile(join(fixture.bundle,"resources/ruvane-runtime",BigInt(fixture.revision).toString(16).padStart(16,"0"),"app.wasm")),module=await WebAssembly.compile(wasm);
-  await t.test("ABI v14 and 22 exports exclude native private storage code",()=>{assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(new WebAssembly.Instance(module,{}).exports.ruvane_abi_version(),14);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);assert.equal(wasm.includes(Buffer.from("ruvane-files\t1\t")),false);});
+  await t.test("ABI v15 and 22 exports exclude native private storage code",()=>{assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(new WebAssembly.Instance(module,{}).exports.ruvane_abi_version(),15);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);assert.equal(wasm.includes(Buffer.from("ruvane-files\t1\t")),false);});
   hidden=join(fixture.project,"source-hidden");await rename(join(fixture.project,"src"),hidden);await start();
   await t.test("anonymous callers cannot list or download files",async()=>{for(const path of ["/files","/files/"+"a".repeat(64)]){const response=await request(path);assert.equal(response.status,403);assert.equal(response.headers.get("content-disposition"),null);await response.arrayBuffer();}a=await session("alpha");b=await session("beta");});
   await t.test("one guarded binary upload becomes a safe GET/HEAD attachment",async()=>{

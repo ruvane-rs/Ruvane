@@ -1,4 +1,5 @@
 //! Run with `cargo run --example file_store -- /absolute/private-directory [PORT] [--recover]`.
+#[allow(dead_code)]
 #[path = "support/file_store_demo.rs"]
 mod demo;
 use ruvane::*;

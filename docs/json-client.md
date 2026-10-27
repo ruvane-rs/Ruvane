@@ -102,9 +102,9 @@ profile. Declared and streamed body sizes are checked against 64 KiB, followed
 by Rust's JSON depth, value, string, member and number limits. ETags have the
 existing 128-byte profile. Transport metadata adds at most 142 bytes.
 
-Browser ABI v14 retains the same 22 numeric exports and four core runtime assets.
+Browser ABI v15 retains the same 22 numeric exports and four core runtime assets.
 Rebuild modules and use the matching bridge together; v13 modules and hydration
-roots are rejected. RVN8 retains opcode 14 after view/request/action u32 identifiers:
+roots are rejected. RVN9 retains opcode 14 after view/request/action u32 identifiers:
 method u8 (GET=0, POST=1, PUT=2, PATCH=3, DELETE=4), then URL, body and If-Match,
 each as u32 byte length plus UTF-8 bytes. An empty validator means absent.
 

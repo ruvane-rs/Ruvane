@@ -94,7 +94,7 @@ pub fn page()->FilePage {
     const module=await WebAssembly.compile(wasm),e=validateExports(new WebAssembly.Instance(module,{}).exports);
     await t.test("guard modules are absent from import-free Wasm with the unchanged ABI",()=>{
       assert.equal(wasm.includes(Buffer.from("SERVER_ONLY_GUARD_ALPHA46")),false);
-      assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),14);
+      assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),15);
       assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
     });
     await rename(join(project,"src"),join(project,"source-hidden"));

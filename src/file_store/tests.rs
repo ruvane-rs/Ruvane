@@ -61,7 +61,7 @@ fn identifiers_owners_and_debug_never_become_paths_or_credentials() {
         &"0".repeat(64),
         &"f".repeat(65),
     ] {
-        assert_eq!(FileId::parse(value), Err(FileStoreError::InvalidInput));
+        assert_eq!(FileId::parse(value), Err(crate::FileMetadataError));
     }
     let id = FileId::parse(&"a1".repeat(32)).unwrap();
     assert_eq!(id.to_string(), "a1".repeat(32));

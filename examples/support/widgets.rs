@@ -11,12 +11,19 @@ pub mod navigation_pages;
 /// Checks the demo page registry before mounting.
 #[allow(dead_code)]
 pub fn validate_page(page: &ruvane::NavigationPage) -> bool {
+    if matches!(page.url().as_str(), "/file-manager" | "/file-home") {
+        return file_manager_app::application().validate_navigation(page);
+    }
     if !page.layouts().is_empty() {
         return false;
     }
     navigation_pages::validate(page)
 }
 
+#[path = "file_manager_app.rs"]
+mod file_manager_app;
+#[path = "file_manager_component.rs"]
+mod file_manager_component;
 #[path = "json_component.rs"]
 mod json_component;
 #[path = "task_input.rs"]
@@ -327,6 +334,8 @@ pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentErro
         (TASK_FORM, InitialState::Number(count)) => tasks::create(count),
         (FIELDS_PROBE, InitialState::Number(0)) => Ok(fields_probe::create()),
         (29, InitialState::Number(0)) => Ok(upload_component::create()),
+        (30, InitialState::Number(0)) => Ok(file_manager_component::create()),
+        (31, _) => file_manager_app::create(props),
         (27, InitialState::Number(0)) => Ok(json_component::create()),
         (REMOTE_TASKS, InitialState::Number(0)) => Ok(remote_tasks::create()),
         (ACTION_PROBE, InitialState::Number(mode)) if mode <= 9 => Ok(action_probe::create(mode)),

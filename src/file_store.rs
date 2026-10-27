@@ -1,6 +1,6 @@
 //! Bounded private file snapshots for one native writer and a trusted directory.
 use crate::sessions::entropy::Entropy;
-use crate::{DownloadName, UploadedFile};
+use crate::{DownloadName, FileId, FileInfo, UploadedFile};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -80,81 +80,6 @@ impl FileOwner {
 impl fmt::Debug for FileOwner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("FileOwner([redacted])")
-    }
-}
-/// An OS-random opaque identifier. Possession never grants access to a file.
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct FileId([u8; 32]);
-impl FileId {
-    /// Parses exactly 64 lowercase hexadecimal digits, with no aliases or path syntax.
-    pub fn parse(value: &str) -> Result<Self, FileStoreError> {
-        if value.len() != 64
-            || !value
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
-            return Err(FileStoreError::InvalidInput);
-        }
-        let mut bytes = [0; 32];
-        for (index, slot) in bytes.iter_mut().enumerate() {
-            *slot = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-                .map_err(|_| FileStoreError::InvalidInput)?;
-        }
-        if bytes == [0; 32] {
-            return Err(FileStoreError::InvalidInput);
-        }
-        Ok(Self(bytes))
-    }
-}
-impl std::str::FromStr for FileId {
-    type Err = FileStoreError;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Self::parse(value)
-    }
-}
-impl fmt::Display for FileId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(f, "{byte:02x}")?;
-        }
-        Ok(())
-    }
-}
-impl fmt::Debug for FileId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("FileId([redacted])")
-    }
-}
-/// Authorized file metadata. The filename is display text, never a disk path.
-#[derive(Clone, Eq, PartialEq)]
-pub struct FileInfo {
-    id: FileId,
-    name: DownloadName,
-    size: usize,
-}
-impl FileInfo {
-    /// Returns the opaque identifier used by application routes.
-    pub fn id(&self) -> FileId {
-        self.id
-    }
-    /// Returns the untrusted original display name.
-    pub fn name(&self) -> &str {
-        self.name.as_str()
-    }
-    /// Returns the exact binary payload length.
-    pub fn len(&self) -> usize {
-        self.size
-    }
-    /// Whether this is a selected zero-byte file.
-    pub fn is_empty(&self) -> bool {
-        self.size == 0
-    }
-}
-impl fmt::Debug for FileInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FileInfo")
-            .field("bytes", &self.size)
-            .finish_non_exhaustive()
     }
 }
 /// One authorized opaque payload, capped at 32 KiB.

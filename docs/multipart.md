@@ -147,5 +147,5 @@ CSRF header/field ambiguity, origins, quotas, deadlines and capacity. CLI tests
 serve a compiled bundle with source files hidden and check that native upload
 handlers stay out of Wasm. Alpha.56 retained ABI v13 and its 22 numeric function
 exports. Alpha.57 adds [component-owned browser uploads](browser-uploads.md) with
-ABI v14; the native multipart profile and four core runtime assets stay the same.
+ABI v15; the native multipart profile and four core runtime assets stay the same.
 Large-file streaming remains outside this profile.

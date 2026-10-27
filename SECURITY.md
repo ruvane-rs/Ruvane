@@ -1,5 +1,19 @@
 # Security
 
+Alpha.59 adds the [persistent Rust/Wasm file manager](docs/file-manager.md).
+FileInfo and FileListing validate exact JSON/seed fields, ID syntax, filename,
+size, ordering and cursor bounds. At most three records enter a page seed; owners,
+paths and stored bytes stay native-only. Every listing, mutation and download
+resolves the current server session and owner, after session/CSRF/quota guards.
+Guarded SSR/navigation is no-store and never a public prerender. A cursor is a
+position, never authorization. Download views use native anchors with no router
+or prefetch markers; the bridge validates their download attribute and rejects
+prefetch or event bindings. Authorization loss clears visible metadata and
+selection. Navigation/disposal aborts pending reads/uploads and ignores late
+replies; uncertain mutations require explicit inspection without automatic replay.
+ABI v15/RVN9 adds tag 17 and requires matching rebuilt Wasm and bridge. The demo
+keeps public fake identities and does not provide account authentication.
+
 Alpha.58 adds [private persistent files](docs/file-storage.md). Native FileStore
 operations require a trusted server-assigned owner and opaque OS-random IDs;
 foreign and absent files have the same read/delete result. Names never select
@@ -11,7 +25,7 @@ stopped. Committed corruption is preserved and refused. Failures after publicati
 retain uncertainty and do not cause retries. Attachment headers percent-encode
 validated names, force opaque downloads and retain no-store/nosniff/blocking CSP.
 The demo's two identities are public test identities, not real authentication.
-Storage stays native and ABI v14 remains unchanged.
+Storage stays native; alpha.59 uses ABI v15.
 
 Alpha.57 adds [component file uploads](docs/browser-uploads.md). A single bounded
 browser File remains behind a view/control/epoch/selection reference; Wasm receives
@@ -22,7 +36,7 @@ POST, uses an opaque part type and obtains header-only CSRF claims separately.
 Native parsing and session/origin/CSRF/quota checks remain authoritative. Uploads
 share the form/JSON pending slot, deadline and lifetime rules. Abort does not undo
 submitted effects; uncertain outcomes require inspection and no automatic retry.
-ABI v14/RVN8 requires matching rebuilt Wasm and bridge. This adds no uploaded-file
+The current ABI v15/RVN9 requires matching rebuilt Wasm and bridge. This adds no uploaded-file
 mount, disk persistence, real authentication, MIME scanner or large-file protocol.
 
 Alpha.54 adds [typed JSON validation](docs/validation.md) with exact field presence
@@ -79,7 +93,7 @@ Only mutation guard failures emit the fixed pre-handler refusal marker; a manual
 does not assert non-execution. The bridge never retries POST automatically. This
 is process-local admission control after request parsing, not a distributed or
 network DDoS defense. Existing session, CSRF and origin checks remain separate.
-ABI v14 pairs the new typed action failure and closed read-only 429 navigation shape.
+ABI v15 pairs the new typed action failure and closed read-only 429 navigation shape.
 
 Alpha.49 adds opt-in [session CSRF tokens](docs/csrf.md). Tokens use independent
 256-bit OS randomness and remain bound to one live session generation. Native forms
@@ -311,7 +325,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v14/RVN8 isolate twenty-two reviewed numeric exports. The reply
+Browser ABI v15/RVN9 isolate twenty-two reviewed numeric exports. The reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts
