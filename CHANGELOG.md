@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.47 — Unreleased
+
+- Add bounded typed request cookies, strict duplicate/syntax rejection before
+  callbacks, case-sensitive names and raw values without URL decoding.
+- Add host-only response cookies with Secure/HttpOnly/Lax defaults, explicit local
+  HTTP mode, validated paths/prefixes/lifetimes and scoped Max-Age=0 removal.
+- Emit bounded separate Set-Cookie fields across responses, HEAD and 303 redirects;
+  redact cookie values in Debug and preserve atomic append failures.
+- Add cookie-capable typed action response handlers while retaining origin, MIME,
+  form, revision and inherited guard checks.
+- Force no-store and signal browser cache reset without cookie values; cancel
+  prefetch work and rebuild layouts on a cookie-changing navigation.
+- Keep std-only dependencies, existing cache bypass, loopback transport, ABI v11,
+  22 Wasm function exports and four runtime assets. Sessions remain out of scope.
+
 ## 0.1.0-alpha.46 — Unreleased
 
 - Add native App, branch, page and endpoint guards with typed allow, private,

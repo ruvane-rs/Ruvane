@@ -189,3 +189,8 @@ use the configured 500 if it fits the server body budget, otherwise the small
 fixed 500. Parser, framing, Host and query-validation failures retain the fixed
 protocol responses. HEAD suppresses bodies as before; CSP is unchanged. See
 [pages and layouts](pages-and-layouts.md).
+
+Alpha.47 adds [typed cookies](cookies.md). Requests reject malformed or repeated
+cookie names before callbacks, with separate count/byte limits. Responses can add
+bounded host-only Set-Cookie fields, preserve them on HEAD/303, and emit a fixed
+cookie cache-reset signal. Arbitrary header strings remain unsupported.

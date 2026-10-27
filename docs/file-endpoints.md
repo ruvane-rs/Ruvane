@@ -114,3 +114,10 @@ the existing empty-site error.
 The file starter provides `/api/health`, `/stream`, typed task actions and native
 task forms through route files. Its `main.rs` configures the server and runtime;
 ordinary `--interactive` starters retain their explicit Router declarations.
+
+## Cookies in typed actions
+
+`FileEndpoint::post_action_response` accepts a trusted callback returning Response,
+so `Response::action(&reply).with_cookie(cookie)` can emit typed action bytes and
+cookie fields together. It keeps the same POST preflight, revision enforcement
+and inherited/local guards as post_action. See [typed cookies](cookies.md).

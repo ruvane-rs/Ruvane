@@ -69,6 +69,10 @@ Native [route guards](docs/route-guards.md) add application, inherited `guard.rs
 page and endpoint access checks before caches and loaders. Typed allow/private/403/503
 decisions stay server-side; guarded navigation always checks the server again.
 
+[Typed HTTP cookies](docs/cookies.md) add bounded request parsing, host-only response
+cookies, explicit local HTTP mode, native form/action integration and browser cache
+invalidation without exposing Set-Cookie values to the runtime.
+
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
 URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
 

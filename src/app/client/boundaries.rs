@@ -219,7 +219,7 @@ impl App {
             }
             Ok(Access::Load(lease)) => Some(lease),
             Ok(Access::Bypass) => None,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
         match self.load_client_branch(index, context, request) {
             Ok((branch, cacheable)) => {

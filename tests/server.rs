@@ -2562,3 +2562,6 @@ fn navigation_rejects_targets_above_its_budget_without_poisoning_task_state() {
     let healthy = server.request("GET", "/app?native=yes");
     assert_eq!(status(&healthy), 200);
 }
+
+#[path = "support/cookies.rs"]
+mod cookie_tests;

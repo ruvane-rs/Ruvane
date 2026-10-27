@@ -2,11 +2,10 @@ use super::*;
 use crate::{ActionError, ActionReply};
 
 type Handler = Arc<dyn Fn(&Request) -> Response + Send + Sync>;
-type ActionHandler = Arc<dyn Fn(&Request) -> Result<ActionReply, ActionError> + Send + Sync>;
 #[derive(Clone)]
 enum Post {
     Form(Handler),
-    Action(ActionHandler),
+    Action(Handler),
 }
 
 /// Native handlers returned by a route.rs file's `pub fn route()`.
@@ -56,6 +55,21 @@ impl FileEndpoint {
     pub fn post_action(
         mut self,
         handler: impl Fn(&Request) -> Result<ActionReply, ActionError> + Send + Sync + 'static,
+    ) -> Self {
+        self.duplicate |= self.post.is_some();
+        self.post = Some(Post::Action(Arc::new(move |request| {
+            match handler(request) {
+                Ok(reply) => Response::action(&reply),
+                Err(_) => Response::error(StatusCode::InternalServerError),
+            }
+        })));
+        self
+    }
+    /// Declares a revision-checked action whose response can include cookies.
+    /// Return Response::action for typed success/validation replies; guards still run first.
+    pub fn post_action_response(
+        mut self,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
     ) -> Self {
         self.duplicate |= self.post.is_some();
         self.post = Some(Post::Action(Arc::new(handler)));
@@ -134,10 +148,7 @@ impl FileEndpoint {
                         if reserved(request.path()) {
                             return Response::error(StatusCode::NotFound);
                         }
-                        let run = |request: &Request| match handler(request) {
-                            Ok(reply) => Response::action(&reply),
-                            Err(_) => Response::error(StatusCode::InternalServerError),
-                        };
+                        let run = |request: &Request| handler(request);
                         match &app {
                             Some(app) => {
                                 app.guarded_endpoint(request, &pattern_owned, &guards, run)

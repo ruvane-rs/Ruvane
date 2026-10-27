@@ -1,5 +1,15 @@
 # Security
 
+Alpha.47 adds [typed cookies](docs/cookies.md). Cookie pairs are validated before
+routing and callbacks; repeated names and malformed inputs fail closed. Response
+cookies are bounded host-only declarations with validated prefixes and attributes,
+separate Set-Cookie fields and explicit local HTTP opt-in. Cookie-bearing responses
+are no-store and send a fixed cache-reset signal containing no values. Navigator
+caches and prefetch work are retired on receipt. Cookie values never enter Wasm
+protocol fields implicitly; Debug redacts cookie data and credential headers.
+This provides cookie transport, not signing, sessions, TLS or authentication.
+
+
 Alpha.46 adds [native route guards](docs/route-guards.md). Inherited and local
 callbacks run after request validation and before page caches, persistent restore,
 loaders and endpoint mutation. Denials stop execution; Private bypasses public

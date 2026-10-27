@@ -137,7 +137,9 @@ impl Router {
             route.method == Method::Get && segments_overlap(&route.segments, &segments)
         }))
     }
-    pub(crate) fn post_action_response(
+    /// Registers a revision-checked POST action with cookie-capable responses.
+    /// Use Response::action for the typed body; origin, MIME and form checks still apply.
+    pub fn post_action_response(
         &mut self,
         path: impl Into<String>,
         handler: impl Fn(&Request) -> Response + Send + Sync + 'static,

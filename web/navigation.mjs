@@ -16,7 +16,7 @@ function entry(url, x, y) { return { version: 1, url, x: position(x), y: positio
 function saved(value, url) { const item = value?.[KEY]; return item?.version === 1 && item.url === url ? { x: position(item.x), y: position(item.y) } : null; }
 /** Returns a conservative expiration only for the explicit public response profile. */
 export function cacheFreshness(response, ttlMs, startedAt) {
-  if (response.status !== 200 || response.redirected) return null;
+  if (response.status !== 200 || response.redirected || response.headers.get("ruvane-cache-reset") !== null) return null;
   const control = response.headers.get("cache-control")?.toLowerCase().split(",").map(part => part.trim());
   if (!control || control.length !== 3 || control.filter(part => part === "public").length !== 1 || control.filter(part => part === "must-revalidate").length !== 1) return null;
   const ages = control.filter(part => /^max-age=[1-9][0-9]{0,2}$/.test(part)); if (ages.length !== 1) return null;
@@ -354,6 +354,14 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     if (url === undefined) { cache.clear(); bytesHeld = 0; } else remove(url);
     cancelJobs(reason,url); cancelNavigation(reason,url);
   }
+  function cookiesChanged(response, keep=null) {
+    if(response.headers.get("ruvane-cache-reset")===null)return false;
+    generation = generation === null || generation === Number.MAX_SAFE_INTEGER ? null : generation + 1;
+    cache.clear();bytesHeld=0;cancelJobs("invalidated");
+    if(pending!==keep)cancelNavigation("invalidated");
+    clearFeedback();lastFailure=null;
+    return true;
+  }
   function updated() { clearFeedback();lastFailure=null;blocked = true; invalidate(undefined,"invalidated"); status.textContent = "Application updated. Reload to continue."; }
   function schedule() { if (!pumpQueued) { pumpQueued = true; queueMicrotask(() => { pumpQueued = false; pump(); }); } }
   const headers = token => ({ Accept: token ? NAVIGATION_STREAM_MEDIA_TYPE : NAVIGATION_MEDIA_TYPE, ...(token ? {"Ruvane-Stream-Token":token} : {}), ...(runtime.applicationRevision ? { "Ruvane-Application-Revision": runtime.applicationRevision } : {}) });
@@ -364,6 +372,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     const timer = setTimeout(() => job.controller.abort(),timeoutMs);
     try {
       const response = await request(job.url,job.controller.signal);
+      if(cookiesChanged(response))return;
       if (response.status === 409 && jobs.get(job.url) === job) { updated(); return; }
       const expires = cacheFreshness(response,cacheTtlMs,began);
       if (expires === null) { finishJob(job,"skipped"); return; }
@@ -475,7 +484,7 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
     if (mode !== "start" && !started) return Promise.reject(failure());
     cancelNavigation("superseded"); cancelJobs("superseded");clearFeedback();lastFailure=null;
     const operation = { url, mode, abort:new AbortController(), expired:false, updated:false, reason:null, committing:false, changed:false }; pending = operation;
-    const version = generation, epoch = runtime.actionState().epoch;
+    let version = generation;const epoch = runtime.actionState().epoch;
     status.textContent = "Loading…"; outlet.setAttribute("aria-busy","true");
     showFeedback(url,"loading");
     const timer = setTimeout(() => { operation.expired = true; operation.abort.abort(); },timeoutMs);
@@ -489,6 +498,8 @@ export function createNavigator(runtime, { outlet, scope = document, status, tim
           let token=null;
           if(progressive&&mode!=="start"){if(nextStreamToken===Number.MAX_SAFE_INTEGER)throw failure();token=String(++nextStreamToken);}
           const response = await request(url,operation.abort.signal,token); operation.updated = response.status === 409;
+          const current = !disposed && pending===operation && !operation.abort.signal.aborted && version===generation && epoch===runtime.actionState().epoch;
+          if(cookiesChanged(response,current?operation:null)&&current){version=generation;resetLayouts=true;}
           if (operation.updated) { blocked = true; invalidate(); }
           if(response.headers.get("content-type")===NAVIGATION_STREAM_MEDIA_TYPE){
             if(!token)throw failure();

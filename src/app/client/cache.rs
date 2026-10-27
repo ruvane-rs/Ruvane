@@ -95,22 +95,24 @@ impl App {
         &self,
         index: usize,
         request: &Request,
-    ) -> Result<Access, Response> {
+    ) -> Result<Access, Box<Response>> {
         if self.pages[index].server_cache.max_age_seconds().is_none() || request.cache_bypass() {
             return Ok(Access::Bypass);
         }
         let Some(cache) = &self.server_cache else {
             return Ok(Access::Bypass);
         };
-        let url = Self::target(request).map_err(|error| self.client_failure(request, error))?;
+        let url =
+            Self::target(request).map_err(|error| Box::new(self.client_failure(request, error)))?;
         cache
             .access(
-                self.cache_namespace.ok_or_else(Self::cache_busy)?,
+                self.cache_namespace
+                    .ok_or_else(|| Box::new(Self::cache_busy()))?,
                 index,
                 &url,
                 &self.pages[index].server_cache,
             )
-            .map_err(|_| Self::cache_busy())
+            .map_err(|_| Box::new(Self::cache_busy()))
     }
     pub(super) fn cache_busy() -> Response {
         Response::error(StatusCode::ServiceUnavailable)

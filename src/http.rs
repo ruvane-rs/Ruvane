@@ -35,11 +35,12 @@ pub enum Method {
 /// Paths and queries retain their original ASCII percent encoding. Routing
 /// matches raw segments without normalizing the path. Query values and matched
 /// dynamic captures have separate, strictly decoded accessors.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Request {
     method: Method,
     target: String,
     headers: Vec<(String, String)>,
+    cookies: crate::Cookies,
     pub(crate) params: Vec<(String, String)>,
     pub(crate) query_params: Query,
     pub(crate) content_length: Option<u64>,
@@ -53,6 +54,7 @@ impl Request {
             method: Method::Get,
             target: url.as_str().into(),
             headers: Vec::new(),
+            cookies: crate::Cookies::default(),
             params,
             query_params: Query::default(),
             content_length: None,
@@ -65,6 +67,7 @@ impl Request {
             method: Method::Get,
             target: self.target.clone(),
             headers: Vec::new(),
+            cookies: crate::Cookies::default(),
             params: self.params.clone(),
             query_params: self.query_params.clone(),
             content_length: None,
@@ -82,6 +85,12 @@ impl Request {
         self.guard_private
             || self.header("cookie").is_some()
             || self.header("authorization").is_some()
+    }
+
+    /// Returns cookies validated before routing or application callbacks.
+    /// These are untrusted values, never authentication claims.
+    pub fn cookies(&self) -> &crate::Cookies {
+        &self.cookies
     }
 
     /// Returns the path without its query string.
@@ -136,6 +145,36 @@ impl Request {
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
+    }
+}
+
+impl fmt::Debug for Request {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let headers = self
+            .headers
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name,
+                    if matches!(name.as_str(), "cookie" | "authorization") {
+                        "[redacted]"
+                    } else {
+                        value.as_str()
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("target", &self.target)
+            .field("headers", &headers)
+            .field("cookies", &self.cookies)
+            .field("params", &self.params)
+            .field("query_params", &self.query_params)
+            .field("content_length", &self.content_length)
+            .field("form", &self.form)
+            .field("guard_private", &self.guard_private)
+            .finish()
     }
 }
 
@@ -251,6 +290,7 @@ pub struct Response {
     location: Option<InternalUrl>,
     navigation_cache: crate::NavigationCachePolicy,
     navigation_variance: bool,
+    cookies: Vec<crate::Cookie>,
 }
 
 #[derive(Clone, Debug)]
@@ -332,7 +372,10 @@ impl Response {
     }
     /// The effective response cache directive. Only successful typed pages can opt in.
     pub fn cache_control(&self) -> String {
-        if self.status == StatusCode::Ok && self.content_type == crate::NAVIGATION_MEDIA_TYPE {
+        if self.cookies.is_empty()
+            && self.status == StatusCode::Ok
+            && self.content_type == crate::NAVIGATION_MEDIA_TYPE
+        {
             self.navigation_cache.header()
         } else {
             "no-store".into()
@@ -365,6 +408,7 @@ impl Response {
             location: None,
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
+            cookies: Vec::new(),
         }
     }
 
@@ -378,6 +422,7 @@ impl Response {
             location: None,
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
+            cookies: Vec::new(),
         }
     }
 
@@ -414,6 +459,7 @@ impl Response {
             location: None,
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
+            cookies: Vec::new(),
         }
     }
 
@@ -426,6 +472,7 @@ impl Response {
             location: None,
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
+            cookies: Vec::new(),
         }
     }
 
@@ -459,6 +506,7 @@ impl Response {
             location: None,
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
+            cookies: Vec::new(),
         }
     }
 
@@ -500,6 +548,41 @@ impl Response {
         self
     }
 
+    /// Appends one validated cookie. Repeated name/path pairs and exceeded budgets fail atomically.
+    /// Cookie changes force no-store and signal navigation cache invalidation without exposing values.
+    pub fn add_cookie(&mut self, cookie: crate::Cookie) -> Result<(), crate::CookieError> {
+        use crate::{CookieError, MAX_RESPONSE_COOKIE_BYTES, MAX_RESPONSE_COOKIES};
+        if self.cookies.len() == MAX_RESPONSE_COOKIES {
+            return Err(CookieError::TooManyCookies);
+        }
+        if self.cookies.iter().any(|existing| {
+            existing.name() == cookie.name() && existing.cookie_path() == cookie.cookie_path()
+        }) {
+            return Err(CookieError::DuplicateCookie);
+        }
+        let bytes = self
+            .cookies
+            .iter()
+            .map(|entry| entry.wire_line().len())
+            .sum::<usize>()
+            + cookie.wire_line().len();
+        if bytes > MAX_RESPONSE_COOKIE_BYTES {
+            return Err(CookieError::TooLarge);
+        }
+        self.cookies.push(cookie);
+        self.navigation_cache = crate::NavigationCachePolicy::no_store();
+        Ok(())
+    }
+    /// Adds one cookie using the same checks as add_cookie.
+    pub fn with_cookie(mut self, cookie: crate::Cookie) -> Result<Self, crate::CookieError> {
+        self.add_cookie(cookie)?;
+        Ok(self)
+    }
+    /// Validated response cookies, in header emission order.
+    pub fn cookies(&self) -> &[crate::Cookie] {
+        &self.cookies
+    }
+
     pub(crate) fn wire_headers(&self, allowed: &str) -> String {
         let allow = if self.status == StatusCode::MethodNotAllowed {
             format!("Allow: {allowed}\r\n")
@@ -515,13 +598,23 @@ impl Response {
         } else {
             format!("Content-Length: {}\r\n", self.body().len())
         };
+        let cookies = if self.cookies.is_empty() {
+            String::new()
+        } else {
+            let mut fields = String::from("Ruvane-Cache-Reset: cookies\r\n");
+            for cookie in &self.cookies {
+                fields.push_str(&cookie.wire_line());
+            }
+            fields
+        };
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}\r\n",
             self.status,
             self.content_type,
             framing,
             self.cache_control(),
             self.csp,
+            cookies,
             allow,
             location,
             if self.navigation_variance {
@@ -636,6 +729,9 @@ pub(crate) fn parse(
         {
             return Err(BadRequest);
         }
+        if name.eq_ignore_ascii_case("cookie") && value.len() > crate::MAX_COOKIE_HEADER_BYTES + 1 {
+            return Err(RequestHeaderFieldsTooLarge);
+        }
         headers.push((
             name.to_ascii_lowercase(),
             value.trim_matches([' ', '\t']).to_owned(),
@@ -684,9 +780,17 @@ pub(crate) fn parse(
         }
         _ => return Err(NotImplemented),
     };
+    let cookies =
+        crate::Cookies::parse(header("cookie").unwrap_or("")).map_err(|error| match error {
+            crate::CookieError::TooLarge | crate::CookieError::TooManyCookies => {
+                RequestHeaderFieldsTooLarge
+            }
+            _ => BadRequest,
+        })?;
     Ok(Request {
         method,
         target: target.to_owned(),
+        cookies,
         headers,
         params: Vec::new(),
         // The route selects query decoding later; check raw URI syntax here.
