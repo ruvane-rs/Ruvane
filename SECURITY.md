@@ -1,5 +1,16 @@
 # Security
 
+Alpha.49 adds opt-in [session CSRF tokens](docs/csrf.md). Tokens use independent
+256-bit OS randomness and remain bound to one live session generation. Native forms
+use a reserved hidden field; configured browser actions fetch an empty same-origin,
+no-store token response before each POST. A failed token fetch sends no mutation.
+Missing, malformed, ambiguous, cross-session and retired claims fail closed before
+protected handlers. Session rotation replaces issued tokens atomically; revoke,
+expiry and clear remove them. Tokens do not enter navigation packets, snapshots or
+Wasm state. Debug masks token values. Keep native token forms out of public/static
+artifacts; protection requires explicit guards and does not address XSS or credential
+verification. Existing Host, Origin, MIME, body and revision checks remain active.
+
 Alpha.48 adds [native memory sessions](docs/sessions.md), with OS-generated opaque
 256-bit identifiers, server-only bounded data, cookie-only lookup and monotonic
 idle/absolute expiry. Rotation retires old generations without extending the
@@ -8,7 +19,7 @@ concurrently rotated family. Native guards fail invalid sessions closed before
 page caches/loaders. The supported source is the macOS or Linux x86_64/aarch64
 kernel random device; errors never fall back to application-generated randomness.
 State is memory-only and assumes protected process memory. This supplies session
-lifecycle primitives, not credential verification, CSRF tokens or production TLS.
+lifecycle primitives; credential verification and production TLS remain application work.
 
 
 Alpha.47 adds [typed cookies](docs/cookies.md). Cookie pairs are validated before

@@ -106,8 +106,9 @@ The policy follows the source/target origin comparison described by
 [OWASP](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#using-standard-headers-to-verify-origin).
 It constrains browser cross-origin submissions. It does not authenticate users,
 authorize resources or stop a non-browser client from forging headers. Trusted
-same-origin scripts can also submit. No sessions, cookies or cryptographic tokens
-are introduced. A caller using a raw HTTP client must send the correct Origin.
+same-origin scripts can also submit. Add the opt-in [session CSRF guard](csrf.md)
+to cookie-authenticated mutations; origin validation alone supplies no token.
+A caller using a raw HTTP client must send the correct Origin.
 
 ## Body profile and failures
 

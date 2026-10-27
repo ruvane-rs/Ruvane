@@ -118,5 +118,6 @@ fn load(context:&ruvane::PageContext<'_>)->Result<ruvane::ClientPageData,ruvane:
   await file("session-stats/route.rs",`pub fn route()->ruvane::FileEndpoint {ruvane::FileEndpoint::new().get(|_|{
  let stats=crate::session_server::store().stats().unwrap();ruvane::Response::text(format!("{} {} {} {}",stats.entries,stats.data_bytes,crate::session_server::LOADS.load(std::sync::atomic::Ordering::SeqCst),crate::session_server::cache().stats().unwrap().entries))
 })}\n`);
+  if(options.prepare)await options.prepare(project);
  }});
 }

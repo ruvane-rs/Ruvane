@@ -76,6 +76,8 @@ invalidation without exposing Set-Cookie values to the runtime.
 [Native memory sessions](docs/sessions.md) add OS-generated opaque identifiers,
 bounded server-only data, idle/absolute expiration, atomic rotation and revocation.
 Session guards integrate with private page delivery and typed cookies.
+[Session CSRF tokens](docs/csrf.md) protect native forms and Wasm actions with
+independent OS-generated tokens, generation checks and automatic same-origin retrieval.
 
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
 URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
@@ -750,7 +752,8 @@ headers; a metadata manifest cannot enforce them.
 
 Form query decoding is selected by route registration, never inferred from
 request fields. Native POST actions require same-origin verification and bounded
-form bodies. No uploads, authentication, sessions or CSRF tokens are provided.
+form bodies. Session CSRF protection is opt-in; see [CSRF tokens](docs/csrf.md). Uploads and
+credential verification are not provided.
 Do not place secrets in GET fields. See [server forms](docs/post-forms.md).
 
 Embedded assets are explicitly selected application data, not a filesystem

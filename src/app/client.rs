@@ -92,6 +92,7 @@ pub struct ClientRuntime {
     shell: fn(Html) -> Html,
     stylesheets: Vec<InternalUrl>,
     development: Option<crate::Development>,
+    csrf_endpoint: Option<InternalUrl>,
 }
 impl ClientRuntime {
     /// Attaches a trusted, bounded Wasm module with the same exported revision.
@@ -105,6 +106,7 @@ impl ClientRuntime {
             shell: |children| children,
             stylesheets: Vec::new(),
             development: None,
+            csrf_endpoint: None,
         })
     }
     /// Sets a common shell. It must not depend on the current route or page title.
@@ -112,6 +114,24 @@ impl ClientRuntime {
     pub fn shell(mut self, shell: fn(Html) -> Html) -> Self {
         self.shell = shell;
         self
+    }
+    /// Fetches a fresh session CSRF token at this same-origin GET endpoint before each action.
+    /// The endpoint must return `Response::csrf_token`; URL queries are forbidden.
+    pub fn csrf_endpoint(mut self, url: InternalUrl) -> Result<Self, AppError> {
+        if url.as_str().contains('?') {
+            return Err(AppError::InvalidPage);
+        }
+        self.csrf_endpoint = Some(url);
+        Ok(self)
+    }
+    fn csrf_attribute(&self) -> String {
+        let mut attribute = String::new();
+        if let Some(url) = &self.csrf_endpoint {
+            attribute.push_str(" data-ruvane-csrf=\"");
+            crate::html::escape_into(&mut attribute, url.as_str());
+            attribute.push('"');
+        }
+        attribute
     }
     /// Enables local CLI diagnostics and guarded full-document reloads.
     /// Production builds must leave this unset.
@@ -717,8 +737,9 @@ impl App {
         let mut body = String::from("<div id=\"ruvane-application\" data-ruvane-module=\"");
         body.push_str(&runtime.asset("app.wasm"));
         body.push_str(&format!(
-            "\" data-ruvane-revision=\"{}\">",
-            runtime.revision
+            "\" data-ruvane-revision=\"{}\"{}>",
+            runtime.revision,
+            runtime.csrf_attribute()
         ));
         let content = crate::fragment([
             crate::element(crate::Tag::P)

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.0-alpha.49 — Unreleased
+
+- Add independent OS-generated CSRF tokens bound to native session generations,
+  lazy issuance, atomic rotation and removal on revoke, expiry or clear.
+- Add a CSRF guard that rejects invalid POST claims before mutation, with keyed
+  token lookup and no idle refresh on rejected verification.
+- Add typed native hidden fields separate from business data, duplicate/ambiguous
+  claim rejection, redacted Debug and empty no-store token responses.
+- Let configured Wasm actions fetch a fresh same-origin token before every POST;
+  failed preflights send no mutation and do not mark the action outcome uncertain.
+- Preserve the existing HTTP checks, dependency-free workspace, ABI v11, 22 exports
+  and four runtime assets.
+
 ## 0.1.0-alpha.48 — Unreleased
 
 - Add bounded native memory sessions with 256-bit OS-generated identifiers,

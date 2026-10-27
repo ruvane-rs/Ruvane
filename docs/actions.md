@@ -176,3 +176,9 @@ policy. The revision is not authorization. See [interactive applications](intera
 Alpha.20 runtime action epochs invalidate navigation data at start and completion.
 Uncertain outcomes pause storage and prefetch until document reload. Ordinary
 foreground reads remain available. See [navigation cache](navigation-cache.md).
+
+Alpha.49 adds opt-in [session CSRF protection](csrf.md). Configure a token endpoint
+on `ClientRuntime` and protect mutation routes with `SessionStore::csrf_guard()`.
+The bridge retrieves a fresh same-origin token before each action. Failed token
+retrieval sends no POST and leaves no uncertain mutation; failures after sending
+retain the existing conservative behavior.

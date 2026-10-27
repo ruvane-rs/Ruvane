@@ -57,15 +57,20 @@ fn decode(raw: &str, multiline: bool) -> Result<String, FormError> {
 ///
 /// CRLF becomes LF in values. Tabs and LF are permitted; other controls are
 /// rejected. Query parameters are parsed separately and are never merged here.
+/// The reserved CSRF field is retained separately and omitted from business accessors.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FormData {
     pairs: Vec<(String, String)>,
+    csrf: Option<Result<crate::CsrfToken, crate::CsrfError>>,
 }
 
 impl FormData {
     /// Adds a unique field to an outgoing request.
     pub fn field(mut self, name: &str, value: &str) -> Result<Self, FormError> {
         valid_name(name)?;
+        if name == crate::CSRF_FORM_FIELD {
+            return Err(FormError::InvalidName);
+        }
         if self.pairs.len() == MAX_QUERY_PAIRS {
             return Err(FormError::TooManyFields);
         }
@@ -84,8 +89,12 @@ impl FormData {
         self.pairs.push((name.to_owned(), value.to_owned()));
         Ok(self)
     }
-    /// Serializes fields without changing their values or encoding them twice.
+    /// Serializes outgoing business fields without encoding them twice.
+    /// Parsed security submissions cannot be forwarded as outgoing action data.
     pub fn encode(&self) -> Result<String, FormError> {
+        if self.csrf.is_some() {
+            return Err(FormError::InvalidName);
+        }
         let mut output = String::new();
         for (name, value) in &self.pairs {
             let pair = format!("{}={}", crate::url::encode(name), crate::url::encode(value));
@@ -120,18 +129,31 @@ impl FormData {
             return Ok(form);
         }
         for pair in raw.split('&') {
-            if form.pairs.len() == MAX_QUERY_PAIRS {
-                return Err(FormError::TooManyFields);
-            }
             let (key, value) = pair.split_once('=').ok_or(FormError::InvalidEncoding)?;
             let key = decode(key, false)?;
             valid_name(&key)?;
+            if key == crate::CSRF_FORM_FIELD {
+                if form.csrf.is_some() {
+                    return Err(FormError::DuplicateName);
+                }
+                form.csrf = Some(crate::CsrfToken::parse(&decode(value, true)?));
+                continue;
+            }
+            if form.pairs.len() == MAX_QUERY_PAIRS {
+                return Err(FormError::TooManyFields);
+            }
             if form.pairs.iter().any(|(name, _)| name == &key) {
                 return Err(FormError::DuplicateName);
             }
             form.pairs.push((key, decode(value, true)?));
         }
         Ok(form)
+    }
+
+    pub(crate) fn csrf_claim(&self) -> Option<Result<&crate::CsrfToken, crate::CsrfError>> {
+        self.csrf
+            .as_ref()
+            .map(|claim| claim.as_ref().map_err(|error| *error))
     }
 
     /// Looks up a decoded value by its exact field name.
@@ -211,6 +233,7 @@ pub struct PostForm {
     action: InternalUrl,
     fields: Vec<Field>,
     submit: String,
+    csrf: Option<crate::CsrfToken>,
 }
 
 impl PostForm {
@@ -223,11 +246,15 @@ impl PostForm {
             action,
             fields: Vec::new(),
             submit: "Submit".into(),
+            csrf: None,
         })
     }
 
     fn add(mut self, name: String, control: Control) -> Result<Self, FormError> {
         valid_name(&name)?;
+        if name == crate::CSRF_FORM_FIELD {
+            return Err(FormError::InvalidName);
+        }
         if self.fields.iter().any(|field| field.name == name) {
             return Err(FormError::DuplicateName);
         }
@@ -239,6 +266,15 @@ impl PostForm {
             control,
             invalid: false,
         });
+        Ok(self)
+    }
+
+    /// Adds the reserved hidden CSRF field. Render only in private, uncached documents.
+    pub fn csrf(mut self, token: crate::CsrfToken) -> Result<Self, FormError> {
+        if self.csrf.is_some() {
+            return Err(FormError::DuplicateName);
+        }
+        self.csrf = Some(token);
         Ok(self)
     }
 
@@ -339,6 +375,11 @@ impl PostForm {
         html.push_str(
             "\" enctype=\"application/x-www-form-urlencoded\" accept-charset=\"UTF-8\" novalidate>",
         );
+        if let Some(token) = self.csrf {
+            html.push_str("<input type=\"hidden\" name=\"_ruvane_csrf\" value=\"");
+            escape_into(&mut html, token.as_str());
+            html.push_str("\">");
+        }
         for field in self.fields {
             let (label, tag) = match &field.control {
                 Control::Text {

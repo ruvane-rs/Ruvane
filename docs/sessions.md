@@ -155,6 +155,7 @@ contains a bearer value; do not log it. See [OWASP session management](https://c
 Previously cloned data or an already authorized in-flight response cannot be
 recalled by revocation. Applications must check resource-level authorization, and
 must keep retained shells public. Session guards do not make pre-rendered artifacts
-private. Accounts, password verification, CSRF tokens, rate limiting and production
+private. Add the opt-in [session CSRF guard](csrf.md) for mutations.
+Accounts, password verification, rate limiting and production
 TLS remain separate work. The included local demo opens an explicitly labeled
 demo session and does not authenticate real users.

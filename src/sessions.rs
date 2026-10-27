@@ -1,4 +1,6 @@
-use crate::{Cookie, GuardDecision, Request, RouteGuard, SameSite};
+use crate::{
+    Cookie, CsrfToken, GuardDecision, Method, Request, Response, RouteGuard, SameSite, StatusCode,
+};
 use std::{
     collections::HashMap,
     fmt,
@@ -229,9 +231,11 @@ struct Record {
     data: SessionData,
     touched: Instant,
     expires: Instant,
+    csrf: Option<CsrfToken>,
 }
 struct State {
     records: HashMap<[u8; SESSION_ID_BYTES], Record>,
+    csrf_index: HashMap<CsrfToken, u64>,
     bytes: usize,
     next: u64,
     entropy: Entropy,
@@ -248,16 +252,42 @@ impl State {
     }
     fn prune(&mut self, now: Instant, limits: SessionLimits) {
         self.records.retain(|_, record| {
-            now < record.expires
+            let live = now < record.expires
                 && now.saturating_duration_since(record.touched)
-                    < Duration::from_secs(limits.idle.into())
+                    < Duration::from_secs(limits.idle.into());
+            if !live {
+                if let Some(token) = &record.csrf {
+                    self.csrf_index.remove(token);
+                }
+            }
+            live
         });
         self.bytes = self.records.values().map(|record| record.data.bytes).sum();
     }
     fn fresh_token(&mut self) -> Result<[u8; SESSION_ID_BYTES], SessionError> {
         for _ in 0..4 {
             let token = self.entropy.read()?;
-            if token != [0; SESSION_ID_BYTES] && !self.records.contains_key(&token) {
+            if token != [0; SESSION_ID_BYTES]
+                && !self.records.contains_key(&token)
+                && !self.csrf_index.contains_key(&CsrfToken::from_bytes(&token))
+            {
+                return Ok(token);
+            }
+        }
+        Err(SessionError::EntropyUnavailable)
+    }
+    fn fresh_csrf(
+        &mut self,
+        pending: Option<&[u8; SESSION_ID_BYTES]>,
+    ) -> Result<CsrfToken, SessionError> {
+        for _ in 0..4 {
+            let bytes = self.entropy.read()?;
+            let token = CsrfToken::from_bytes(&bytes);
+            if bytes != [0; SESSION_ID_BYTES]
+                && pending != Some(&bytes)
+                && !self.records.contains_key(&bytes)
+                && !self.csrf_index.contains_key(&token)
+            {
                 return Ok(token);
             }
         }
@@ -283,6 +313,34 @@ impl fmt::Debug for Session {
     }
 }
 impl Session {
+    /// Issues or reads this generation's independent CSRF token without refreshing idle time.
+    /// Stale, revoked or expired handles return None. Entropy failure leaves state unchanged.
+    pub fn csrf_token(&self) -> Result<Option<CsrfToken>, SessionError> {
+        let Some(inner) = self.inner.upgrade() else {
+            return Ok(None);
+        };
+        let mut state = inner.state.lock().map_err(|_| SessionError::Unavailable)?;
+        let now = state.now();
+        state.prune(now, inner.limits);
+        let Some(record) = state
+            .records
+            .get(&self.token)
+            .filter(|record| record.family == self.family)
+        else {
+            return Ok(None);
+        };
+        if let Some(token) = &record.csrf {
+            return Ok(Some(token.clone()));
+        }
+        let token = state.fresh_csrf(None)?;
+        state
+            .records
+            .get_mut(&self.token)
+            .ok_or(SessionError::Unavailable)?
+            .csrf = Some(token.clone());
+        state.csrf_index.insert(token.clone(), self.family);
+        Ok(Some(token))
+    }
     /// Clones bounded server data if this generation is still current and live.
     /// This does not extend idle lifetime. Previously cloned data cannot be recalled.
     pub fn data(&self) -> Result<Option<SessionData>, SessionError> {
@@ -345,6 +403,7 @@ impl SessionStore {
                 limits,
                 state: Mutex::new(State {
                     records: HashMap::new(),
+                    csrf_index: HashMap::new(),
                     bytes: 0,
                     next: 0,
                     entropy,
@@ -387,6 +446,7 @@ impl SessionStore {
                 data,
                 touched: now,
                 expires,
+                csrf: None,
             },
         );
         Ok(cookie)
@@ -457,6 +517,7 @@ impl SessionStore {
         let bytes = state.bytes - current.data.bytes
             + data.as_ref().map_or(current.data.bytes, |data| data.bytes);
         let expires = current.expires;
+        let has_csrf = current.csrf.is_some();
         if bytes > self.inner.limits.bytes {
             return Err(SessionError::Full);
         }
@@ -467,10 +528,22 @@ impl SessionStore {
             &token,
             seconds.min(self.inner.limits.absolute.into()) as u32,
         )?;
+        let csrf = if has_csrf {
+            Some(state.fresh_csrf(Some(&token))?)
+        } else {
+            None
+        };
         let mut record = state
             .records
             .remove(&session.token)
             .ok_or(SessionError::Unavailable)?;
+        if let Some(old) = record.csrf.take() {
+            state.csrf_index.remove(&old);
+        }
+        if let Some(token) = &csrf {
+            state.csrf_index.insert(token.clone(), record.family);
+        }
+        record.csrf = csrf;
         record.touched = now;
         if let Some(data) = data {
             record.data = data;
@@ -502,6 +575,9 @@ impl SessionStore {
             .remove(&token)
             .ok_or(SessionError::Unavailable)?;
         state.bytes -= record.data.bytes;
+        if let Some(token) = record.csrf {
+            state.csrf_index.remove(&token);
+        }
         Ok(true)
     }
     /// Builds the matching removal cookie. Revoke server state separately when a handle resolves.
@@ -518,6 +594,73 @@ impl SessionStore {
             Err(_) => GuardDecision::Unavailable,
         })
     }
+    /// Verifies a POST claim against its live cookie session and current generation.
+    /// Missing, malformed, ambiguous and cross-session claims fail without refreshing idle time.
+    pub fn verify_csrf(&self, request: &Request) -> Result<bool, SessionError> {
+        if request.method() != Method::Post {
+            return Ok(false);
+        }
+        let Some(id) = request
+            .cookies()
+            .get(self.cookie.name())
+            .and_then(parse_token)
+        else {
+            return Ok(false);
+        };
+        let Ok(Some(claim)) = request.csrf_token() else {
+            return Ok(false);
+        };
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| SessionError::Unavailable)?;
+        let now = state.now();
+        state.prune(now, self.inner.limits);
+        let Some(family) = state.csrf_index.get(&claim).copied() else {
+            return Ok(false);
+        };
+        let Some(record) = state
+            .records
+            .get_mut(&id)
+            .filter(|record| record.family == family)
+        else {
+            return Ok(false);
+        };
+        record.touched = now;
+        Ok(true)
+    }
+    /// Requires a live session and, for POST, its CSRF token before the route handler.
+    /// Accepted requests are Private; rejection is 403, store failure is 503.
+    pub fn csrf_guard(&self) -> RouteGuard {
+        let store = self.clone();
+        RouteGuard::new(move |context| {
+            let request = context.request();
+            let result = if request.method() == Method::Post {
+                store.verify_csrf(request)
+            } else {
+                store.lookup(request).map(|session| session.is_some())
+            };
+            match result {
+                Ok(true) => GuardDecision::Private,
+                Ok(false) => GuardDecision::Forbidden,
+                Err(_) => GuardDecision::Unavailable,
+            }
+        })
+    }
+    /// Serves the current token in an empty no-store response, or no token when anonymous.
+    /// Register a GET endpoint; this is not an authentication or login endpoint.
+    pub fn csrf_response(&self, request: &Request) -> Response {
+        match self
+            .lookup(request)
+            .and_then(|session| session.map_or(Ok(None), |session| session.csrf_token()))
+        {
+            Ok(token) => Response::csrf_token(token),
+            Err(_) => {
+                Response::text("Service unavailable").with_status(StatusCode::ServiceUnavailable)
+            }
+        }
+    }
     /// Revokes all families and preserves the monotonically increasing internal family counter.
     pub fn clear(&self) -> Result<usize, SessionError> {
         let mut state = self
@@ -527,6 +670,7 @@ impl SessionStore {
             .map_err(|_| SessionError::Unavailable)?;
         let count = state.records.len();
         state.records.clear();
+        state.csrf_index.clear();
         state.bytes = 0;
         Ok(count)
     }

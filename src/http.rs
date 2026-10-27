@@ -93,6 +93,19 @@ impl Request {
         &self.cookies
     }
 
+    /// Reads the reserved header or form claim, never URL parameters.
+    /// A claim still requires verification against the current session.
+    pub fn csrf_token(&self) -> Result<Option<crate::CsrfToken>, crate::CsrfError> {
+        let header = self.header(crate::CSRF_HEADER);
+        let form = self.form.as_ref().and_then(FormData::csrf_claim);
+        match (header, form) {
+            (Some(_), Some(_)) => Err(crate::CsrfError::Ambiguous),
+            (Some(value), None) => crate::CsrfToken::parse(value).map(Some),
+            (None, Some(claim)) => claim.cloned().map(Some),
+            (None, None) => Ok(None),
+        }
+    }
+
     /// Returns the path without its query string.
     pub fn path(&self) -> &str {
         self.target.split_once('?').map_or(&self.target, |(p, _)| p)
@@ -116,7 +129,7 @@ impl Request {
         self.query_params.mode()
     }
 
-    /// Validated POST fields, separate from URL query parameters.
+    /// Validated business POST fields, separate from query parameters and the reserved CSRF field.
     pub fn form_data(&self) -> Option<&FormData> {
         self.form.as_ref()
     }
@@ -156,7 +169,10 @@ impl fmt::Debug for Request {
             .map(|(name, value)| {
                 (
                     name,
-                    if matches!(name.as_str(), "cookie" | "authorization") {
+                    if matches!(
+                        name.as_str(),
+                        "cookie" | "authorization" | "ruvane-csrf-token"
+                    ) {
                         "[redacted]"
                     } else {
                         value.as_str()
@@ -291,6 +307,7 @@ pub struct Response {
     navigation_cache: crate::NavigationCachePolicy,
     navigation_variance: bool,
     cookies: Vec<crate::Cookie>,
+    csrf_token: Option<crate::CsrfToken>,
 }
 
 #[derive(Clone, Debug)]
@@ -373,6 +390,7 @@ impl Response {
     /// The effective response cache directive. Only successful typed pages can opt in.
     pub fn cache_control(&self) -> String {
         if self.cookies.is_empty()
+            && self.csrf_token.is_none()
             && self.status == StatusCode::Ok
             && self.content_type == crate::NAVIGATION_MEDIA_TYPE
         {
@@ -398,6 +416,14 @@ impl Response {
         };
         response
     }
+    /// Returns an empty, no-store token response for a same-origin runtime.
+    /// `None` represents an anonymous session; protected actions must still reject it.
+    pub fn csrf_token(token: Option<crate::CsrfToken>) -> Self {
+        let mut response = Self::text("");
+        response.content_type = crate::CSRF_MEDIA_TYPE;
+        response.csrf_token = token;
+        response
+    }
     /// Creates a successful plain-text response.
     pub fn text(body: impl Into<String>) -> Self {
         Self {
@@ -409,6 +435,7 @@ impl Response {
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
             cookies: Vec::new(),
+            csrf_token: None,
         }
     }
 
@@ -423,6 +450,7 @@ impl Response {
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
             cookies: Vec::new(),
+            csrf_token: None,
         }
     }
 
@@ -460,6 +488,7 @@ impl Response {
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
             cookies: Vec::new(),
+            csrf_token: None,
         }
     }
 
@@ -473,6 +502,7 @@ impl Response {
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
             cookies: Vec::new(),
+            csrf_token: None,
         }
     }
 
@@ -507,6 +537,7 @@ impl Response {
             navigation_cache: crate::NavigationCachePolicy::no_store(),
             navigation_variance: false,
             cookies: Vec::new(),
+            csrf_token: None,
         }
     }
 
@@ -598,6 +629,9 @@ impl Response {
         } else {
             format!("Content-Length: {}\r\n", self.body().len())
         };
+        let csrf = self.csrf_token.as_ref().map_or_else(String::new, |token| {
+            format!("{}: {}\r\n", crate::CSRF_HEADER, token.as_str())
+        });
         let cookies = if self.cookies.is_empty() {
             String::new()
         } else {
@@ -608,13 +642,14 @@ impl Response {
             fields
         };
         format!(
-            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}\r\n",
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\n{}Connection: close\r\nX-Content-Type-Options: nosniff\r\nCache-Control: {}\r\nContent-Security-Policy: {}\r\n{}{}{}{}{}\r\n",
             self.status,
             self.content_type,
             framing,
             self.cache_control(),
             self.csp,
             cookies,
+            csrf,
             allow,
             location,
             if self.navigation_variance {

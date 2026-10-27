@@ -17,7 +17,7 @@ try{
   const snapshot=segments?null:readInitialSnapshot(root);
   const rawTime=root.getAttribute("data-ruvane-timeout");
   if(segments&&(!/^[1-9][0-9]{0,4}$/.test(rawTime??"")||Number(rawTime)>60000))throw new Error("Invalid Ruvane document deadline");
-  runtime=await createRuntime(root.getAttribute("data-ruvane-module"),{applicationRevision:root.getAttribute("data-ruvane-revision")});
+  runtime=await createRuntime(root.getAttribute("data-ruvane-module"),{applicationRevision:root.getAttribute("data-ruvane-revision"),csrfEndpoint:root.getAttribute("data-ruvane-csrf")});
   if(retired){runtime.dispose();throw new Error("Ruvane document retired");}
   let initial={snapshot,parents:[]};
   if(segments){

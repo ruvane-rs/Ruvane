@@ -4,6 +4,8 @@ export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, v
 const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a" });
 const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision", "ruvane_page_validate", "ruvane_boundary_mount"];
 export const ACTION_MEDIA_TYPE = "application/vnd.ruvane.action";
+export const CSRF_MEDIA_TYPE = "application/vnd.ruvane.csrf";
+export const CSRF_HEADER = "Ruvane-Csrf-Token";
 export const NAVIGATION_MEDIA_TYPE = "application/vnd.ruvane.page";
 export const NAVIGATION_STREAM_MEDIA_TYPE = "application/vnd.ruvane.page-stream";
 /** Validates a complete origin-relative target, without URL normalization. */
@@ -402,10 +404,12 @@ function matchDom(nodes, root, inert) {
 }
 /** Loads a module and manages mounted or hydrated views. Disposal is final. */
 export async function createRuntime(url, options = {}) {
-  if (!options || typeof options !== "object" || Object.keys(options).some(key => key !== "actionTimeoutMs" && key !== "applicationRevision")) throw invalid();
+  if (!options || typeof options !== "object" || Object.keys(options).some(key => !["actionTimeoutMs", "applicationRevision", "csrfEndpoint"].includes(key))) throw invalid();
   const actionTimeout = options.actionTimeoutMs ?? 10000;
   if (!Number.isInteger(actionTimeout) || actionTimeout < 1 || actionTimeout > 10000) throw invalid();
   const applicationRevision = options.applicationRevision ?? null;
+  const csrfEndpoint = options.csrfEndpoint ?? null;
+  if (csrfEndpoint !== null && (internalTarget(csrfEndpoint).includes("?"))) throw invalid();
   if (applicationRevision !== null && (typeof applicationRevision !== "string" || !/^(0|[1-9][0-9]{0,19})$/.test(applicationRevision) || BigInt(applicationRevision) > 0xffffffffffffffffn)) throw invalid();
   let exports = await loadModule(url);
   if (applicationRevision !== null && exports.ruvane_application_revision() !== BigInt(applicationRevision)) throw new Error("Ruvane application revision mismatch");
@@ -423,7 +427,7 @@ export async function createRuntime(url, options = {}) {
   function forget(id, preserve = false, disable = true) {
     const view = views.get(id);
     if (!view) return;
-    if (view.action) { const operation = view.action; clearTimeout(operation.timer); operation.controller.abort(); view.action = null; endAction(operation,true); }
+    if (view.action) { const operation = view.action; clearTimeout(operation.timer); operation.controller.abort(); view.action = null; endAction(operation,operation.sent); }
     view.resolveIdle?.("disposed"); view.idlePromise = null; view.resolveIdle = null;
     for (const [node, listeners] of view.listeners) for (const [type, listener] of listeners) view.nodes.get(node).element.removeEventListener(type, listener);
     view.listeners.clear();
@@ -500,13 +504,29 @@ export async function createRuntime(url, options = {}) {
       drain(id, "dispatch");
       settle(view, kind ? ["", "network", "timeout", "protocol", "rejected"][kind] : bytes[4] === 1 ? "validation" : "success"); delivered = true;
     } catch { stop(true); }
-    finally { busy = false; endAction(operation,!delivered || kind !== 0); }
+    finally { busy = false; endAction(operation,operation.sent && (!delivered || kind !== 0)); }
   }
   class TransportError extends Error { constructor(kind) { super("Ruvane action transport failed"); this.kind = kind; } }
   async function perform(id, view, operation) {
     let bytes = null, kind = 0;
     try {
-      const response = await fetch(operation.url, { method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": ACTION_MEDIA_TYPE, ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) }, body: operation.body, signal: operation.controller.signal });
+      const headers = { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": ACTION_MEDIA_TYPE, ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) };
+      if (csrfEndpoint !== null) {
+        const tokenResponse = await fetch(csrfEndpoint, { method: "GET", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers: { "Accept": CSRF_MEDIA_TYPE, ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) }, signal: operation.controller.signal });
+        const token = tokenResponse.headers.get(CSRF_HEADER);
+        if (tokenResponse.status !== 200 || tokenResponse.headers.get("content-type")?.trim().toLowerCase() !== CSRF_MEDIA_TYPE || tokenResponse.headers.get("cache-control")?.trim().toLowerCase() !== "no-store" || tokenResponse.headers.get("content-length") !== "0" || (token !== null && !/^[a-f0-9]{64}$/.test(token))) {
+          await tokenResponse.body?.cancel(); throw new TransportError(4);
+        }
+        if (tokenResponse.body) {
+          const reader = tokenResponse.body.getReader();
+          try { while (true) { const part = await reader.read(); if (part.done) break; if (part.value.length) { await reader.cancel(); throw new TransportError(4); } } }
+          finally { reader.releaseLock(); }
+        }
+        if (token !== null) headers[CSRF_HEADER] = token;
+      }
+      if (operation.controller.signal.aborted) throw new TransportError(4);
+      operation.sent = true;
+      const response = await fetch(operation.url, { method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers, body: operation.body, signal: operation.controller.signal });
       if (![200, 400].includes(response.status)) { await response.body?.cancel(); throw new TransportError(4); }
       if (response.headers.get("content-type")?.trim().toLowerCase() !== ACTION_MEDIA_TYPE || !response.body) { await response.body?.cancel(); throw new TransportError(3); }
       const length = response.headers.get("content-length");
@@ -521,7 +541,7 @@ export async function createRuntime(url, options = {}) {
       bytes = new Uint8Array(total); let offset = 0;
       for (const part of parts) { bytes.set(part, offset); offset += part.length; }
       if (bytes.length < 7 || bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 65 || bytes[3] !== 49 || bytes[4] !== (response.status === 400 ? 1 : 0)) throw new TransportError(3);
-    } catch (error) { bytes = null; kind = operation.timedOut ? 2 : error instanceof TransportError ? error.kind : 1; }
+    } catch (error) { bytes = null; kind = !operation.sent ? 4 : operation.timedOut ? 2 : error instanceof TransportError ? error.kind : 1; }
     finally { clearTimeout(operation.timer); }
     deliver(id, view, operation, bytes, kind);
   }
@@ -534,7 +554,7 @@ export async function createRuntime(url, options = {}) {
       }finally{view.rejecting=false;}
       return;
     }
-    const operation = { ...command, controller: new AbortController(), timer: null, timedOut: false, ended: false };
+    const operation = { ...command, controller: new AbortController(), timer: null, timedOut: false, ended: false, sent: false };
     view.action = operation; view.lastAction = command.request; actionChanged();
     operation.timer = setTimeout(() => { operation.timedOut = true; operation.controller.abort(); }, actionTimeout);
     void perform(id, view, operation);
