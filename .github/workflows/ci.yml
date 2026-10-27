@@ -46,6 +46,7 @@ jobs:
           node --test browser/tests/csrf.test.mjs
           node --test browser/tests/rate-limit.test.mjs
           node --test browser/tests/json.test.mjs
+          node --test browser/tests/multipart.test.mjs
           node --test browser/tests/progressive.test.mjs
           node --test browser/tests/initial.test.mjs
           node --test browser/tests/layout-snapshot.test.mjs

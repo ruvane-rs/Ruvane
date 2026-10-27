@@ -20,6 +20,7 @@ mod json;
 mod json_client;
 mod layout_snapshot;
 mod metadata;
+mod multipart;
 mod navigation;
 mod navigation_snapshot;
 mod page_route;
@@ -82,7 +83,9 @@ pub use file_routes::{
     MAX_FILE_ROUTE_FILES, MAX_FILE_ROUTE_MODULE_BYTES, MAX_FILE_ROUTE_SOURCE_BYTES,
     MAX_FILE_ROUTE_TOTAL_BYTES,
 };
-pub use forms::{FormData, FormError, GetForm, MAX_FORM_NAME_BYTES, MAX_POST_BODY_BYTES, PostForm};
+pub use forms::{
+    FormData, FormError, GetForm, MAX_FORM_NAME_BYTES, MAX_POST_BODY_BYTES, MultipartForm, PostForm,
+};
 #[doc(hidden)]
 pub use guards::guard_component;
 pub use guards::{
@@ -108,6 +111,11 @@ pub use layout_snapshot::{LayoutSnapshot, MAX_LAYOUT_SNAPSHOT_BYTES};
 pub use metadata::{
     CanonicalUrl, MAX_METADATA_TEXT_BYTES, MAX_SITE_ORIGIN_BYTES, Metadata, MetadataError,
     OriginError, Robots, SiteOrigin,
+};
+pub use multipart::{
+    MAX_MULTIPART_BOUNDARY_BYTES, MAX_MULTIPART_BYTES, MAX_MULTIPART_FIELDS,
+    MAX_MULTIPART_HEADER_BYTES, MAX_MULTIPART_PARTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_NAME_BYTES,
+    MultipartData, MultipartError, UploadedFile,
 };
 pub use navigation::{
     BROWSER_NAVIGATION_MODULE, MAX_CLIENT_LAYOUT_DEPTH, MAX_NAVIGATION_BYTES,

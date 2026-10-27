@@ -26,7 +26,7 @@ pub enum Method {
     Get,
     /// Retrieve the headers of a representation without sending its body.
     Head,
-    /// Submit a body in the explicit route's form or JSON profile.
+    /// Submit a body in the explicit route's form, multipart or JSON profile.
     Post,
     /// Replace a resource using an explicit JSON body.
     Put,
@@ -58,6 +58,7 @@ pub struct Request {
     pub(crate) content_length: Option<u64>,
     pub(crate) form: Option<FormData>,
     pub(crate) json: Option<crate::JsonValue>,
+    pub(crate) multipart: Option<crate::MultipartData>,
     pub(crate) guard_private: bool,
     if_match: Option<crate::IfMatch>,
 }
@@ -74,6 +75,7 @@ impl Request {
             content_length: None,
             form: None,
             json: None,
+            multipart: None,
             guard_private: false,
             if_match: None,
         }
@@ -89,6 +91,7 @@ impl Request {
             content_length: None,
             form: None,
             json: None,
+            multipart: None,
             guard_private: false,
             if_match: None,
         }
@@ -121,6 +124,14 @@ impl Request {
     pub fn csrf_token(&self) -> Result<Option<crate::CsrfToken>, crate::CsrfError> {
         let header = self.header(crate::CSRF_HEADER);
         let form = self.form.as_ref().and_then(FormData::csrf_claim);
+        let multipart = self
+            .multipart
+            .as_ref()
+            .and_then(|data| data.fields().csrf_claim());
+        if form.is_some() && multipart.is_some() {
+            return Err(crate::CsrfError::Ambiguous);
+        }
+        let form = form.or(multipart);
         match (header, form) {
             (Some(_), Some(_)) => Err(crate::CsrfError::Ambiguous),
             (Some(value), None) => crate::CsrfToken::parse(value).map(Some),
@@ -152,12 +163,16 @@ impl Request {
         self.query_params.mode()
     }
 
-    /// Validated business POST fields, separate from query parameters and the reserved CSRF field.
+    /// Validated URL-encoded business fields, separate from multipart, query and CSRF data.
     pub fn form_data(&self) -> Option<&FormData> {
         self.form.as_ref()
     }
+    /// Borrows parsed native multipart data. Other route profiles and sanitized reads return None.
+    pub fn multipart(&self) -> Option<&crate::MultipartData> {
+        self.multipart.as_ref()
+    }
     /// Borrows the validated body of an explicitly registered JSON mutation route.
-    /// GET/HEAD, DELETE, form routes and sanitized background requests return None.
+    /// GET/HEAD, DELETE, form/multipart routes and sanitized background requests return None.
     pub fn json(&self) -> Option<&crate::JsonValue> {
         self.json.as_ref()
     }
@@ -233,6 +248,7 @@ impl fmt::Debug for Request {
             .field("content_length", &self.content_length)
             .field("form", &self.form)
             .field("json", &self.json)
+            .field("multipart", &self.multipart)
             .field("guard_private", &self.guard_private)
             .finish()
     }
@@ -1020,6 +1036,7 @@ pub(crate) fn parse(
         content_length,
         form: None,
         json: None,
+        multipart: None,
         guard_private: false,
         if_match,
     })

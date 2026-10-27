@@ -150,6 +150,40 @@ impl FormData {
         Ok(form)
     }
 
+    pub(crate) fn insert_multipart(&mut self, name: &str, bytes: &[u8]) -> Result<(), FormError> {
+        valid_name(name)?;
+        if bytes.len() > MAX_COMPONENT_BYTES * 2 {
+            return Err(FormError::TooLarge);
+        }
+        let value = std::str::from_utf8(bytes)
+            .map_err(|_| FormError::InvalidUtf8)?
+            .replace("\r\n", "\n");
+        if value.len() > MAX_COMPONENT_BYTES {
+            return Err(FormError::TooLarge);
+        }
+        if value
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
+        {
+            return Err(FormError::InvalidText);
+        }
+        if name == crate::CSRF_FORM_FIELD {
+            if self.csrf.is_some() {
+                return Err(FormError::DuplicateName);
+            }
+            self.csrf = Some(crate::CsrfToken::parse(&value));
+        } else {
+            if self.pairs.len() == MAX_QUERY_PAIRS {
+                return Err(FormError::TooManyFields);
+            }
+            if self.pairs.iter().any(|(key, _)| key == name) {
+                return Err(FormError::DuplicateName);
+            }
+            self.pairs.push((name.to_owned(), value));
+        }
+        Ok(())
+    }
+
     pub(crate) fn csrf_claim(&self) -> Option<Result<&crate::CsrfToken, crate::CsrfError>> {
         self.csrf
             .as_ref()
@@ -205,6 +239,9 @@ impl FormData {
 
 #[derive(Debug)]
 enum Control {
+    File {
+        label: String,
+    },
     Text {
         label: String,
         value: String,
@@ -234,6 +271,7 @@ pub struct PostForm {
     fields: Vec<Field>,
     submit: String,
     csrf: Option<crate::CsrfToken>,
+    multipart: bool,
 }
 
 impl PostForm {
@@ -247,6 +285,7 @@ impl PostForm {
             fields: Vec::new(),
             submit: "Submit".into(),
             csrf: None,
+            multipart: false,
         })
     }
 
@@ -257,6 +296,25 @@ impl PostForm {
         }
         if self.fields.iter().any(|field| field.name == name) {
             return Err(FormError::DuplicateName);
+        }
+        if self.multipart {
+            if matches!(control, Control::File { .. }) {
+                if self
+                    .fields
+                    .iter()
+                    .any(|field| matches!(field.control, Control::File { .. }))
+                {
+                    return Err(FormError::TooManyFiles);
+                }
+            } else if self
+                .fields
+                .iter()
+                .filter(|field| !matches!(field.control, Control::File { .. }))
+                .count()
+                == crate::MAX_MULTIPART_FIELDS
+            {
+                return Err(FormError::TooManyFields);
+            }
         }
         if self.fields.len() == MAX_QUERY_PAIRS {
             return Err(FormError::TooManyFields);
@@ -372,9 +430,11 @@ impl PostForm {
     pub fn render(self) -> Html {
         let mut html = String::from("<form method=\"post\" action=\"");
         escape_into(&mut html, self.action.as_str());
-        html.push_str(
-            "\" enctype=\"application/x-www-form-urlencoded\" accept-charset=\"UTF-8\" novalidate>",
-        );
+        html.push_str(if self.multipart {
+            "\" enctype=\"multipart/form-data\" accept-charset=\"UTF-8\" novalidate>"
+        } else {
+            "\" enctype=\"application/x-www-form-urlencoded\" accept-charset=\"UTF-8\" novalidate>"
+        });
         if let Some(token) = self.csrf {
             html.push_str("<input type=\"hidden\" name=\"_ruvane_csrf\" value=\"");
             escape_into(&mut html, token.as_str());
@@ -392,6 +452,7 @@ impl PostForm {
                         "<input type=\"text\""
                     },
                 ),
+                Control::File { label } => (Some(label), "<input type=\"file\""),
                 Control::Checkbox { label, .. } => (Some(label), "<input type=\"checkbox\""),
                 Control::Hidden(_) => (None, "<input type=\"hidden\""),
             };
@@ -413,6 +474,7 @@ impl PostForm {
                 });
             }
             match field.control {
+                Control::File { .. } => html.push('>'),
                 Control::Text {
                     value, multiline, ..
                 } => {
@@ -457,5 +519,96 @@ impl PostForm {
 impl From<PostForm> for Html {
     fn from(form: PostForm) -> Self {
         form.render()
+    }
+}
+
+/// A native UTF-8 multipart form with at most sixteen text controls and one file control.
+/// Files have no default value, multiple-selection flag or automatic storage destination.
+#[must_use]
+pub struct MultipartForm {
+    inner: PostForm,
+}
+impl std::fmt::Debug for MultipartForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MultipartForm")
+            .field("controls", &self.inner.fields.len())
+            .finish_non_exhaustive()
+    }
+}
+impl MultipartForm {
+    /// Creates an empty multipart POST form. The action cannot contain a query.
+    pub fn new(action: InternalUrl) -> Result<Self, FormError> {
+        let mut inner = PostForm::new(action)?;
+        inner.multipart = true;
+        Ok(Self { inner })
+    }
+    /// Adds the single labeled file control. Size and type checks belong to the server.
+    pub fn file(
+        mut self,
+        name: impl Into<String>,
+        label: impl Into<String>,
+    ) -> Result<Self, FormError> {
+        let label = label.into();
+        valid_label(&label)?;
+        self.inner = self.inner.add(name.into(), Control::File { label })?;
+        Ok(self)
+    }
+    /// Adds a labeled single-line text control.
+    pub fn text(
+        mut self,
+        name: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, FormError> {
+        self.inner = self.inner.text(name, label, value)?;
+        Ok(self)
+    }
+    /// Adds a labeled multiline text control.
+    pub fn textarea(
+        mut self,
+        name: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, FormError> {
+        self.inner = self.inner.textarea(name, label, value)?;
+        Ok(self)
+    }
+    /// Adds a labeled checkbox.
+    pub fn checkbox(
+        mut self,
+        name: impl Into<String>,
+        label: impl Into<String>,
+        checked: bool,
+    ) -> Result<Self, FormError> {
+        self.inner = self.inner.checkbox(name, label, checked)?;
+        Ok(self)
+    }
+    /// Adds an untrusted hidden business field.
+    pub fn hidden(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, FormError> {
+        self.inner = self.inner.hidden(name, value)?;
+        Ok(self)
+    }
+    /// Adds the separate reserved CSRF field. Render only in private uncached documents.
+    pub fn csrf(mut self, token: crate::CsrfToken) -> Result<Self, FormError> {
+        self.inner = self.inner.csrf(token)?;
+        Ok(self)
+    }
+    /// Marks one declared visible control as invalid.
+    pub fn invalid(mut self, name: &str) -> Result<Self, FormError> {
+        self.inner = self.inner.invalid(name)?;
+        Ok(self)
+    }
+    /// Sets the unnamed submit button label.
+    pub fn submit_label(mut self, label: impl Into<String>) -> Result<Self, FormError> {
+        self.inner = self.inner.submit_label(label)?;
+        Ok(self)
+    }
+    /// Renders escaped native controls. File inputs cannot be prepopulated.
+    pub fn render(self) -> Html {
+        self.inner.render()
     }
 }

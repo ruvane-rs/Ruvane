@@ -126,3 +126,7 @@ ordinary `--interactive` starters retain their explicit Router declarations.
 so `Response::action(&reply).with_cookie(cookie)` can emit typed action bytes and
 cookie fields together. It keeps the same POST preflight, revision enforcement
 and inherited/local guards as post_action. See [typed cookies](cookies.md).
+
+Alpha.56 adds `post_multipart` in the same POST slot. Request::multipart separates
+bounded text and one binary file; inherited session/CSRF/quota guards run before
+the handler. See [native multipart forms](multipart.md).

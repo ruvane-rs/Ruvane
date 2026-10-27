@@ -5,7 +5,7 @@ is to bring server-side and browser-side development into a single stack,
 without third-party dependencies.
 
 The current alpha provides HTML rendering, a bounded loopback HTTP server,
-fixed and dynamic GET/HEAD routes, explicit form/JSON mutations, typed parameter conversion, validated
+fixed and dynamic GET/HEAD routes, explicit form/multipart/JSON mutations, typed parameter conversion, validated
 internal links, embedded CSS/image assets, typed native GET forms, page
 metadata, canonical URLs, a fixed browser Content Security Policy, and bounded
 static export with a local preview. The `ruvane` CLI creates projects, watches
@@ -86,6 +86,11 @@ native forms, navigation and Wasm actions. Browser ABI v13 keeps 22 exports.
 [Bounded JSON APIs](docs/json.md) add immutable values, exact number text,
 checked construction and explicit native POST/PUT/PATCH JSON routes plus bodyless DELETE. Fixed no-store
 responses and the existing session/CSRF/quota guards support the task API example.
+
+[Native multipart forms](docs/multipart.md) add explicit multipart POST routes,
+UTF-8 text fields and one opaque file up to 32 KiB within the existing 64 KiB
+request budget. Native file controls integrate with session/CSRF/quota guards;
+the bounded demo keeps uploads in process memory.
 
 [Component JSON requests](docs/json-client.md) add explicit GET/POST/PUT/PATCH/DELETE
 from Rust/Wasm, exact response decoding, retained versions, bounded transport and

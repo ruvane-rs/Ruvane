@@ -2,7 +2,7 @@ use crate::html::escape_into;
 use crate::{Html, InternalUrl, MAX_COMPONENT_BYTES, MAX_QUERY_PAIRS};
 use std::fmt;
 mod post;
-pub use post::{FormData, MAX_POST_BODY_BYTES, PostForm};
+pub use post::{FormData, MAX_POST_BODY_BYTES, MultipartForm, PostForm};
 
 /// Maximum ASCII bytes in a declared form field name.
 pub const MAX_FORM_NAME_BYTES: usize = 64;
@@ -18,6 +18,8 @@ pub enum FormError {
     DuplicateName,
     /// The form would exceed the query pair count budget.
     TooManyFields,
+    /// Multipart forms accept at most one file control.
+    TooManyFiles,
     /// A value, label, or button contains a control character.
     InvalidText,
     /// A visible label or submit button has no non-whitespace text.
@@ -37,6 +39,7 @@ impl fmt::Display for FormError {
             Self::InvalidName => "invalid form field name",
             Self::DuplicateName => "duplicate form field name",
             Self::TooManyFields => "form field count limit exceeded",
+            Self::TooManyFiles => "form file count limit exceeded",
             Self::InvalidText => "control character in form text",
             Self::EmptyLabel => "form label must not be empty",
             Self::TooLarge => "form text byte limit exceeded",

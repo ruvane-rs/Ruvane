@@ -67,6 +67,7 @@ struct Route {
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum MutationBody {
+    Multipart,
     Form,
     Json,
     Empty,
@@ -274,6 +275,17 @@ impl Router {
     ) -> Result<(), RouteError> {
         self.register(path.into(), Method::Post, QueryMode::Uri, handler)
     }
+    /// Registers a bounded native multipart POST with same-origin and body checks.
+    /// Parsed text and one binary file are available through Request::multipart before guards.
+    pub fn post_multipart(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.register(path.into(), Method::Post, QueryMode::Uri, handler)?;
+        self.routes.last_mut().unwrap().body = MutationBody::Multipart;
+        Ok(())
+    }
     /// Registers an explicit UTF-8 JSON POST with mandatory same-origin and bounded-body checks.
     /// The body is validated before guards/handlers and is available through Request::json.
     /// This shares the POST slot with forms/actions and does not opt into the RVA1 protocol.
@@ -461,6 +473,15 @@ impl Router {
             }
             return Ok(0);
         }
+        if selected.unwrap().body == MutationBody::Multipart {
+            crate::multipart::boundary(request.header("content-type").ok_or(UnsupportedMediaType)?)
+                .map_err(|_| UnsupportedMediaType)?;
+            let length = request.content_length.ok_or(LengthRequired)?;
+            if length > maximum.min(crate::MAX_MULTIPART_BYTES) as u64 {
+                return Err(ContentTooLarge);
+            }
+            return Ok(length as usize);
+        }
         let mut content_type = request
             .header("content-type")
             .ok_or(UnsupportedMediaType)?
@@ -506,6 +527,21 @@ impl Router {
             .select(request.method(), request.path())
             .ok_or(StatusCode::NotFound)?;
         match route.body {
+            MutationBody::Multipart => {
+                request.multipart = Some(
+                    crate::MultipartData::parse(
+                        request
+                            .header("content-type")
+                            .ok_or(StatusCode::UnsupportedMediaType)?,
+                        bytes,
+                    )
+                    .map_err(|error| match error {
+                        crate::MultipartError::Limit => StatusCode::ContentTooLarge,
+                        _ => StatusCode::BadRequest,
+                    })?,
+                );
+            }
+
             MutationBody::Empty => {
                 if !bytes.is_empty() {
                     return Err(StatusCode::ContentTooLarge);
@@ -568,10 +604,18 @@ impl Router {
                 MutationBody::Empty => {
                     request.form.is_none()
                         && request.json.is_none()
+                        && request.multipart.is_none()
                         && request.content_length.is_none_or(|length| length == 0)
                 }
-                MutationBody::Form => request.form.is_some() && request.json.is_none(),
-                MutationBody::Json => request.json.is_some() && request.form.is_none(),
+                MutationBody::Multipart => {
+                    request.multipart.is_some() && request.form.is_none() && request.json.is_none()
+                }
+                MutationBody::Form => {
+                    request.form.is_some() && request.json.is_none() && request.multipart.is_none()
+                }
+                MutationBody::Json => {
+                    request.json.is_some() && request.form.is_none() && request.multipart.is_none()
+                }
             }
         {
             return Response::error(StatusCode::Forbidden);

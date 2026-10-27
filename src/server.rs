@@ -31,7 +31,7 @@ pub struct ServerConfig {
     pub max_request_line_bytes: usize,
     /// Header fields, from 1 to 1024; defaults to 64.
     pub max_headers: usize,
-    /// Encoded form or JSON mutation body bytes, from 0 to 64 KiB; defaults to 64 KiB.
+    /// Encoded form, multipart or JSON mutation body bytes, from 0 to 64 KiB; defaults to 64 KiB.
     pub max_request_body_bytes: usize,
     /// Application response body bytes, from 64 to 64 MiB; defaults to 1 MiB.
     /// Buffered oversize results become 500; streaming bodies stop before exceeding it.

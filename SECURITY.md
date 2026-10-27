@@ -771,3 +771,9 @@ or killed owner cannot be silently reopened: after all owners have stopped,
 recover_empty discards old output and partial transactions. Static handles must
 explicitly close after work settles. This is a single-process cache, not durable
 application data, authentication, a transaction manager or distributed storage.
+
+Native multipart parsing accepts one bounded opaque file and separated UTF-8
+fields. It does not write files or decode their contents. Supplied names and MIME
+types are untrusted; applications choose storage identifiers and authorization.
+The demo stores at most eight files in shared memory and supplies no real account
+authentication or public upload mount. See [multipart limits](docs/multipart.md).

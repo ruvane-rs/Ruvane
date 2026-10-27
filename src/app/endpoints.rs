@@ -4,6 +4,7 @@ use crate::{ActionError, ActionReply};
 type Handler = Arc<dyn Fn(&Request) -> Response + Send + Sync>;
 #[derive(Clone)]
 enum Post {
+    Multipart(Handler),
     Form(Handler),
     Json(Handler),
     Action(Handler),
@@ -53,6 +54,16 @@ impl FileEndpoint {
     ) -> Self {
         self.duplicate |= self.post.is_some();
         self.post = Some(Post::Form(Arc::new(handler)));
+        self
+    }
+    /// Declares a native multipart POST with bounded fields and one binary file.
+    /// Session, CSRF and quota guards run after parsing and before the handler.
+    pub fn post_multipart(
+        mut self,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Self {
+        self.duplicate |= self.post.is_some();
+        self.post = Some(Post::Multipart(Arc::new(handler)));
         self
     }
     /// Declares a JSON POST with the Router's origin, MIME, body and JSON validation.
@@ -170,7 +181,7 @@ impl FileEndpoint {
         }
         if let Some(post) = &self.post {
             match post {
-                Post::Form(handler) | Post::Json(handler) => {
+                Post::Form(handler) | Post::Json(handler) | Post::Multipart(handler) => {
                     let handler = Arc::clone(handler);
                     let (app, guards, pattern_owned) =
                         (app.clone(), self.guards.clone(), pattern.to_owned());
@@ -189,7 +200,9 @@ impl FileEndpoint {
                             }
                         }
                     };
-                    if matches!(post, Post::Json(_)) {
+                    if matches!(post, Post::Multipart(_)) {
+                        router.post_multipart(pattern, handle)?;
+                    } else if matches!(post, Post::Json(_)) {
                         router.post_json(pattern, handle)?;
                     } else {
                         router.post_form(pattern, handle)?;

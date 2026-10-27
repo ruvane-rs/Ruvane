@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.1.0-alpha.55 — Unreleased
+## 0.1.0-alpha.56 — Unreleased
+
+- Add explicit Router/FileEndpoint multipart POSTs with bounded text fields and
+  one opaque 32 KiB file, under the existing 64 KiB HTTP body ceiling.
+- Parse binary framing without text conversion, reject duplicate namespaces and
+  unsafe filenames, and redact file metadata and payloads from Debug output.
+- Add MultipartForm native file controls and Request::multipart accessors, with
+  separate business fields and session-bound hidden/header CSRF verification.
+- Apply origin, framing, deadline, session and quota checks before upload handlers;
+  preserve atomic registration and exclude uploads from sanitized background reads.
+- Add a native memory-only demo capped at eight files, parser/network/CLI tests,
+  and binary native FormData coverage without a third-party dependency.
+- Retain ABI v13, 22 numeric exports, four core runtime assets and two local crates.
+
+## 0.1.0-alpha.55
 
 - Add component-owned GET/POST/PUT/PATCH/DELETE JSON requests with exact Rust
   decoding, explicit typed results, retained strong If-Match and bounded reports.

@@ -115,8 +115,9 @@ A caller using a raw HTTP client must send the correct Origin.
 POST requires one decimal Content-Length and `application/x-www-form-urlencoded`,
 optionally with a single `charset=UTF-8` parameter. MIME/charset spelling is case
 insensitive; the charset value may be quoted. Other parameters, media types and
-any Content-Encoding are rejected. Multipart, uploads, compression and chunked
-request bodies are unsupported.
+any Content-Encoding are rejected. Multipart uses separate explicit [multipart routes](multipart.md); it cannot
+switch a URL-encoded route's profile. Compression and chunked request bodies
+remain unsupported.
 
 The default and hard maximum body size is 64 KiB, lowered through
 `ServerConfig::max_request_body_bytes` (0..=65536). The request deadline covers

@@ -102,7 +102,8 @@ The browser's MIME checks require an appropriate stylesheet Content-Type;
 see the [Fetch Standard](https://fetch.spec.whatwg.org/#should-response-to-request-be-blocked-due-to-nosniff).
 
 PNG, JPEG, and WebP declarations do not prove that bytes are valid images or
-safe for a particular browser decoder. There is no upload pipeline or media
+safe for a particular browser decoder. The separate [native multipart profile](multipart.md) receives opaque file bytes;
+there is no media
 validator. The internal URL type restricts the helper's URL structure, not
 the subsequent actions of arbitrary application responses. Resource access
 and appropriate use of MIME types remain application responsibilities.

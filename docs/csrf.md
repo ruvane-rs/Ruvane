@@ -128,3 +128,7 @@ snapshots and action command bodies. Protected process memory and same-origin
 JavaScript remain trusted. CSRF tokens do not prevent XSS, authenticate users or
 replace production TLS. See the
 [OWASP CSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
+
+Native [multipart forms](multipart.md) use the same reserved hidden claim and
+header ambiguity checks. File parts cannot supply the claim, and business text
+accessors omit it. Guards run after bounded parsing and before upload handlers.
