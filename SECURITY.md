@@ -1,5 +1,17 @@
 # Security
 
+Alpha.51 adds opt-in [bounded JSON APIs](docs/json.md). Parsing and immutable
+construction enforce input/output bytes, depth, total values, members, strings
+and number-text limits. Decoded duplicate keys, invalid UTF-8, unpaired surrogates,
+extensions and trailing input fail closed. Number text is preserved without
+implicit f64 conversion. Explicit registration selects the body profile; MIME
+cannot switch it. Transport/JSON checks precede guards and handlers. JSON POSTs
+retain mandatory source validation; session CSRF uses only the dedicated header.
+Debug hides JSON request/response data and errors omit input fragments. Typed
+responses use no-store, nosniff and the blocking CSP. JSON is not safe inline HTML
+or JavaScript embedding or a substitute for schema validation and authorization.
+The loopback transport scope is unchanged.
+
 Alpha.50 adds opt-in [native request quotas](docs/rate-limits.md), with bounded
 token buckets, monotonic integer refill, shared clones and no eviction of active
 debt. Per-session keys use native store/family identities and survive identifier

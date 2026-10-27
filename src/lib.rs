@@ -15,6 +15,7 @@ mod forms;
 mod guards;
 mod html;
 mod http;
+mod json;
 mod layout_snapshot;
 mod metadata;
 mod navigation;
@@ -86,6 +87,10 @@ pub use html::{
 pub use http::{
     CONTENT_SECURITY_POLICY, INTERACTIVE_CONTENT_SECURITY_POLICY, MAX_RETRY_AFTER_SECONDS, Method,
     Request, Response, RetryAfter, StatusCode,
+};
+pub use json::{
+    JSON_MEDIA_TYPE, JsonError, JsonNumber, JsonValue, MAX_JSON_BYTES, MAX_JSON_DEPTH,
+    MAX_JSON_ITEMS, MAX_JSON_NUMBER_BYTES, MAX_JSON_STRING_BYTES, MAX_JSON_VALUES,
 };
 pub use layout_snapshot::{LayoutSnapshot, MAX_LAYOUT_SNAPSHOT_BYTES};
 pub use metadata::{

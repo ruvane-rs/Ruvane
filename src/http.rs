@@ -26,7 +26,7 @@ pub enum Method {
     Get,
     /// Retrieve the headers of a representation without sending its body.
     Head,
-    /// Submit a URL-encoded form to an explicit mutation route.
+    /// Submit a body in the explicit route's form or JSON profile.
     Post,
 }
 
@@ -45,6 +45,7 @@ pub struct Request {
     pub(crate) query_params: Query,
     pub(crate) content_length: Option<u64>,
     pub(crate) form: Option<FormData>,
+    pub(crate) json: Option<crate::JsonValue>,
     pub(crate) guard_private: bool,
 }
 
@@ -59,6 +60,7 @@ impl Request {
             query_params: Query::default(),
             content_length: None,
             form: None,
+            json: None,
             guard_private: false,
         }
     }
@@ -72,6 +74,7 @@ impl Request {
             query_params: self.query_params.clone(),
             content_length: None,
             form: None,
+            json: None,
             guard_private: false,
         }
     }
@@ -133,6 +136,11 @@ impl Request {
     pub fn form_data(&self) -> Option<&FormData> {
         self.form.as_ref()
     }
+    /// Borrows the validated body of an explicitly registered JSON POST route.
+    /// GET/HEAD, form routes and sanitized background requests return None.
+    pub fn json(&self) -> Option<&crate::JsonValue> {
+        self.json.as_ref()
+    }
 
     /// Returns a decoded dynamic path capture by name, if present.
     pub fn param(&self, name: &str) -> Option<&str> {
@@ -189,6 +197,7 @@ impl fmt::Debug for Request {
             .field("query_params", &self.query_params)
             .field("content_length", &self.content_length)
             .field("form", &self.form)
+            .field("json", &self.json)
             .field("guard_private", &self.guard_private)
             .finish()
     }
@@ -319,7 +328,7 @@ impl fmt::Display for StatusCode {
 ///
 /// Body lengths are serialized in bytes. HEAD sends the same content length
 /// as GET, but no body. There is no arbitrary header or raw HTML constructor.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[must_use]
 pub struct Response {
     status: StatusCode,
@@ -333,6 +342,28 @@ pub struct Response {
     csrf_token: Option<crate::CsrfToken>,
     retry_after: Option<RetryAfter>,
     action_rate_rejected: bool,
+}
+impl fmt::Debug for Response {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let body: &dyn fmt::Debug = if self.content_type == crate::JSON_MEDIA_TYPE {
+            &"[redacted JSON]"
+        } else {
+            &self.body
+        };
+        f.debug_struct("Response")
+            .field("status", &self.status)
+            .field("content_type", &self.content_type)
+            .field("body", body)
+            .field("csp", &self.csp)
+            .field("location", &self.location)
+            .field("navigation_cache", &self.navigation_cache)
+            .field("navigation_variance", &self.navigation_variance)
+            .field("cookies", &self.cookies)
+            .field("csrf_token", &self.csrf_token)
+            .field("retry_after", &self.retry_after)
+            .field("action_rate_rejected", &self.action_rate_rejected)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -353,6 +384,13 @@ impl AsRef<[u8]> for Body {
 }
 
 impl Response {
+    /// Returns validated UTF-8 JSON with fixed MIME, no-store and the blocking CSP.
+    /// JSON is data; this constructor does not permit HTML or JavaScript embedding.
+    pub fn json(value: &crate::JsonValue) -> Self {
+        let mut response = Self::text(value.encode());
+        response.content_type = crate::JSON_MEDIA_TYPE;
+        response
+    }
     /// Returns a generic no-store 429 response with a bounded Retry-After delta.
     /// This alone does not assert that an action handler has not run.
     pub fn too_many_requests(retry_after: RetryAfter) -> Self {
@@ -898,6 +936,7 @@ pub(crate) fn parse(
         query_params: Query::default(),
         content_length,
         form: None,
+        json: None,
         guard_private: false,
     })
 }

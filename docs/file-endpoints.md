@@ -33,9 +33,11 @@ or component factories.
 | `get_form` | GET and HEAD | Form-mode query | `Response` |
 | `post_form` | POST | Bounded URL-encoded form | `Response` |
 | `post_action` | POST | Bounded URL-encoded form | `Result<ActionReply, ActionError>` |
+| `post_action_response` | POST | Bounded URL-encoded form | Cookie-capable action `Response` |
+| `post_json` | POST | Bounded UTF-8 JSON | `Response` |
 
 One file can declare one GET handler and one POST handler. `get` and `get_form`
-share a method slot; `post_form` and `post_action` share the POST slot. Repeated
+share a method slot; all POST declarations share the POST slot. Repeated
 methods and empty declarations fail registration instead of replacing a handler.
 HEAD follows the existing read-only GET behavior and suppresses response bytes.
 URI queries preserve literal `+`; form queries decode it as a space.
@@ -71,8 +73,8 @@ from Wasm. Use a page declaration when an interactive page owns that URL.
 Framework route prefixes remain reserved. Literal `_ruvane` and `ruvane-runtime`
 prefixes are rejected. Dynamic endpoints cannot execute their handlers for those
 raw prefixes; known framework routes retain their normal dispatch. Method
-mismatches keep 405/Allow behavior. No extra verbs or request-body formats are
-introduced.
+mismatches keep 405/Allow behavior. Alpha.51 adds an explicit
+[JSON body profile](json.md); supported HTTP methods remain GET/HEAD/POST.
 
 POST endpoints reuse the Router's mandatory Origin comparison, Fetch Metadata,
 MIME, body/form budgets and absolute I/O deadlines. These checks do not authenticate

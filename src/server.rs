@@ -1,7 +1,6 @@
 use crate::http;
 use crate::{
-    FormData, FormError, MAX_POST_BODY_BYTES, Method, Response, Router, StatusCode, StreamContext,
-    StreamError,
+    MAX_POST_BODY_BYTES, Method, Response, Router, StatusCode, StreamContext, StreamError,
 };
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
@@ -32,7 +31,7 @@ pub struct ServerConfig {
     pub max_request_line_bytes: usize,
     /// Header fields, from 1 to 1024; defaults to 64.
     pub max_headers: usize,
-    /// Encoded POST body bytes, from 0 to 64 KiB; defaults to 64 KiB.
+    /// Encoded form or JSON POST body bytes, from 0 to 64 KiB; defaults to 64 KiB.
     pub max_request_body_bytes: usize,
     /// Application response body bytes, from 64 to 64 MiB; defaults to 1 MiB.
     /// Buffered oversize results become 500; streaming bodies stop before exceeding it.
@@ -300,10 +299,7 @@ fn serve(
                 job.accepted_at + config.request_timeout,
                 stopped,
             )?;
-            request.form = Some(FormData::parse(&body).map_err(|error| match error {
-                FormError::TooLarge | FormError::TooManyFields => StatusCode::ContentTooLarge,
-                _ => StatusCode::BadRequest,
-            })?);
+            router.parse_post(&mut request, &body)?;
         }
         Ok(request)
     }) {

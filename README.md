@@ -83,6 +83,10 @@ independent OS-generated tokens, generation checks and automatic same-origin ret
 token buckets, rotation-stable session quotas and typed 429 responses across
 native forms, navigation and Wasm actions. Browser ABI v12 keeps 22 exports.
 
+[Bounded JSON APIs](docs/json.md) add immutable values, exact number text,
+checked construction and explicit native POST JSON routes. Fixed no-store
+responses and the existing session/CSRF/quota guards support the task API example.
+
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
 URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
 

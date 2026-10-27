@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.51 — Unreleased
+
+- Add a std-only UTF-8 JSON parser and immutable bounded values, with arrays,
+  ordered objects, strings, booleans, null and exact number representations.
+- Enforce aggregate depth/value/output limits and container/string/number bounds;
+  reject decoded duplicate keys, invalid Unicode, extensions and trailing data.
+- Add checked explicit numeric conversions without implicit floating-point parsing.
+- Add Request::json, redacted JSON Debug and typed no-store responses with fixed
+  MIME, nosniff and the blocking CSP.
+- Add explicit Router/FileEndpoint JSON POSTs sharing the POST namespace, source
+  checks, deadlines and byte budgets; parse JSON before native guards.
+- Add the bounded task API example and cover session/header-CSRF/quota guards,
+  source-free bundles, concurrency and shared Rust/Wasm parser behavior.
+- Keep zero dependencies, ABI v12, 22 exports and four runtime assets.
+
 ## 0.1.0-alpha.50 — Unreleased
 
 - Add native std-only token buckets with validated burst/refill policies, monotonic

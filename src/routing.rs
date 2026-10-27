@@ -31,7 +31,7 @@ impl fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
-/// A router for GET/HEAD pages and explicit POST form mutations.
+/// A router for GET/HEAD pages and explicit form/JSON POST mutations.
 ///
 /// Exact paths take priority regardless of registration order. Overlapping
 /// dynamic patterns are rejected. Matching uses raw, case-sensitive segments;
@@ -63,6 +63,12 @@ struct Route {
     handler: Handler,
     query_mode: QueryMode,
     action: bool,
+    body: PostBody,
+}
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PostBody {
+    Form,
+    Json,
 }
 
 impl Route {
@@ -267,6 +273,18 @@ impl Router {
     ) -> Result<(), RouteError> {
         self.register(path.into(), Method::Post, QueryMode::Uri, handler)
     }
+    /// Registers an explicit UTF-8 JSON POST with mandatory same-origin and bounded-body checks.
+    /// The body is validated before guards/handlers and is available through Request::json.
+    /// This shares the POST slot with forms/actions and does not opt into the RVA1 protocol.
+    pub fn post_json(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.register(path.into(), Method::Post, QueryMode::Uri, handler)?;
+        self.routes.last_mut().unwrap().body = PostBody::Json;
+        Ok(())
+    }
 
     fn register(
         &mut self,
@@ -290,6 +308,7 @@ impl Router {
             dynamic,
             handler: Box::new(handler),
             action: false,
+            body: PostBody::Form,
             query_mode,
         };
         if dynamic
@@ -362,7 +381,8 @@ impl Router {
             ContentTooLarge, Forbidden, LengthRequired, MethodNotAllowed, NotFound,
             UnsupportedMediaType,
         };
-        if self.select(Method::Post, request.path()).is_none() {
+        let selected = self.select(Method::Post, request.path());
+        if selected.is_none() {
             return Err(if self.select(Method::Get, request.path()).is_some() {
                 MethodNotAllowed
             } else {
@@ -395,7 +415,11 @@ impl Router {
             .next()
             .unwrap_or("")
             .trim()
-            .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+            .eq_ignore_ascii_case(if selected.unwrap().body == PostBody::Json {
+                crate::JSON_MEDIA_TYPE
+            } else {
+                "application/x-www-form-urlencoded"
+            })
         {
             return Err(UnsupportedMediaType);
         }
@@ -418,6 +442,31 @@ impl Router {
             return Err(ContentTooLarge);
         }
         Ok(length as usize)
+    }
+    pub(crate) fn parse_post(&self, request: &mut Request, bytes: &[u8]) -> Result<(), StatusCode> {
+        let route = self
+            .select(Method::Post, request.path())
+            .ok_or(StatusCode::NotFound)?;
+        match route.body {
+            PostBody::Form => {
+                request.form = Some(crate::FormData::parse(bytes).map_err(|error| match error {
+                    crate::FormError::TooLarge | crate::FormError::TooManyFields => {
+                        StatusCode::ContentTooLarge
+                    }
+                    _ => StatusCode::BadRequest,
+                })?)
+            }
+            PostBody::Json => {
+                request.json = Some(crate::JsonValue::parse(bytes).map_err(|error| {
+                    if error.is_limit() {
+                        StatusCode::ContentTooLarge
+                    } else {
+                        StatusCode::BadRequest
+                    }
+                })?)
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn dispatch(&self, mut request: Request) -> Response {
@@ -451,7 +500,12 @@ impl Router {
             }
             return self.error_response(StatusCode::NotFound);
         };
-        if request.method() == Method::Post && request.form.is_none() {
+        if request.method() == Method::Post
+            && !match route.body {
+                PostBody::Form => request.form.is_some() && request.json.is_none(),
+                PostBody::Json => request.json.is_some() && request.form.is_none(),
+            }
+        {
             return Response::error(StatusCode::Forbidden);
         }
         if route.dynamic {

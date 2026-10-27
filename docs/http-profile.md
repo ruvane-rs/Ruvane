@@ -10,7 +10,7 @@ use behind a reverse proxy.
 ## Requests
 
 - HTTP/1.1, with exactly one space between request-line components.
-- GET, HEAD and explicitly registered POST form actions. Known unsupported
+- GET, HEAD and explicitly registered form or JSON POST routes. Known unsupported
   methods return 405 when the rest of the message fits this profile; unknown
   methods return 501. Allow reflects registered methods on a matching path,
   with the existing GET/HEAD fallback on unknown paths.
@@ -194,3 +194,7 @@ Alpha.47 adds [typed cookies](cookies.md). Requests reject malformed or repeated
 cookie names before callbacks, with separate count/byte limits. Responses can add
 bounded host-only Set-Cookie fields, preserve them on HEAD/303, and emit a fixed
 cookie cache-reset signal. Arbitrary header strings remain unsupported.
+
+Alpha.51 adds the explicit [bounded JSON profile](json.md). Body decoding is
+selected by route registration before native guards; Content-Type cannot change
+a route's profile. Existing source, framing, byte and deadline checks remain.

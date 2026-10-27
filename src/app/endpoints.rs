@@ -5,6 +5,7 @@ type Handler = Arc<dyn Fn(&Request) -> Response + Send + Sync>;
 #[derive(Clone)]
 enum Post {
     Form(Handler),
+    Json(Handler),
     Action(Handler),
 }
 
@@ -49,6 +50,16 @@ impl FileEndpoint {
     ) -> Self {
         self.duplicate |= self.post.is_some();
         self.post = Some(Post::Form(Arc::new(handler)));
+        self
+    }
+    /// Declares a JSON POST with the Router's origin, MIME, body and JSON validation.
+    /// Session, CSRF and quota guards run after parsing and before the handler.
+    pub fn post_json(
+        mut self,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Self {
+        self.duplicate |= self.post.is_some();
+        self.post = Some(Post::Json(Arc::new(handler)));
         self
     }
     /// Declares a typed POST action with the same checks and revision enforcement.
@@ -120,11 +131,11 @@ impl FileEndpoint {
         }
         if let Some(post) = &self.post {
             match post {
-                Post::Form(handler) => {
+                Post::Form(handler) | Post::Json(handler) => {
                     let handler = Arc::clone(handler);
                     let (app, guards, pattern_owned) =
                         (app.clone(), self.guards.clone(), pattern.to_owned());
-                    router.post_form(pattern, move |request| {
+                    let handle = move |request: &Request| {
                         if reserved(request.path()) {
                             Response::error(StatusCode::NotFound)
                         } else {
@@ -138,7 +149,12 @@ impl FileEndpoint {
                                 None => handler(request),
                             }
                         }
-                    })?;
+                    };
+                    if matches!(post, Post::Json(_)) {
+                        router.post_json(pattern, handle)?;
+                    } else {
+                        router.post_form(pattern, handle)?;
+                    }
                 }
                 Post::Action(handler) => {
                     let handler = Arc::clone(handler);
