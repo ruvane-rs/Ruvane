@@ -361,3 +361,303 @@ fn random_source_failure_and_repeated_identifiers_never_overwrite_an_existing_fi
         FileStoreError::Unavailable
     );
 }
+
+fn at(store: &FileStore, seconds: u64) {
+    store.0.time.store(seconds, Ordering::Relaxed);
+}
+const OP_TIME: u64 = 2_000_000_000;
+#[test]
+fn concurrent_replays_return_one_durable_file_and_no_foreign_result() {
+    let temp = Temp::new();
+    let store = temp.open();
+    at(&store, OP_TIME);
+    let a = owner("alpha");
+    let operation = store.upload_id(&a).unwrap();
+    let before = fs::read(temp.root().join("store.bin")).unwrap();
+    assert!(matches!(
+        store.upload_status(&a, operation).unwrap().state(),
+        FileUploadState::Unconfirmed
+    ));
+    assert_eq!(fs::read(temp.root().join("store.bin")).unwrap(), before);
+    let file = upload("exact.bin", b"\0\xff\r\n");
+    let handles = (0..12)
+        .map(|_| {
+            let store = store.clone();
+            let a = a.clone();
+            let file = file.clone();
+            std::thread::spawn(move || store.save_once(&a, operation, &file).unwrap())
+        })
+        .collect::<Vec<_>>();
+    let results = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap())
+        .collect::<Vec<_>>();
+    assert!(results.iter().all(|info| info == &results[0]));
+    assert_eq!(store.list(&a).unwrap().len(), 1);
+    let bytes = fs::read(temp.root().join("store.bin")).unwrap();
+    assert_eq!(store.save_once(&a, operation, &file).unwrap(), results[0]);
+    assert_eq!(fs::read(temp.root().join("store.bin")).unwrap(), bytes);
+    assert!(matches!(
+        store
+            .upload_status(&owner("beta"), operation)
+            .unwrap()
+            .state(),
+        FileUploadState::Expired
+    ));
+    drop(store);
+    let store = temp.open();
+    at(&store, OP_TIME + 10);
+    assert_eq!(store.save_once(&a, operation, &file).unwrap(), results[0]);
+    assert_eq!(
+        store.upload_status(&a, operation).unwrap().state(),
+        &FileUploadState::Stored(results[0].clone())
+    );
+}
+#[test]
+fn changed_input_and_deleted_results_cannot_reuse_an_operation() {
+    let temp = Temp::new();
+    let store = temp.open();
+    at(&store, OP_TIME);
+    let a = owner("alpha");
+    let operation = store.upload_id(&a).unwrap();
+    let file = upload("x.bin", b"abc");
+    let info = store.save_once(&a, operation, &file).unwrap();
+    let snapshot = fs::read(temp.root().join("store.bin")).unwrap();
+    for file in [
+        upload("other.bin", b"abc"),
+        upload("x.bin", b"abd"),
+        upload("x.bin", b"ab"),
+    ] {
+        assert_eq!(
+            store.save_once(&a, operation, &file),
+            Err(FileStoreError::OperationConflict)
+        );
+    }
+    assert_eq!(fs::read(temp.root().join("store.bin")).unwrap(), snapshot);
+    store.remove(&a, info.id()).unwrap();
+    assert_eq!(
+        store.upload_status(&a, operation).unwrap().state(),
+        &FileUploadState::Removed
+    );
+    assert_eq!(
+        store.save_once(&a, operation, &file),
+        Err(FileStoreError::OperationConflict)
+    );
+    assert!(store.list(&a).unwrap().is_empty());
+    drop(store);
+    let store = temp.open();
+    at(&store, OP_TIME + 5);
+    assert_eq!(
+        store.save_once(&a, operation, &file),
+        Err(FileStoreError::OperationConflict)
+    );
+}
+#[test]
+fn expiration_pruning_and_durable_clock_floor_prevent_old_key_reexecution() {
+    let temp = Temp::new();
+    let store = temp.open();
+    at(&store, OP_TIME);
+    let a = owner("alpha");
+    let operation = store.upload_id(&a).unwrap();
+    let file = upload("x", b"");
+    store.save_once(&a, operation, &file).unwrap();
+    let future = FileUploadId {
+        issued: OP_TIME + 1,
+        random: [1; 32],
+    };
+    assert_eq!(
+        store.save_once(&a, future, &file),
+        Err(FileStoreError::OperationExpired)
+    );
+    at(&store, operation.expires_at());
+    assert_eq!(
+        store.save_once(&a, operation, &file),
+        Err(FileStoreError::OperationExpired)
+    );
+    assert_eq!(
+        store.upload_status(&a, operation).unwrap().state(),
+        &FileUploadState::Expired
+    );
+    store.save(&a, &file).unwrap();
+    assert!(store.state().unwrap().operations.is_empty());
+    at(&store, OP_TIME);
+    assert_eq!(
+        store.save_once(&a, operation, &file),
+        Err(FileStoreError::Unavailable)
+    );
+    drop(store);
+    let store = temp.open();
+    at(&store, OP_TIME);
+    assert_eq!(store.upload_id(&a), Err(FileStoreError::Unavailable));
+    at(&store, operation.expires_at() + 1);
+    assert_eq!(
+        store.save_once(&a, operation, &file),
+        Err(FileStoreError::OperationExpired)
+    );
+    assert_eq!(store.list(&a).unwrap().len(), 2);
+}
+#[test]
+fn operation_quotas_never_evict_live_results_and_expiry_releases_capacity() {
+    let temp = Temp::new();
+    let store = temp.open();
+    at(&store, OP_TIME);
+    let file = upload("x", b"");
+    let mut first = None;
+    for account in 0..8 {
+        let owner = owner(&format!("account{account}"));
+        for n in 0..32 {
+            let operation = store.upload_id(&owner).unwrap();
+            let info = store.save_once(&owner, operation, &file).unwrap();
+            if account == 0 && n == 0 {
+                first = Some((owner.clone(), operation, info));
+            } else {
+                store.remove(&owner, info.id()).unwrap();
+            }
+        }
+        if account == 0 {
+            assert_eq!(store.upload_id(&owner), Err(FileStoreError::Limit));
+        }
+    }
+    let (a, operation, info) = first.unwrap();
+    assert_eq!(store.save_once(&a, operation, &file).unwrap(), info);
+    assert_eq!(
+        store.upload_id(&owner("new-owner")),
+        Err(FileStoreError::Limit)
+    );
+    at(&store, OP_TIME + crate::FILE_UPLOAD_RETENTION_SECONDS);
+    store
+        .save_once(&a, store.upload_id(&a).unwrap(), &file)
+        .unwrap();
+    assert_eq!(store.state().unwrap().operations.len(), 1);
+}
+#[test]
+fn file_and_operation_recover_from_the_same_committed_snapshot() {
+    for point in 1..=3 {
+        let temp = Temp::new();
+        let store = temp.open();
+        at(&store, OP_TIME);
+        let a = owner("alpha");
+        let operation = store.upload_id(&a).unwrap();
+        let file = upload("x", b"abc");
+        store.0.disk.fault.store(point, Ordering::Relaxed);
+        assert_eq!(
+            store.save_once(&a, operation, &file),
+            Err(if point == 3 {
+                FileStoreError::Uncertain
+            } else {
+                FileStoreError::Unavailable
+            })
+        );
+        drop(store);
+        let store = FileStore::recover(temp.root(), "test", Default::default()).unwrap();
+        at(&store, OP_TIME + 1);
+        assert_eq!(store.list(&a).unwrap().len(), usize::from(point == 3));
+        assert_eq!(
+            matches!(
+                store.upload_status(&a, operation).unwrap().state(),
+                FileUploadState::Stored(_)
+            ),
+            point == 3
+        );
+        let operation = if point == 3 {
+            operation
+        } else {
+            assert_eq!(
+                store.save_once(&a, operation, &file),
+                Err(FileStoreError::OperationExpired)
+            );
+            store.upload_id(&a).unwrap()
+        };
+        let info = store.save_once(&a, operation, &file).unwrap();
+        assert_eq!(store.save_once(&a, operation, &file).unwrap(), info);
+        assert_eq!(store.list(&a).unwrap().len(), 1);
+    }
+}
+#[test]
+fn legacy_snapshots_upgrade_only_on_a_successful_write_and_operation_codec_fails_closed() {
+    let temp = Temp::new();
+    let store = temp.open();
+    let a = owner("alpha");
+    let original = store.save(&a, &upload("old.bin", b"old")).unwrap();
+    let old = wire::encode(&store.state().unwrap().records, "test");
+    drop(store);
+    fs::write(temp.root().join("store.bin"), &old).unwrap();
+    let store = temp.open();
+    assert_eq!(store.list(&a).unwrap(), vec![original.clone()]);
+    assert_eq!(fs::read(temp.root().join("store.bin")).unwrap(), old);
+    let operation = store.upload_id(&a).unwrap();
+    store
+        .save_once(&a, operation, &upload("new.bin", b"new"))
+        .unwrap();
+    let bytes = fs::read(temp.root().join("store.bin")).unwrap();
+    assert_eq!(&bytes[..4], b"RFS2");
+    for n in 0..bytes.len() {
+        assert!(wire::decode(&bytes[..n], "test", Default::default()).is_err());
+    }
+    let snapshot = wire::decode_snapshot(&bytes, "test", Default::default()).unwrap();
+    assert_eq!(snapshot.operations.len(), 1);
+    let check = |operations: &Operations, clock| {
+        assert!(
+            wire::decode(
+                &wire::encode_snapshot(&snapshot.records, operations, clock, "test"),
+                "test",
+                Default::default()
+            )
+            .is_err()
+        )
+    };
+    check(&snapshot.operations, 0);
+    check(&Operations::new(), 0);
+    let mut operations = snapshot.operations.clone();
+    let id = *operations.values().next().unwrap();
+    operations.insert((owner("beta"), operation), id);
+    check(&operations, snapshot.clock);
+    let mut operations = Operations::new();
+    operations.insert(
+        (
+            a,
+            FileUploadId {
+                issued: 0,
+                random: [1; 32],
+            },
+        ),
+        id,
+    );
+    check(&operations, snapshot.clock);
+}
+
+#[test]
+fn pending_operations_cannot_be_stolen_or_overwritten_by_repeated_entropy() {
+    use std::collections::VecDeque;
+    let temp = Temp::new();
+    let store = temp.open();
+    at(&store, OP_TIME);
+    let a = owner("alpha");
+    let b = owner("beta");
+    let operation = store.upload_id(&a).unwrap();
+    assert_eq!(
+        store.save_once(&b, operation, &upload("x", b"abc")),
+        Err(FileStoreError::OperationExpired)
+    );
+    assert_eq!(
+        store.upload_status(&b, operation).unwrap().state(),
+        &FileUploadState::Expired
+    );
+    for candidate in [[0; 32], operation.random] {
+        store.state().unwrap().entropy = Entropy::Scripted(VecDeque::from(vec![Ok(candidate); 8]));
+        assert_eq!(store.upload_id(&b), Err(FileStoreError::Unavailable));
+        assert_eq!(
+            store.upload_status(&a, operation).unwrap().state(),
+            &FileUploadState::Unconfirmed
+        );
+    }
+    let forged = FileUploadId {
+        issued: OP_TIME,
+        random: [255; 32],
+    };
+    assert_eq!(
+        store.save_once(&a, forged, &upload("x", b"abc")),
+        Err(FileStoreError::OperationExpired)
+    );
+    assert!(store.list(&a).unwrap().is_empty());
+}

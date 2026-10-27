@@ -1,6 +1,9 @@
 //! Bounded private file snapshots for one native writer and a trusted directory.
 use crate::sessions::entropy::Entropy;
-use crate::{DownloadName, FileId, FileInfo, UploadedFile};
+use crate::{
+    DownloadName, FileId, FileInfo, FileUploadId, FileUploadState, FileUploadStatus,
+    MAX_FILE_UPLOAD_OPERATIONS, MAX_OWNER_FILE_UPLOAD_OPERATIONS, UploadedFile,
+};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -8,6 +11,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 mod disk;
+mod operations;
 #[cfg(all(
     test,
     any(
@@ -22,7 +26,7 @@ mod tests;
 mod wire;
 const MAX_FILES: usize = 256;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
-const MAX_CATALOG: usize = MAX_BYTES + MAX_FILES * 358 + 128;
+const MAX_CATALOG: usize = MAX_BYTES + MAX_FILES * 358 + MAX_FILE_UPLOAD_OPERATIONS * 137 + 160;
 
 /// A fixed storage failure, without paths, owners, filenames or submitted bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +45,10 @@ pub enum FileStoreError {
     Uncertain,
     /// The native entropy/filesystem profile is unavailable on this platform.
     UnsupportedPlatform,
+    /// The upload identity is expired or dated in the future.
+    OperationExpired,
+    /// This operation already refers to different input or a deleted file.
+    OperationConflict,
 }
 impl fmt::Display for FileStoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -52,6 +60,8 @@ impl fmt::Display for FileStoreError {
             Self::Unavailable => "file storage unavailable",
             Self::Uncertain => "file storage publication uncertain",
             Self::UnsupportedPlatform => "file storage platform unsupported",
+            Self::OperationExpired => "file upload operation expired",
+            Self::OperationConflict => "file upload operation conflict",
         })
     }
 }
@@ -171,8 +181,17 @@ struct Record {
     file: StoredFile,
 }
 type Records = BTreeMap<FileId, Record>;
+type Operations = BTreeMap<(FileOwner, FileUploadId), FileId>;
+struct Snapshot {
+    records: Records,
+    operations: Operations,
+    clock: u64,
+}
 struct State {
     records: Records,
+    operations: Operations,
+    pending: BTreeMap<FileUploadId, FileOwner>,
+    clock: u64,
     entropy: Entropy,
     healthy: bool,
 }
@@ -181,6 +200,8 @@ struct Store {
     disk: disk::Disk,
     application: String,
     limits: FileStoreLimits,
+    #[cfg(test)]
+    time: std::sync::atomic::AtomicU64,
 }
 /// A process-local handle to an exclusively owned private disk snapshot.
 /// Requires a trusted local filesystem, a stable application key and one writer process.
@@ -230,22 +251,36 @@ impl FileStore {
             }
         })?;
         let (disk, saved) = disk::Disk::open(path, application, limits, recovery)?;
-        let records = if let Some(bytes) = saved {
-            wire::decode(&bytes, application, limits)?
+        let snapshot = if let Some(bytes) = saved {
+            wire::decode_snapshot(&bytes, application, limits)?
         } else {
-            let empty = Records::new();
-            disk.publish(&wire::encode(&empty, application))?;
+            let empty = Snapshot {
+                records: Records::new(),
+                operations: Operations::new(),
+                clock: 0,
+            };
+            disk.publish(&wire::encode_snapshot(
+                &empty.records,
+                &empty.operations,
+                empty.clock,
+                application,
+            ))?;
             empty
         };
         Ok(Self(Arc::new(Store {
             state: Mutex::new(State {
-                records,
+                records: snapshot.records,
+                operations: snapshot.operations,
+                pending: BTreeMap::new(),
+                clock: snapshot.clock,
                 entropy,
                 healthy: true,
             }),
             disk,
             application: application.into(),
             limits,
+            #[cfg(test)]
+            time: Default::default(),
         })))
     }
     /// Saves one parsed upload for an authorized application owner, returning a new opaque ID.
@@ -255,44 +290,7 @@ impl FileStore {
         owner: &FileOwner,
         upload: &UploadedFile,
     ) -> Result<FileInfo, FileStoreError> {
-        let name =
-            DownloadName::new(upload.file_name()).map_err(|_| FileStoreError::InvalidInput)?;
-        if upload.len() > crate::MAX_UPLOAD_BYTES {
-            return Err(FileStoreError::Limit);
-        }
-        let mut state = self.state()?;
-        let mut id = None;
-        for _ in 0..8 {
-            let bytes = state
-                .entropy
-                .read()
-                .map_err(|_| FileStoreError::Unavailable)?;
-            let candidate = FileId(bytes);
-            if bytes != [0; 32] && !state.records.contains_key(&candidate) {
-                id = Some(candidate);
-                break;
-            }
-        }
-        let id = id.ok_or(FileStoreError::Unavailable)?;
-        let info = FileInfo {
-            id,
-            name,
-            size: upload.len(),
-        };
-        let mut records = state.records.clone();
-        records.insert(
-            id,
-            Record {
-                owner: owner.clone(),
-                file: StoredFile {
-                    info: info.clone(),
-                    bytes: upload.bytes().to_vec(),
-                },
-            },
-        );
-        self.0.limits.check(&records)?;
-        self.commit(&mut state, records)?;
-        Ok(info)
+        self.write_file(owner, upload, None)
     }
     /// Lists only this owner's metadata, in opaque ID order.
     pub fn list(&self, owner: &FileOwner) -> Result<Vec<FileInfo>, FileStoreError> {
@@ -344,15 +342,33 @@ impl FileStore {
         Ok(state)
     }
     fn commit(&self, state: &mut State, records: Records) -> Result<(), FileStoreError> {
-        if let Err(error) = self
-            .0
-            .disk
-            .publish(&wire::encode(&records, &self.0.application))
-        {
+        let now = self.now(state)?;
+        let mut operations = state.operations.clone();
+        operations.retain(|(_, operation), _| operation.expires_at() > now);
+        self.publish(state, records, operations, now)
+    }
+    fn publish(
+        &self,
+        state: &mut State,
+        records: Records,
+        operations: Operations,
+        clock: u64,
+    ) -> Result<(), FileStoreError> {
+        if let Err(error) = self.0.disk.publish(&wire::encode_snapshot(
+            &records,
+            &operations,
+            clock,
+            &self.0.application,
+        )) {
             state.healthy = false;
             return Err(error);
         }
+        state.pending.retain(|operation, owner| {
+            operation.expires_at() > clock && !operations.contains_key(&(owner.clone(), *operation))
+        });
         state.records = records;
+        state.operations = operations;
+        state.clock = clock;
         Ok(())
     }
 }

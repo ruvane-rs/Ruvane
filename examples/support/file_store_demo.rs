@@ -97,19 +97,69 @@ impl Demo {
                 .flatten()
                 .and_then(|data| data.get("file_owner").map(str::to_owned))
                 .unwrap_or_default();
-            body = body
-                .child(element(Tag::H2).child(format!("Owner: {name}")))
-                .child(
+            if request
+                .query_params()
+                .iter()
+                .any(|(name, _)| name != "operation")
+            {
+                return fail(StatusCode::BadRequest, "Invalid upload query.");
+            }
+            let requested = match request
+                .query_params()
+                .get("operation")
+                .map(FileUploadId::parse)
+                .transpose()
+            {
+                Ok(operation) => operation,
+                Err(_) => return fail(StatusCode::BadRequest, "Invalid upload operation."),
+            };
+            body = body.child(element(Tag::H2).child(format!("Owner: {name}")));
+            let operation = if let Some(operation) = requested {
+                let status = match self.files.upload_status(&owner, operation) {
+                    Ok(status) => status,
+                    Err(_) => return unavailable(),
+                };
+                let message=match status.state() {
+                    FileUploadState::Unconfirmed=>"Upload unconfirmed. Select the same file to resume this attempt.".into(),
+                    FileUploadState::Stored(info)=>format!("Upload confirmed: {} ({} bytes).",info.name(),info.len()),
+                    FileUploadState::Removed=>"Upload confirmed, then deleted. This attempt cannot recreate it.".into(),
+                    FileUploadState::Expired=>"Upload attempt expired or unavailable. Inspect files before starting another attempt.".into(),
+                };
+                body = body
+                    .child(element(Tag::P).child(message))
+                    .child(link(&url(""), "Start another upload"));
+                matches!(status.state(), FileUploadState::Unconfirmed).then_some(operation)
+            } else {
+                match self.files.upload_id(&owner) {
+                    Ok(operation) => Some(operation),
+                    Err(FileStoreError::Limit) => {
+                        body = body.child(element(Tag::P).child(
+                            "Upload operation quota reached. Wait for earlier attempts to expire.",
+                        ));
+                        None
+                    }
+                    Err(_) => return unavailable(),
+                }
+            };
+            if let Some(operation) = operation {
+                body = body.child(
                     MultipartForm::new(url("/files"))
                         .unwrap()
                         .csrf(token.clone())
                         .unwrap()
+                        .hidden("operation", operation.to_string())
+                        .unwrap()
                         .file("attachment", "File (maximum 32 KiB)")
                         .unwrap()
-                        .submit_label("Store file")
+                        .submit_label(if requested.is_some() {
+                            "Resume upload"
+                        } else {
+                            "Store file"
+                        })
                         .unwrap()
                         .render(),
                 );
+            }
             if self.manager.load(Ordering::Relaxed) {
                 body = body.child(link(
                     &InternalUrl::new("/file-manager").unwrap(),
@@ -184,15 +234,69 @@ impl Demo {
             errors.add(Some("attachment"), ValidationCode::Required);
             return Response::validation_errors(&errors);
         };
-        if !form.fields().has_only(&[]) {
+        if !form.fields().has_only(&["operation"]) {
             return fail(StatusCode::BadRequest, "Unexpected business fields.");
         }
-        match self.files.save(&owner, file) {
+        let operation = match form
+            .fields()
+            .get("operation")
+            .map(FileUploadId::parse)
+            .transpose()
+        {
+            Ok(value) => value,
+            Err(_) => return fail(StatusCode::BadRequest, "Invalid upload operation."),
+        };
+        let saved = match operation {
+            Some(operation) => self.files.save_once(&owner, operation, file),
+            None => self.files.save(&owner, file),
+        };
+        match saved {
             Ok(info) if request.header("accept") == Some(JSON_MEDIA_TYPE) => {
                 Response::json(&json(&info))
             }
-            Ok(_) => Response::see_other(url("")),
-            Err(FileStoreError::Limit) => fail(StatusCode::Conflict, "File storage quota reached."),
+            Ok(_) => Response::see_other(operation.map_or_else(
+                || url(""),
+                |operation| url("").query("operation", &operation.to_string()).unwrap(),
+            )),
+            Err(FileStoreError::Limit) => fail(
+                StatusCode::Conflict,
+                "File storage or operation quota reached.",
+            ),
+            Err(FileStoreError::OperationExpired) => fail(
+                StatusCode::Conflict,
+                "Upload attempt expired or unavailable. Inspect before starting another attempt.",
+            ),
+            Err(FileStoreError::OperationConflict) => fail(
+                StatusCode::Conflict,
+                "Upload attempt already used with different input or a deleted file.",
+            ),
+            Err(_) => unavailable(),
+        }
+    }
+    fn operation(&self, request: &Request, create: bool) -> Response {
+        if !request.query_params().is_empty() {
+            return fail(StatusCode::BadRequest, "Unexpected operation query.");
+        }
+        let owner = match self.owner(request) {
+            Ok(owner) => owner,
+            Err(status) => return fail(status, "Owner authorization unavailable or denied."),
+        };
+        if create {
+            return match self.files.upload_id(&owner) {
+                Ok(operation) => Response::json(
+                    &FileUploadStatus::new(operation, FileUploadState::Unconfirmed).to_json(),
+                ),
+                Err(FileStoreError::Limit) => {
+                    fail(StatusCode::Conflict, "Upload operation quota reached.")
+                }
+                Err(_) => unavailable(),
+            };
+        }
+        let Ok(operation) = request.param_as::<FileUploadId>("operation") else {
+            return fail(StatusCode::BadRequest, "Invalid upload operation.");
+        };
+        match self.files.upload_status(&owner, operation) {
+            Ok(status) => Response::json(&status.to_json()),
             Err(_) => unavailable(),
         }
     }
@@ -375,6 +479,24 @@ pub fn register_service(
                     _ => fail(StatusCode::Forbidden, "Open a demo session."),
                 }
             })
+            .guard(sessions.csrf_guard())
+            .guard(quota.session_guard(sessions.clone())),
+    )?;
+    let prepare = demo.clone();
+    routes.endpoint(
+        "private-files/upload-operation/route.rs",
+        &format!("{BASE}/upload-operation"),
+        FileEndpoint::new()
+            .get(move |request| prepare.operation(request, true))
+            .guard(sessions.csrf_guard())
+            .guard(quota.session_guard(sessions.clone())),
+    )?;
+    let inspect = demo.clone();
+    routes.endpoint(
+        "private-files/operations/[operation]/route.rs",
+        &format!("{BASE}/operations/{{operation}}"),
+        FileEndpoint::new()
+            .get(move |request| inspect.operation(request, false))
             .guard(sessions.csrf_guard())
             .guard(quota.session_guard(sessions.clone())),
     )?;

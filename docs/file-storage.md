@@ -71,7 +71,7 @@ limits and per-owner quotas no larger than the global quotas. Empty files consum
 a file slot. Existing data exceeding newly lowered limits is refused, never
 silently evicted. HTTP bodies retain their existing 64 KiB ceiling.
 
-The private RFS1 snapshot contains the application identifier, count and complete
+The legacy RFS1 snapshot contains the application identifier, count and complete
 records: opaque ID, owner key, filename and payload. Lengths and integer fields
 are bounded little-endian values. A CRC32 detects accidental corruption; it does
 not authenticate data supplied by an attacker. Filesystem ownership and the
@@ -155,4 +155,9 @@ recovery. Its Wasm module excludes the native backend.
 For private SSR metadata and a Rust/Wasm interface over the same backend, see the
 [persistent file manager](file-manager.md). FileId and FileInfo are now shared
 metadata types. FileId::parse and FromStr return FileMetadataError; FileOwner and
-storage operations retain FileStoreError. RFS1 disk snapshots are unchanged.
+storage operations retain FileStoreError. Alpha.60 reads RFS1 and upgrades on a successful write to RFS2; see
+[upload operation storage and compatibility](file-operations.md#rfs1-compatibility-and-recovery).
+
+For atomic same-identity replay, use `upload_id`, `save_once` and `upload_status`
+as described in [resumable upload attempts](file-operations.md). Existing `save`
+remains a non-idempotent operation.

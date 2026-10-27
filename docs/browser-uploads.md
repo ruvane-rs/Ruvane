@@ -138,3 +138,6 @@ and repeated-reset checks. `browser/tests/uploads.test.mjs` validates command
 framing, typed file ingress and source-hidden native/Wasm packaging. Its compiled
 fixture also serves `/cookie-checks` for real initial App hydration and navigation
 during submitted uploads and delayed CSRF preflights.
+
+For owner-bound identities, durable results and explicit safe resumption over the
+same transport, see [upload operations](file-operations.md). No new ABI is required.

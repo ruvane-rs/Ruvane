@@ -16,6 +16,7 @@ mod file_metadata;
 mod file_routes;
 #[cfg(not(target_family = "wasm"))]
 mod file_store;
+mod file_uploads;
 mod forms;
 mod guards;
 mod html;
@@ -92,6 +93,10 @@ pub use file_routes::{
 };
 #[cfg(not(target_family = "wasm"))]
 pub use file_store::{FileOwner, FileStore, FileStoreError, FileStoreLimits, StoredFile};
+pub use file_uploads::{
+    FILE_UPLOAD_RETENTION_SECONDS, FileUploadId, FileUploadState, FileUploadStatus,
+    MAX_FILE_UPLOAD_OPERATIONS, MAX_OWNER_FILE_UPLOAD_OPERATIONS,
+};
 pub use forms::{
     FormData, FormError, GetForm, MAX_FORM_NAME_BYTES, MAX_POST_BODY_BYTES, MultipartForm, PostForm,
 };

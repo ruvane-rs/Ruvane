@@ -1,6 +1,22 @@
 # Changelog
 
-## 0.1.0-alpha.59 — Unreleased
+## 0.1.0-alpha.60 — Unreleased
+
+- Add bounded owner-bound FileUploadId reservations, exact FileUploadStatus decoding
+  and one-hour retained upload results without third-party dependencies.
+- Publish files and operation results in one FileStore snapshot. Exact repeats
+  return the original metadata; changed input, foreign identities and deleted
+  results cannot create another file. Keep current authorization before replay.
+- Read legacy RFS1 catalogs and migrate atomically on successful writes to RFS2,
+  with bounded receipt records and a durable clock floor against rollback.
+- Add explicit Rust/Wasm preparation, status inspection, same-identity resumption
+  and discard. Keep selected files after uncertainty and abort late preparation
+  on navigation. Native multipart forms retain the same identity and 303 flow.
+- Cover concurrent replay, failure recovery, expiry, quotas, migration, owner
+  isolation and real lost acknowledgements in source-hidden/native/Wasm checks.
+- Retain ABI v15/RVN9, 22 numeric exports, four core assets and two local crates.
+
+## 0.1.0-alpha.59
 
 - Add strict shared FileInfo/FileListing metadata and bounded paginated seeds.
   Keep server-assigned owners, storage paths and payload bytes native-only.

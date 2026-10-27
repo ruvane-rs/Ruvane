@@ -108,6 +108,11 @@ store with private SSR metadata, cursor pagination, upload, deletion and refresh
 Typed native download links bypass navigation and prefetch. File selections
 survive rejected requests and expire when their component leaves the page.
 
+[Resumable upload attempts](docs/file-operations.md) attach bounded owner-bound
+identities to files and publish their results atomically. Explicit status checks
+and same-identity resubmission resolve lost acknowledgements without duplicate
+files, including committed results reopened after a restart.
+
 [Component JSON requests](docs/json-client.md) add explicit GET/POST/PUT/PATCH/DELETE
 from Rust/Wasm, exact response decoding, retained versions, bounded transport and
 late-response disposal. Typed failures preserve mutation uncertainty without

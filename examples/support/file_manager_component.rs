@@ -9,6 +9,8 @@ enum Pending {
     },
     Upload,
     Delete,
+    PrepareUpload,
+    CheckUpload,
 }
 struct Manager {
     listing: FileListing,
@@ -18,6 +20,9 @@ struct Manager {
     next_key: u32,
     file: Option<BrowserFile>,
     epoch: u32,
+    operation: Option<FileUploadId>,
+    upload_uncertain: bool,
+    retired: bool,
     pending: Option<Pending>,
     authorized: bool,
     uncertain: bool,
@@ -51,6 +56,9 @@ impl Manager {
             .checked_add(1)
             .ok_or(ComponentError::InvalidEvent)?;
         self.file = None;
+        self.operation = None;
+        self.upload_uncertain = false;
+        self.retired = false;
         self.invalid = false;
         Ok(())
     }
@@ -72,12 +80,50 @@ impl Manager {
         self.pending = Some(Pending::Read { cursor, history });
         Ok(())
     }
-    fn failed(&mut self, result: JsonOutcome) -> Result<(), ComponentError> {
+    fn send_upload(&mut self) -> Result<(), ComponentError> {
+        let file = self.file.clone().ok_or(ComponentError::InvalidEvent)?;
+        let operation = self.operation.ok_or(ComponentError::InvalidEvent)?;
+        self.upload = Some(
+            UploadRequest::new(
+                2,
+                InternalUrl::new("/private-files/files").unwrap(),
+                "attachment",
+                file,
+                FormData::default()
+                    .field("operation", &operation.to_string())
+                    .map_err(|_| ComponentError::InvalidEvent)?,
+            )
+            .map_err(|_| ComponentError::InvalidEvent)?,
+        );
+        self.pending = Some(Pending::Upload);
+        self.invalid = false;
+        self.message = "Storing this upload attempt…".into();
+        Ok(())
+    }
+    fn confirmed(&mut self, info: FileInfo) -> Result<(), ComponentError> {
+        if self
+            .file
+            .as_ref()
+            .is_none_or(|file| info.len() != file.size() as usize)
+        {
+            self.uncertain = true;
+            self.upload_uncertain = true;
+            self.message =
+                "Invalid upload result. Check or resume the same attempt explicitly.".into();
+            return Ok(());
+        }
+        self.reset()?;
+        self.uncertain = false;
+        self.message = "File stored. Selection cleared.".into();
+        self.read(None, vec![])
+    }
+    fn failed(&mut self, result: JsonOutcome, upload: bool) -> Result<(), ComponentError> {
         match result {
             Ok(reply) => {
                 self.uncertain |= reply.uncertain();
                 if matches!(reply.status(), 401 | 403) {
                     self.authorized = false;
+                    self.uncertain = false;
                     self.adopt(FileListing::new(vec![], None).unwrap())?;
                     self.cursor = None;
                     self.history.clear();
@@ -88,7 +134,7 @@ impl Manager {
                 self.invalid = reply.status() == 400;
                 self.message = match reply.status() {
                     400 => "Validation failed. Selection retained.".into(),
-                    409 => "Storage quota reached. Selection retained.".into(),
+                    409 => "Request refused: quota, changed input or retired attempt. Check the upload status.".into(),
                     413 => "The file exceeds the server limit.".into(),
                     429 => format!(
                         "Too many requests. Retry explicitly after {} seconds.",
@@ -102,7 +148,12 @@ impl Manager {
                 self.message = format!("Transport {:?}. State retained.", failure.kind());
             }
         }
-        if self.uncertain {
+        if self.uncertain && upload && self.operation.is_some() {
+            self.upload_uncertain = true;
+        }
+        if self.upload_uncertain {
+            self.message = "Upload result uncertain. Check or resume the same attempt explicitly; nothing was retried.".into();
+        } else if self.uncertain {
             self.message =
                 "Result uncertain. Inspect files before another mutation; nothing was retried."
                     .into();
@@ -135,14 +186,37 @@ impl Component for Manager {
         view.keyed_leaf(label, 1, Span, "File (maximum 32 KiB)")?;
         let file = view.file(label, 2, 3, self.invalid)?;
         view.field_epoch(file, self.epoch)?;
-        view.field_disabled(file, blocked)?;
+        view.field_disabled(file, blocked || self.operation.is_some())?;
         view.submit(
             form,
             2,
-            if busy { "Working…" } else { "Store file" },
-            blocked || self.uncertain,
+            if busy {
+                "Working…"
+            } else if self.operation.is_some() {
+                "Resume upload"
+            } else {
+                "Store file"
+            },
+            blocked || self.retired || (self.uncertain && !self.upload_uncertain),
         )?;
-        view.keyed_button(root, 4, "Clear selection", 4, blocked)?;
+        view.keyed_button(
+            root,
+            4,
+            if self.operation.is_some() {
+                "Discard attempt"
+            } else {
+                "Clear selection"
+            },
+            4,
+            blocked,
+        )?;
+        view.keyed_button(
+            root,
+            10,
+            "Check upload",
+            7,
+            blocked || self.operation.is_none(),
+        )?;
         view.keyed_button(root, 5, "Inspect files", 1, busy)?;
         let selected = self
             .file
@@ -199,30 +273,54 @@ impl Component for Manager {
                 self.message = "Inspecting private files…".into();
                 self.read(self.cursor, self.history.clone())
             }
-            2 if self.authorized && !self.uncertain => {
-                let Some(file) = self.file.clone() else {
+            2 if self.authorized && !self.retired && (!self.uncertain || self.upload_uncertain) => {
+                if self.file.is_none() {
                     self.invalid = true;
                     self.message = "Select a file before submitting.".into();
                     return Ok(());
-                };
-                self.upload = Some(
-                    UploadRequest::new(
-                        2,
-                        InternalUrl::new("/private-files/files").unwrap(),
-                        "attachment",
-                        file,
-                        FormData::default(),
+                }
+                if self.operation.is_some() {
+                    return self.send_upload();
+                }
+                self.outgoing = Some(
+                    JsonRequest::new(
+                        4,
+                        JsonMethod::Get,
+                        InternalUrl::new("/private-files/upload-operation").unwrap(),
+                        None,
                     )
                     .map_err(|_| ComponentError::InvalidEvent)?,
                 );
-                self.pending = Some(Pending::Upload);
-                self.invalid = false;
-                self.message = "Storing file…".into();
+                self.pending = Some(Pending::PrepareUpload);
+                self.message = "Preparing an upload attempt…".into();
+                Ok(())
+            }
+            7 if self.operation.is_some() && self.authorized => {
+                self.outgoing = Some(
+                    JsonRequest::new(
+                        5,
+                        JsonMethod::Get,
+                        InternalUrl::new(&format!(
+                            "/private-files/operations/{}",
+                            self.operation.unwrap()
+                        ))
+                        .unwrap(),
+                        None,
+                    )
+                    .map_err(|_| ComponentError::InvalidEvent)?,
+                );
+                self.pending = Some(Pending::CheckUpload);
+                self.message = "Checking this upload attempt…".into();
                 Ok(())
             }
             4 => {
+                if self.upload_uncertain {
+                    self.uncertain = false;
+                }
                 self.reset()?;
-                self.message = "Selection cleared.".into();
+                self.message =
+                    "Selection and attempt cleared. Inspect files before starting another upload."
+                        .into();
                 Ok(())
             }
             5 if !self.history.is_empty() => {
@@ -257,13 +355,16 @@ impl Component for Manager {
                 self.message = "Deleting file…".into();
                 Ok(())
             }
-            2 | 10..=12 if self.uncertain => Ok(()),
+            2 if self.uncertain || self.retired => Ok(()),
+            10..=12 if self.uncertain => Ok(()),
             _ => Err(ComponentError::InvalidEvent),
         }
     }
     fn dispatch_value(&mut self, event: u32, value: EventValue) -> Result<(), ComponentError> {
         match (event, value) {
-            (3, EventValue::File(selection)) if self.pending.is_none() && self.authorized => {
+            (3, EventValue::File(selection))
+                if self.pending.is_none() && self.authorized && self.operation.is_none() =>
+            {
                 self.invalid = false;
                 self.file = match selection {
                     FileSelection::Selected(file) => {
@@ -297,22 +398,18 @@ impl Component for Manager {
             return Err(ComponentError::InvalidEvent);
         }
         match result {
-            Ok(reply) if reply.is_success() => {
-                if FileInfo::from_json(reply.value())
-                    .ok()
-                    .zip(self.file.as_ref())
-                    .is_none_or(|(info, file)| info.len() != file.size() as usize)
-                {
+            Ok(reply) if reply.is_success() => match FileInfo::from_json(reply.value()) {
+                Ok(info) => self.confirmed(info),
+                Err(_) => {
                     self.uncertain = true;
+                    self.upload_uncertain = true;
                     self.message =
-                        "Invalid upload result. Inspect files before another mutation.".into();
-                    return Ok(());
+                        "Invalid upload result. Check or resume the same attempt explicitly."
+                            .into();
+                    Ok(())
                 }
-                self.reset()?;
-                self.message = "File stored. Selection cleared.".into();
-                self.read(None, vec![])
-            }
-            other => self.failed(other),
+            },
+            other => self.failed(other, true),
         }
     }
     fn json_result(&mut self, action: u32, result: JsonOutcome) -> Result<(), ComponentError> {
@@ -332,6 +429,14 @@ impl Component for Manager {
                 self.cursor = cursor;
                 self.history = history;
                 self.authorized = true;
+                if self.upload_uncertain {
+                    self.message = if self.retired {
+                        "Files inspected. This upload attempt is unavailable; discard it before starting another."
+                    } else {
+                        "Files inspected. Upload still unconfirmed; check or resume this attempt."
+                    }.into();
+                    return Ok(());
+                }
                 self.uncertain = false;
                 if !self.message.starts_with("File stored.")
                     && !self.message.starts_with("File deleted.")
@@ -339,6 +444,42 @@ impl Component for Manager {
                     self.message = "Private files inspected. No mutation was retried.".into();
                 }
                 Ok(())
+            }
+            (Pending::PrepareUpload, 4, Ok(reply)) if reply.is_success() => {
+                let Ok(status) = FileUploadStatus::from_json(reply.value()) else {
+                    self.message = "Invalid upload identity. Nothing was submitted.".into();
+                    return Ok(());
+                };
+                if status.state() != &FileUploadState::Unconfirmed {
+                    self.message = "Upload identity unavailable. Nothing was submitted.".into();
+                    return Ok(());
+                }
+                self.operation = Some(status.operation());
+                self.send_upload()
+            }
+            (Pending::CheckUpload, 5, Ok(reply)) if reply.is_success() => {
+                let Ok(status) = FileUploadStatus::from_json(reply.value()) else {
+                    self.message = "Invalid upload status. Attempt retained.".into();
+                    return Ok(());
+                };
+                if Some(status.operation()) != self.operation {
+                    self.message = "Wrong upload identity. Attempt retained.".into();
+                    return Ok(());
+                }
+                match status.state() {
+                    FileUploadState::Stored(info) => self.confirmed(info.clone()),
+                    FileUploadState::Unconfirmed => {
+                        self.message = "Upload unconfirmed. Resume explicitly with the same file and identity.".into();
+                        Ok(())
+                    }
+                    state => {
+                        self.retired = true;
+                        self.uncertain = true;
+                        self.upload_uncertain = true;
+                        self.message = if state == &FileUploadState::Removed {"Upload confirmed, then deleted. Discard this attempt; it cannot recreate the file."} else {"Upload attempt expired or unavailable. Inspect files, then discard it before starting another upload."}.into();
+                        Ok(())
+                    }
+                }
             }
             (Pending::Delete, 3, Ok(reply)) if reply.is_success() => {
                 if reply.value().as_bool() != Some(true) {
@@ -350,7 +491,10 @@ impl Component for Manager {
                 self.message = "File deleted.".into();
                 self.read(self.cursor, self.history.clone())
             }
-            (Pending::Read { .. }, 1, other) | (Pending::Delete, 3, other) => self.failed(other),
+            (Pending::Read { .. }, 1, other)
+            | (Pending::Delete, 3, other)
+            | (Pending::PrepareUpload, 4, other)
+            | (Pending::CheckUpload, 5, other) => self.failed(other, false),
             _ => Err(ComponentError::InvalidEvent),
         }
     }
@@ -364,6 +508,9 @@ pub(super) fn create() -> Box<dyn Component> {
         next_key: 0,
         file: None,
         epoch: 0,
+        operation: None,
+        upload_uncertain: false,
+        retired: false,
         pending: None,
         authorized: false,
         uncertain: false,

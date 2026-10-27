@@ -46,8 +46,8 @@ are rendered as escaped text. Debug output redacts IDs and names.
 The native loader resolves the current owner from server session data, obtains
 at most three records and creates the seed. The component does not perform an
 initial metadata GET. Invalid seeds cannot mount. Protected HTML and navigation
-are no-store and are never public cache/prerender entries. FileId parsing now
-returns FileMetadataError instead of native FileStoreError; RFS1 is unchanged.
+are no-store and are never public cache/prerender entries. FileId parsing returns FileMetadataError. Alpha.60 reads legacy RFS1 and publishes
+RFS2 on successful writes to retain upload results atomically.
 
 ## Routes and cursors
 
@@ -76,15 +76,17 @@ Rust owns the visible state, stable row keys, cursor history and request intent.
 The first-party bridge retains one native browser File, scoped to its component,
 control, reset epoch and selection ID. Refresh and pagination retain that same
 File. A successful upload resets it and reads the first metadata page. A successful
-delete reads the current page. Neither mutation is repeated automatically.
+delete reads the current page. Neither mutation is repeated automatically. Alpha.60 adds owner-bound upload
+identities; see [upload operations](file-operations.md).
 
 Validation failures, confirmed quota refusals and storage limits retain the
 selection for an explicit new submission. Transport failures and malformed success
-metadata after submission preserve uncertainty and disable mutations until an
-explicit valid inspection succeeds. The runtime's conservative global uncertainty
+metadata after submission preserve uncertainty and keep the upload identity for explicit status inspection or same-identity
+resumption. Other mutations stay disabled until the result is resolved. The runtime's conservative global uncertainty
 flag still prevents automatic development reload after a possible mutation.
-Inspecting metadata cannot prove whether two otherwise identical files came from
-the same attempted upload; the demo provides no idempotency key protocol.
+Listing metadata cannot prove which attempt created a file. Check upload queries
+the retained operation result; Resume upload submits the same file and identity.
+Expired or deleted attempts require explicit discard before a new upload.
 
 Authorization loss clears private rows, cursors and selection. Leaving a component
 aborts pending GETs/uploads and retires its picker and event handles. Late replies

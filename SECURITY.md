@@ -1,5 +1,19 @@
 # Security
 
+Alpha.60 adds [owner-bound upload attempts](docs/file-operations.md). OS-random
+identities expire after one hour; bounded native reservations bind unused keys to
+the authorized owner. Files and committed results share one RFS2 publication.
+Replays compare exact names/bytes and run only after current origin, revision,
+session, CSRF and quota checks. Deleted results cannot recreate files. Capacity
+limits refuse new attempts without evicting live results. A durable clock floor
+rejects rollback after pruning; unknown, foreign and expired identities cannot
+execute. RFS1 is read without mutation and upgrades on successful writes only.
+Unsubmitted reservations disappear on restart. Status unconfirmed never proves
+non-execution; the UI offers explicit check/resume/discard without automatic POST.
+All payloads, owner keys, reservations and storage remain native-only. ABI v15
+and the existing transport/export boundary are unchanged.
+
+
 Alpha.59 adds the [persistent Rust/Wasm file manager](docs/file-manager.md).
 FileInfo and FileListing validate exact JSON/seed fields, ID syntax, filename,
 size, ordering and cursor bounds. At most three records enter a page seed; owners,
