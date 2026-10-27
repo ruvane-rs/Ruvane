@@ -219,3 +219,7 @@ same build revision and an explicitly attached ServerCache handle.
 Alpha.44 adds [timed pre-render refreshing](prerender-refresh.md). Listed public
 URLs can expire and optionally serve a bounded old generation while one worker
 prepares the complete replacement. Explicit invalidation overrides that window.
+
+Alpha.45 adds optional [persistent regenerated output](persistent-prerender.md),
+with bounded private storage, fresh-only restore after clean shutdown and durable
+invalidation. Interrupted owners require explicit empty recovery.

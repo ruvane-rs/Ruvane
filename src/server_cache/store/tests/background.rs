@@ -92,7 +92,10 @@ fn failed_output_refreshes_preserve_the_exact_hard_deadline_and_retry_backoff() 
         .unwrap()
         .stale_while_revalidate(60)
         .unwrap();
-    let Access::Load(lease) = cache.access_output(ns, 0, &url("/a"), &policy).unwrap() else {
+    let Access::Load(lease) = cache
+        .access_output(ns, 0, &url("/a"), &policy, None)
+        .unwrap()
+    else {
         panic!("cold output loader");
     };
     let mut branch = branch("/a");
@@ -100,7 +103,9 @@ fn failed_output_refreshes_preserve_the_exact_hard_deadline_and_retry_backoff() 
     lease.publish(Some(branch)).unwrap();
     cache.expire_for_test(false);
     let deadline = cache.0.state.lock().unwrap().entries[0].stale_until;
-    let Access::Stale(_, _, Some(lease)) = cache.access_output(ns, 0, &url("/a"), &policy).unwrap()
+    let Access::Stale(_, _, Some(lease)) = cache
+        .access_output(ns, 0, &url("/a"), &policy, None)
+        .unwrap()
     else {
         panic!("output refresh");
     };
@@ -111,12 +116,12 @@ fn failed_output_refreshes_preserve_the_exact_hard_deadline_and_retry_backoff() 
     assert!(state.entries[0].retry_at > Instant::now());
     drop(state);
     assert!(matches!(
-        cache.access_output(ns, 0, &url("/a"), &policy),
+        cache.access_output(ns, 0, &url("/a"), &policy, None),
         Ok(Access::Stale(_, _, None))
     ));
     cache.expire_for_test(true);
     assert!(matches!(
-        cache.access_output(ns, 0, &url("/a"), &policy),
+        cache.access_output(ns, 0, &url("/a"), &policy, None),
         Ok(Access::Load(_))
     ));
 }

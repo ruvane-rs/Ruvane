@@ -275,6 +275,8 @@ Attach the shared ServerCache handle before constructing the native router.
 The policy can add `.revalidate_after(60)?.stale_while_revalidate(120)?` for
 [expiry and background output refresh](prerender-refresh.md); stale delivery
 requires a native background-enabled handle.
+Attach [persistent storage](persistent-prerender.md) to the cache handle to retain
+regenerated outputs across clean restarts; the same FilePage policy applies.
 
 ## Bounds and trust
 

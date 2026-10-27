@@ -13,7 +13,7 @@ pub const MAX_CLIENT_PRERENDER_BYTES: usize = 16 * 1024 * 1024;
 pub const CLIENT_PRERENDER_MARKER: &str = "ruvane-prerender\t1\n";
 
 /// Caches regenerated public output, optionally with expiry and background refresh.
-/// The first request in each router namespace loads fresh data, including after restart.
+/// First reads load fresh data unless optional persistence restores validated output.
 #[derive(Clone, Debug, Default)]
 pub struct PrerenderRevalidationPolicy {
     pub(crate) tags: Vec<String>,

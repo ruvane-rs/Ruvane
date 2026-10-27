@@ -35,6 +35,7 @@ struct Flight {
     background: bool,
     key: Key,
     tags: Vec<String>,
+    persistence: Option<OutputIdentity>,
     result: Mutex<FlightResult>,
     ready: Condvar,
 }
@@ -61,15 +62,23 @@ struct State {
 struct Inner {
     limits: ServerCacheLimits,
     state: Mutex<State>,
+    disk: Option<Arc<super::persistence::Store>>,
 }
 
-/// An explicit in-memory public cache and invalidation handle. Clones share state.
+/// A bounded public cache and invalidation handle, with optional persistent output.
+/// Clones share state.
 /// Each constructed App router gets a separate namespace, including its revision/origin.
 #[derive(Clone)]
 pub struct ServerCache(Arc<Inner>, Option<Arc<Pool>>);
 /// Bounded cache counts; no URLs, tags, headers or page data are exposed.
 #[derive(Clone, Copy, Debug)]
 pub struct ServerCacheStats {
+    /// Records in the persistent catalog; zero when persistence is disabled.
+    pub persistent_entries: usize,
+    /// Complete encoded catalog bytes, independent of the memory budget.
+    pub persistent_bytes: usize,
+    /// Outputs restored and validated in this process.
+    pub persistent_restores: u64,
     /// Retained entries past freshness but within their allowed stale window.
     pub stale_entries: usize,
     /// Requests served permitted stale data without waiting for a refresh.
@@ -86,7 +95,7 @@ pub struct ServerCacheStats {
     pub background_workers: usize,
     /// Retained fresh and permitted stale entries.
     pub entries: usize,
-    /// Accounted encoded packet, fallback, buffered head, key and tag bytes.
+    /// Accounted complete HTML, packet, fallback, buffered head, key and tag bytes.
     pub bytes: usize,
     /// Loaders still running, including invalidated ones awaiting completion.
     pub active_loads: usize,
@@ -125,9 +134,49 @@ impl ServerCache {
             Arc::new(Inner {
                 limits,
                 state: Mutex::new(State::default()),
+                disk: None,
             }),
             None,
         )
+    }
+    /// Attaches exclusive disk storage before cloning or using this handle.
+    /// Only regenerated pre-render output is persisted; memory caching stays independent.
+    pub fn persistent(
+        mut self,
+        persistence: ServerCachePersistence,
+    ) -> Result<Self, ServerCacheError> {
+        let inner = Arc::get_mut(&mut self.0).ok_or(ServerCacheError::PersistenceUnavailable)?;
+        if inner.disk.is_some()
+            || inner
+                .state
+                .get_mut()
+                .map_err(|_| ServerCacheError::Unavailable)?
+                .namespace
+                != 0
+        {
+            return Err(ServerCacheError::PersistenceUnavailable);
+        }
+        inner.disk = Some(persistence.store);
+        Ok(self)
+    }
+    /// Closes persistence after the server has stopped and all cache work has settled.
+    /// Required for static/global handles. Further public cache access is unavailable.
+    pub fn close_persistence(&self) -> Result<(), ServerCacheError> {
+        let state = self
+            .0
+            .state
+            .lock()
+            .map_err(|_| ServerCacheError::Unavailable)?;
+        if !state.flights.is_empty() || state.waiters != 0 {
+            return Err(ServerCacheError::Unavailable);
+        }
+        if let Some(disk) = &self.0.disk {
+            disk.close()?;
+        }
+        Ok(())
+    }
+    pub(crate) fn has_persistence(&self) -> bool {
+        self.0.disk.is_some()
     }
     /// Starts a fixed native worker pool with a bounded refresh queue.
     /// Worker creation failure is reported; Wasm cannot start server workers.
@@ -188,11 +237,13 @@ impl ServerCache {
     }
     /// Invalidates this exact path and every query variant across the handle's routers.
     /// Active matching loads are retired before this call returns.
+    /// The count covers memory entries; persistent removal is acknowledged even when zero.
     pub fn invalidate_path(&self, path: &str) -> Result<usize, ServerCacheError> {
         let url = InternalUrl::new(path).map_err(|_| ServerCacheError::InvalidPath)?;
         self.invalidate(|key, _| key.url.split('?').next() == Some(url.as_str()))
     }
     /// Invalidates all branches declaring this validated tag, including active loads.
+    /// The returned count covers memory entries, not separate disk records.
     pub fn invalidate_tag(&self, tag: &str) -> Result<usize, ServerCacheError> {
         if !crate::page_route::valid_name(tag) {
             return Err(ServerCacheError::InvalidTag);
@@ -200,6 +251,7 @@ impl ServerCache {
         self.invalidate(|_, tags| tags.iter().any(|value| value == tag))
     }
     /// Invalidates all entries and retires every active public load.
+    /// The returned count covers memory entries, not separate disk records.
     pub fn clear(&self) -> Result<usize, ServerCacheError> {
         self.invalidate(|_, _| true)
     }
@@ -227,6 +279,19 @@ impl ServerCache {
                 flight.ready.notify_all();
             }
         }
+        if let Some(disk) = &self.0.disk {
+            disk.invalidate(|url, tags| {
+                matches(
+                    &Key {
+                        output: true,
+                        namespace: 0,
+                        page: 0,
+                        url: url.to_owned(),
+                    },
+                    tags,
+                )
+            })?;
+        }
         Ok(removed)
     }
     /// Sweeps expired entries and returns aggregate counters.
@@ -238,7 +303,17 @@ impl ServerCache {
             .map_err(|_| ServerCacheError::Unavailable)?;
         let now = Instant::now();
         state.sweep(now);
+        let (persistent_entries, persistent_bytes, persistent_restores) = self
+            .0
+            .disk
+            .as_ref()
+            .map(|disk| disk.stats())
+            .transpose()?
+            .unwrap_or((0, 0, 0));
         let mut stats = ServerCacheStats {
+            persistent_entries,
+            persistent_bytes,
+            persistent_restores,
             entries: state.entries.len(),
             bytes: state.bytes,
             active_loads: state.flights.len(),
@@ -279,7 +354,7 @@ impl ServerCache {
         if policy.seconds.is_none() {
             return Err(ServerCacheError::Unavailable);
         }
-        self.access_inner(namespace, page, url, policy, false)
+        self.access_inner(namespace, page, url, policy, false, None)
     }
     pub(crate) fn access_output(
         &self,
@@ -287,13 +362,14 @@ impl ServerCache {
         page: usize,
         url: &InternalUrl,
         policy: &crate::PrerenderRevalidationPolicy,
+        identity: Option<OutputIdentity>,
     ) -> Result<Access, ServerCacheError> {
         let policy = ServerCachePolicy {
             seconds: policy.max_age_seconds(),
             tags: policy.tags.clone(),
             stale_seconds: policy.stale_seconds(),
         };
-        self.access_inner(namespace, page, url, &policy, true)
+        self.access_inner(namespace, page, url, &policy, true, identity)
     }
     fn access_inner(
         &self,
@@ -302,7 +378,11 @@ impl ServerCache {
         url: &InternalUrl,
         policy: &ServerCachePolicy,
         output: bool,
+        identity: Option<OutputIdentity>,
     ) -> Result<Access, ServerCacheError> {
+        if self.0.disk.as_ref().is_some_and(|disk| !disk.available()) {
+            return Err(ServerCacheError::PersistenceUnavailable);
+        }
         let key = Key {
             output,
             namespace: namespace.0,
@@ -339,6 +419,7 @@ impl ServerCache {
                     background: true,
                     key,
                     tags: policy.tags.clone(),
+                    persistence: identity.clone(),
                     result: Mutex::new(FlightResult::Pending),
                     ready: Condvar::new(),
                 });
@@ -420,6 +501,7 @@ impl ServerCache {
             background: false,
             key,
             tags: policy.tags.clone(),
+            persistence: identity,
             result: Mutex::new(FlightResult::Pending),
             ready: Condvar::new(),
         });
@@ -464,6 +546,32 @@ pub(crate) struct Lease {
 }
 impl Lease {
     pub fn publish(mut self, branch: Option<CachedBranch>) -> Result<(), ServerCacheError> {
+        self.publish_inner(branch, None)
+    }
+    pub fn restore(&self) -> Result<Option<RestoredOutput>, ServerCacheError> {
+        match (&self.cache.0.disk, &self.flight.persistence) {
+            (Some(disk), Some(identity)) => disk.get(identity, &self.flight.key.url),
+            _ => Ok(None),
+        }
+    }
+    pub fn reject_restore(&self) -> Result<(), ServerCacheError> {
+        if let (Some(disk), Some(identity)) = (&self.cache.0.disk, &self.flight.persistence) {
+            disk.remove(identity, &self.flight.key.url)?;
+        }
+        Ok(())
+    }
+    pub fn publish_restored(
+        mut self,
+        branch: CachedBranch,
+        expires: Option<Instant>,
+    ) -> Result<(), ServerCacheError> {
+        self.publish_inner(Some(branch), Some(expires))
+    }
+    fn publish_inner(
+        &mut self,
+        branch: Option<CachedBranch>,
+        restored: Option<Option<Instant>>,
+    ) -> Result<(), ServerCacheError> {
         let mut state = self
             .cache
             .0
@@ -482,6 +590,40 @@ impl Lease {
         if matches!(*result, FlightResult::Invalidated) {
             self.flight.ready.notify_all();
             return Err(ServerCacheError::Unavailable);
+        }
+        if restored
+            .flatten()
+            .is_some_and(|expiry| expiry <= Instant::now())
+        {
+            *result = FlightResult::Retry;
+            self.flight.ready.notify_all();
+            return Err(ServerCacheError::Unavailable);
+        }
+        if let (Some(disk), Some(identity)) = (&self.cache.0.disk, &self.flight.persistence) {
+            let saved = if restored.is_some() {
+                if !disk.available() {
+                    Err(ServerCacheError::PersistenceUnavailable)
+                } else {
+                    disk.restored();
+                    Ok(())
+                }
+            } else if let Some(branch) = &branch {
+                disk.put(
+                    identity,
+                    &self.flight.key.url,
+                    &self.flight.tags,
+                    self.seconds,
+                    self.stale_seconds,
+                    branch,
+                )
+            } else {
+                disk.remove(identity, &self.flight.key.url)
+            };
+            if let Err(error) = saved {
+                *result = FlightResult::Retry;
+                self.flight.ready.notify_all();
+                return Err(error);
+            }
         }
         *result = FlightResult::Retry;
         state.entries.retain(|entry| entry.key != self.flight.key);
@@ -514,9 +656,10 @@ impl Lease {
                 }
                 let branch = Arc::new(branch);
                 let now = Instant::now();
-                let expires = self
-                    .seconds
-                    .map(|seconds| now + Duration::from_secs(u64::from(seconds)));
+                let expires = restored.unwrap_or_else(|| {
+                    self.seconds
+                        .map(|seconds| now + Duration::from_secs(u64::from(seconds)))
+                });
                 state.entries.push(Entry {
                     key: self.flight.key.clone(),
                     tags: self.flight.tags.clone(),
@@ -566,6 +709,11 @@ impl Lease {
                         state.refresh_failures = state.refresh_failures.saturating_add(1);
                         if retire {
                             state.entries.retain(|entry| entry.key != self.flight.key);
+                            if let (Some(disk), Some(identity)) =
+                                (&self.cache.0.disk, &self.flight.persistence)
+                            {
+                                let _ = disk.remove(identity, &self.flight.key.url);
+                            }
                         } else if let Some(entry) = state
                             .entries
                             .iter_mut()

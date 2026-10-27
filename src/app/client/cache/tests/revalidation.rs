@@ -1,6 +1,8 @@
 use super::*;
 use crate::{PageParams, PrerenderRevalidationPolicy};
 use std::sync::{Mutex, mpsc};
+#[cfg(unix)]
+mod disk;
 mod timed;
 
 struct Fixture {

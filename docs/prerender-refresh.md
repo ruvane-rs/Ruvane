@@ -111,3 +111,7 @@ invalidation. Development stays dynamic. There is no persistent cache, distribut
 invalidation, runtime compilation or automatic push to browsers. See
 [on-demand regeneration](prerender-revalidation.md) and the
 [pre-render build contract](client-prerender.md).
+
+Alpha.45 adds optional [persistent output storage](persistent-prerender.md).
+Fresh records can survive clean restart with their original expiry. Stale records
+are reloaded, and interrupted owners require explicit empty recovery.

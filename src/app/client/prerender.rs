@@ -159,31 +159,36 @@ impl App {
         if expected.len() != plan.rows.len() {
             return Err(PrerenderError::InvalidArtifact);
         }
-        let factory = self
-            .client_factory
-            .ok_or(PrerenderError::InvalidDeclaration)?;
         Self::guarded(|| {
             for ((index, url, _), row) in expected.iter().zip(&plan.rows) {
-                if row.name != self.pages[*index].route.name()
-                    || &row.url != url
-                    || !self.validate_navigation(&row.packet)
-                {
+                if row.name != self.pages[*index].route.name() || &row.url != url {
                     return Err(PageError::InternalServerError);
                 }
-                let _ = Self::client_view(factory, row.packet.props(), row.packet.data(), false)?;
-                for layout in row.packet.layouts() {
-                    let _ = Self::client_view(factory, layout.props(), layout.data(), false)?;
-                }
-                if !row.html.contains(&format!(
-                    "data-ruvane-module=\"{}\"",
-                    runtime.asset("app.wasm")
-                )) {
-                    return Err(PageError::InternalServerError);
-                }
+                self.check_prerender_row(row)?;
             }
             Ok(())
         })
         .map_err(|_| PrerenderError::InvalidArtifact)
+    }
+    pub(super) fn check_prerender_row(&self, row: &PrerenderRow) -> Result<(), PageError> {
+        let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
+        let runtime = self
+            .client_runtime
+            .as_ref()
+            .ok_or(PageError::InternalServerError)?;
+        if !self.validate_navigation(&row.packet)
+            || !row.html.contains(&format!(
+                "data-ruvane-module=\"{}\"",
+                runtime.asset("app.wasm")
+            ))
+        {
+            return Err(PageError::InternalServerError);
+        }
+        let _ = Self::client_view(factory, row.packet.props(), row.packet.data(), false)?;
+        for layout in row.packet.layouts() {
+            let _ = Self::client_view(factory, layout.props(), layout.data(), false)?;
+        }
+        Ok(())
     }
     pub(in crate::app) fn validate_prerender_artifact(&self) -> Result<(), AppError> {
         if self.has_client_prerender()

@@ -109,3 +109,7 @@ its own invalidation; restart and eviction reload fresh. No persistent cache,
 cross-process invalidation, runtime compilation or new
 build revision is supplied. Development stays dynamic. The
 [pre-render build contract](client-prerender.md) still applies.
+
+Alpha.45 adds optional [persistent output storage](persistent-prerender.md) for
+fresh restore after clean shutdown. Memory-only startup still loads fresh;
+interrupted persistent owners require explicit empty recovery.

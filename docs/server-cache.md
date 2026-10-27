@@ -11,6 +11,8 @@ Listed pre-rendered URLs can instead opt into
 shares this handle's budgets and invalidation while retaining the complete HTML.
 It also supports [timed output refresh](prerender-refresh.md) through the same
 fixed worker pool.
+The handle can also attach [persistent public output storage](persistent-prerender.md)
+before use. Ordinary server data-cache branches remain memory-only.
 
 ## Opt in
 

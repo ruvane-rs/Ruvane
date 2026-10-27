@@ -91,10 +91,11 @@ pub use reactive::{
 pub use routing::{RouteError, Router};
 pub use server::{Server, ServerConfig, ShutdownHandle};
 pub use server_cache::{
-    MAX_SERVER_CACHE_BYTES, MAX_SERVER_CACHE_ENTRIES, MAX_SERVER_CACHE_LOADS,
-    MAX_SERVER_CACHE_QUEUE, MAX_SERVER_CACHE_STALE_SECONDS, MAX_SERVER_CACHE_TAGS,
-    MAX_SERVER_CACHE_WAIT_MS, MAX_SERVER_CACHE_WAITERS, MAX_SERVER_CACHE_WORKERS, ServerCache,
-    ServerCacheBackgroundLimits, ServerCacheError, ServerCacheLimits, ServerCachePolicy,
+    MAX_SERVER_CACHE_BYTES, MAX_SERVER_CACHE_DISK_BYTES, MAX_SERVER_CACHE_ENTRIES,
+    MAX_SERVER_CACHE_LOADS, MAX_SERVER_CACHE_QUEUE, MAX_SERVER_CACHE_STALE_SECONDS,
+    MAX_SERVER_CACHE_TAGS, MAX_SERVER_CACHE_WAIT_MS, MAX_SERVER_CACHE_WAITERS,
+    MAX_SERVER_CACHE_WORKERS, ServerCache, ServerCacheBackgroundLimits, ServerCacheDiskLimits,
+    ServerCacheError, ServerCacheLimits, ServerCachePersistence, ServerCachePolicy,
     ServerCacheStats,
 };
 pub use static_site::{

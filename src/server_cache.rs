@@ -1,10 +1,16 @@
 //! Bounded public server data caching, shared through explicit application handles.
 mod background;
+mod persistence;
 mod store;
 use background::{Job, Pool};
+pub use persistence::{MAX_SERVER_CACHE_DISK_BYTES, ServerCacheDiskLimits, ServerCachePersistence};
+pub(crate) use persistence::{OutputIdentity, RestoredOutput};
 use std::fmt;
 pub(crate) use store::{Access, CachedBranch, Lease, Namespace};
 pub use store::{ServerCache, ServerCacheStats};
+pub(crate) fn persistence_scope_limit() -> usize {
+    persistence::MAX_SCOPE_BYTES
+}
 
 /// Maximum retained entries in a server cache.
 pub const MAX_SERVER_CACHE_ENTRIES: usize = 128;
@@ -62,6 +68,10 @@ pub enum ServerCacheError {
     InvalidPath,
     /// A wait/load budget is exhausted, invalidation retired a load, or state is unavailable.
     Unavailable,
+    /// A persistent directory is already owned or requires explicit empty recovery.
+    PersistenceBusy,
+    /// A persistent directory, identity, budget or filesystem operation was refused.
+    PersistenceUnavailable,
 }
 impl fmt::Display for ServerCacheError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -70,6 +80,8 @@ impl fmt::Display for ServerCacheError {
             Self::InvalidTag => "invalid server cache tag",
             Self::InvalidPath => "invalid server cache path",
             Self::Unavailable => "server cache unavailable",
+            Self::PersistenceBusy => "persistent server cache is busy or requires recovery",
+            Self::PersistenceUnavailable => "persistent server cache unavailable",
         })
     }
 }

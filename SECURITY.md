@@ -649,3 +649,25 @@ so mutations needing immediate retirement must explicitly invalidate each replic
 Hard expiry never adopts an old output, and exhausted wait/load budgets return
 no-store 503. Private/query/unlisted reads schedule no output refreshes. Existing
 public-data, build-artifact trust and cooperative shutdown constraints still apply.
+
+Persistent regenerated output is explicitly opt-in on native Unix. Its dedicated
+private directory and parent must be trusted and protected from concurrent
+tampering. Fixed filenames, real paths, private permissions, exact application
+identity and refusal of foreign/symlink files limit accidental misuse. The owner
+marker coordinates cooperative exclusive use; it is not a sandbox against a
+malicious filesystem owner. Never use request-derived paths or uploaded catalogs.
+RDC1 and embedded RPR1 have bounded parsing and corruption checksums, not signatures.
+Restore validates exact application scope, revision, origins, declarations, policy,
+snapshots and component seeds before adoption. Immutable build revisions must
+cover code/assets; opaque callbacks cannot be fingerprinted automatically.
+
+Only fresh disk entries are adopted and their original expiry is retained. Obvious
+backwards/future clocks discard entries, but cross-restart expiry assumes a trusted
+wall clock. External filesystem rollback and hostile writers are outside this
+backend's guarantees. Successful invalidation synchronizes catalog removal before
+acknowledgment, including records not loaded into memory. I/O failures leave public
+cache use unavailable and preserve ownership for explicit empty recovery. A crash
+or killed owner cannot be silently reopened: after all owners have stopped,
+recover_empty discards old output and partial transactions. Static handles must
+explicitly close after work settles. This is a single-process cache, not durable
+application data, authentication, a transaction manager or distributed storage.

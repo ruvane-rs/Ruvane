@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.45 — Unreleased
+
+- Add optional bounded persistent storage for regenerated public client output,
+  with a private native Unix directory, application identity and exclusive owner marker.
+- Restore complete fresh HTML/navigation/hydration generations after clean restart,
+  validating revision, origins, declarations, policy and component schemas without loaders.
+- Retain original expiry, reject stale/corrupt/incompatible output conservatively,
+  and expose separate persistent catalog limits and aggregate restore counters.
+- Synchronize atomic catalog publication and path/tag/clear invalidation, including
+  unloaded records; fence late work and fail public cache access closed on I/O failure.
+- Require explicit empty recovery after interrupted ownership or failed transactions;
+  preserve memory-only defaults, private/query fallbacks and cooperative shutdown.
+- Verify process restart, forced termination, recovery, corruption, budget and schema
+  cases without dependencies. ABI v11, 22 Wasm exports and four assets remain unchanged.
+
 ## 0.1.0-alpha.44 — Unreleased
 
 - Add optional bounded expiry and stale-while-revalidate policies to public
