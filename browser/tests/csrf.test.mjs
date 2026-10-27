@@ -1,3 +1,4 @@
+import {readinessURL} from "./readiness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
@@ -9,6 +10,13 @@ import {csrfFixture} from "./csrf-fixture.mjs";
 import {CSRF_HEADER,CSRF_MEDIA_TYPE,decodePage,validateExports,createRuntime} from "../../web/bridge.mjs";
 const root=fileURLToPath(new URL("../../",import.meta.url)),cli=resolve(process.env.RUVANE_CLI||join(root,"target/debug/ruvane"));
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+test("readiness waits for a complete bounded loopback record",()=>{
+ const complete="ruvane-ready\t1\t127.0.0.1:54321\n";
+ for(let end=0;end<complete.length;end++)assert.equal(readinessURL(complete.slice(0,end)),null);
+ assert.equal(readinessURL(complete),"http://127.0.0.1:54321");
+ for(const value of ["ruvane-ready\t1\t127\n","ruvane-ready\t1\t0.0.0.127:80\n","ruvane-ready\t1\t127.0.0.1:0\n","ruvane-ready\t1\t127.0.0.1:65536\n",complete+"\n","x".repeat(129)])assert.throws(()=>readinessURL(value));
+});
 
 test("CSRF runtime configuration rejects external and ambiguous token URLs before loading Wasm",async()=>{
   for(const csrfEndpoint of ["https://example.test/token","//example.test/token","/token?q=secret","/token#secret","/../token","/bad%2fpath",42]) {
@@ -27,7 +35,7 @@ await test("source-free native session CSRF protects actions and native forms",{
     assert.equal(wasm.includes(Buffer.from("SERVER_SESSION_DATA_ALPHA48")),false);
     await rename(join(project,"src"),join(project,"source-hidden"));
     const ready=join(directory,"ready");child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);
-    let base;for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");if(value){base=`http://${value.trim().split("\t").at(-1)}`;break;}if(child.exitCode!==null)throw Error(errors);await pause(20);}assert.ok(base,"fixture started");
+    let base;for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");const url=readinessURL(value);if(url){base=url;break;}if(child.exitCode!==null)throw Error(errors);await pause(20);}assert.ok(base,"fixture started");
     const get=(path,cookie,extra={})=>fetch(base+path,{headers:{...(cookie?{Cookie:cookie}:{}),...extra},cache:"no-store"});
     const calls=async()=>Number(await(await get("/csrf-stats")).text());
     const post=(mode,cookie,token,extra={},native=false,body)=>fetch(base+(native?"/session-native":"/session-action"),{method:"POST",redirect:"manual",headers:{Origin:base,Accept:"application/vnd.ruvane.action","Content-Type":"application/x-www-form-urlencoded","Ruvane-Application-Revision":revision,...(cookie?{Cookie:cookie}:{}),...(token?{[CSRF_HEADER]:token}:{}),...extra},body:body??`mode=${mode}`});

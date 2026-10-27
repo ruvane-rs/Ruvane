@@ -1,5 +1,15 @@
 # Security
 
+Alpha.54 adds [typed JSON validation](docs/validation.md) with exact field presence
+and type checks, no coercion, UTF-8 text bounds and checked integer ranges. Reports
+retain at most sixteen fixed-code issues within 4 KiB, using only trusted declared
+field names. Unknown input names and all submitted values are omitted. Overflow
+remains a failure; invalid definitions and empty error responses fail closed as
+generic 500. Applications must finish decoding before applying data. The shared
+task types validate after guards and before mutation or ETag changes. Client/Wasm
+validation is convenience; server checks remain authoritative. UI messages use
+known codes and text nodes, retaining drafts without replaying mutations.
+
 Alpha.53 adds [conditional resource updates](docs/conditional-requests.md).
 Typed ASCII ETag/If-Match values have fixed byte/member limits and reject malformed
 conditions before callbacks. Strong comparison never accepts weak tags. Protected

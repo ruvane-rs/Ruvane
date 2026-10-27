@@ -91,6 +91,10 @@ responses and the existing session/CSRF/quota guards support the task API exampl
 If-Match types, atomic version checks and explicit conflicts that preserve browser
 drafts. Native OS-random version namespaces prevent accidental reuse after restart.
 
+[Typed JSON validation](docs/validation.md) adds explicit input conversions,
+shared native/Wasm rules, exact presence/type checks and bounded field errors.
+The task editor preserves drafts and resource versions after invalid input.
+
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
 URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
 

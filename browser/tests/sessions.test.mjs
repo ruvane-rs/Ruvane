@@ -1,3 +1,4 @@
+import {readinessURL} from "./readiness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
@@ -20,7 +21,7 @@ await test("native memory sessions rotate revoke expire and stay outside Wasm an
    assert.equal(wasm.includes(Buffer.from("SERVER_SESSION_DATA_ALPHA48")),false);assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),12);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);
   });
   await rename(join(project,"src"),join(project,"source-hidden"));let next=0;
-  async function start(idle=300,absolute=3600){const ready=join(directory,`ready-${next++}`);child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,env:{...process.env,RUVANE_SESSION_IDLE_SECONDS:String(idle),RUVANE_SESSION_ABSOLUTE_SECONDS:String(absolute)},stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");if(value)return `http://${value.trim().split("\t").at(-1)}`;if(child.exitCode!==null)throw Error(errors);await pause(20);}throw Error("session fixture did not start");}
+  async function start(idle=300,absolute=3600){const ready=join(directory,`ready-${next++}`);child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,env:{...process.env,RUVANE_SESSION_IDLE_SECONDS:String(idle),RUVANE_SESSION_ABSOLUTE_SECONDS:String(absolute)},stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");const url=readinessURL(value);if(url)return url;if(child.exitCode!==null)throw Error(errors);await pause(20);}throw Error("session fixture did not start");}
   let base=await start();const headers={Accept:"application/vnd.ruvane.page","Ruvane-Application-Revision":revision};
   const stats=async()=>{const [entries,bytes,loads,cache]=(await(await fetch(base+"/session-stats")).text()).split(" ").map(Number);return {entries,bytes,loads,cache};};
   const page=async(cookie,path="/session-private")=>{const response=await fetch(base+path,{headers:{...headers,...(cookie?{Cookie:cookie}:{})}});return {response,bytes:new Uint8Array(await response.arrayBuffer())};};

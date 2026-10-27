@@ -1,3 +1,4 @@
+import {readinessURL} from "./readiness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
@@ -26,7 +27,7 @@ await test("native route quotas fence mutation caches and rotated session famili
   const module=await WebAssembly.compile(wasm),e=validateExports(new WebAssembly.Instance(module,{}).exports);
   assert.deepEqual(WebAssembly.Module.imports(module),[]);assert.equal(e.ruvane_abi_version(),12);assert.equal(WebAssembly.Module.exports(module).filter(item=>item.kind==="function").length,22);assert.equal(wasm.includes(Buffer.from("SERVER_RATE_LIMIT_ALPHA50")),false);
   await rename(join(project,"src"),join(project,"source-hidden"));let generation=0;
-  async function start(){const ready=join(directory,`ready-${generation++}`);child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");if(value)return `http://${value.trim().split("\t").at(-1)}`;if(child.exitCode!==null)throw Error(errors);await pause(20);}throw Error("quota fixture did not start");}
+  async function start(){const ready=join(directory,`ready-${generation++}`);child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");const url=readinessURL(value);if(url)return url;if(child.exitCode!==null)throw Error(errors);await pause(20);}throw Error("quota fixture did not start");}
   let base=await start();
   const get=(path,cookie,extra={},method="GET")=>fetch(base+path,{method,headers:{...(cookie?{Cookie:cookie}:{}),...extra},cache:"no-store"});
   const stats=async()=>{const [mutations,loads,allowed,limited,pageAllowed,pageLimited]=(await(await get("/rate-stats")).text()).split(" ").map(Number);return {mutations,loads,allowed,limited,pageAllowed,pageLimited};};

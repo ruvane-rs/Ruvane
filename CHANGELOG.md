@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.1.0-alpha.53 — Unreleased
+## 0.1.0-alpha.54 — Unreleased
+
+- Add strict flat-object JSON decoding, exact presence/type checks, bounded text
+  rules and checked signed/unsigned integer ranges without coercion.
+- Add bounded field/code validation reports, generic unknown-key errors and
+  fail-closed definition handling. Keep submitted values out of reports and Debug.
+- Add explicit Request::decode_json conversions and typed no-store field errors.
+- Share CreateTask/ReplaceTask/PatchTask between native and Wasm; reject invalid
+  input before any resource or ETag change. Display field errors and retain drafts.
+- Compare sixteen shared input cases byte for byte across native and Wasm, with
+  live browser form checks and preserved session/CSRF/quota/conflict protections.
+- Keep zero third-party dependencies, ABI v12 and 22 function exports.
+
+## 0.1.0-alpha.53
 
 - Add bounded typed entity tags, strong If-Match comparisons and 412/428 statuses.
   Validate request conditions before native callbacks and omit validators on PUT.

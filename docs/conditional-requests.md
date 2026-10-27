@@ -118,3 +118,8 @@ Tests cover strong/weak/list grammar, byte/member limits, redaction, sanitized
 requests, source failures, counter overflow, concurrent writers, authorization
 ordering, deletion, recreated IDs and actual process restarts. Browser ABI v12,
 22 exports and four core runtime assets remain unchanged.
+
+Alpha.54 adds [typed input validation](validation.md). A validation failure returns
+400 before the resource lock without changing its data or ETag. The editor keeps
+that loaded version for a corrected explicit save. It still refuses stale versions
+with 412 and never refreshes a tag to replay an old draft automatically.

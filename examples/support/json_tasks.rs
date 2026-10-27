@@ -8,7 +8,7 @@ use std::sync::{
 };
 
 const MAX_TASKS: usize = 32;
-const MAX_TITLE_BYTES: usize = 256;
+use crate::task_input::{CreateTask, PatchTask, ReplaceTask};
 struct Task {
     id: u64,
     title: String,
@@ -42,11 +42,6 @@ fn value(task: &Task) -> Result<JsonValue, JsonError> {
         ("completed".into(), task.completed.into()),
     ])
 }
-fn valid_title(title: &str) -> bool {
-    !title.trim().is_empty()
-        && title.len() <= MAX_TITLE_BYTES
-        && !title.chars().any(char::is_control)
-}
 impl Tasks {
     pub fn new() -> Result<Self, EntityTagSourceError> {
         Ok(Self {
@@ -74,15 +69,10 @@ impl Tasks {
     }
     pub fn write(&self, request: &Request) -> Response {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        let Some(body) = request.json() else {
-            return error(StatusCode::BadRequest);
+        let input = match request.decode_json::<CreateTask>() {
+            Ok(input) => input,
+            Err(errors) => return Response::validation_errors(&errors),
         };
-        let Some(title) = body.get("title").and_then(JsonValue::as_str) else {
-            return error(StatusCode::BadRequest);
-        };
-        if body.as_object().is_none_or(|members| members.len() != 1) || !valid_title(title) {
-            return error(StatusCode::BadRequest);
-        }
         let Ok(mut state) = self.state.lock() else {
             return error(StatusCode::ServiceUnavailable);
         };
@@ -97,7 +87,7 @@ impl Tasks {
         };
         let task = Task {
             id,
-            title: title.into(),
+            title: input.title,
             completed: false,
             tag,
         };
@@ -121,31 +111,17 @@ impl Tasks {
         }) else {
             return error(StatusCode::NotFound);
         };
-        let mut title = None;
-        let mut completed = None;
-        if matches!(request.method(), Method::Put | Method::Patch) {
-            let Some(body) = request.json().and_then(JsonValue::as_object) else {
-                return error(StatusCode::BadRequest);
-            };
-            for (key, value) in body {
-                match key.as_str() {
-                    "title" => match value.as_str().filter(|title| valid_title(title)) {
-                        Some(value) => title = Some(value),
-                        None => return error(StatusCode::BadRequest),
-                    },
-                    "completed" => match value.as_bool() {
-                        Some(value) => completed = Some(value),
-                        None => return error(StatusCode::BadRequest),
-                    },
-                    _ => return error(StatusCode::BadRequest),
-                }
-            }
-            if body.is_empty()
-                || (request.method() == Method::Put && (title.is_none() || completed.is_none()))
-            {
-                return error(StatusCode::BadRequest);
-            }
-        }
+        let (title, completed) = match request.method() {
+            Method::Put => match request.decode_json::<ReplaceTask>() {
+                Ok(input) => (Some(input.title), Some(input.completed)),
+                Err(errors) => return Response::validation_errors(&errors),
+            },
+            Method::Patch => match request.decode_json::<PatchTask>() {
+                Ok(input) => (input.title, input.completed),
+                Err(errors) => return Response::validation_errors(&errors),
+            },
+            _ => (None, None),
+        };
         let Ok(mut state) = self.state.lock() else {
             return error(StatusCode::ServiceUnavailable);
         };
@@ -176,7 +152,7 @@ impl Tasks {
         let old = &state.tasks[index];
         let task = Task {
             id,
-            title: title.unwrap_or(&old.title).into(),
+            title: title.unwrap_or_else(|| old.title.clone()),
             completed: completed.unwrap_or(old.completed),
             tag: if request.method().is_mutation() {
                 match self.versions.next_tag() {

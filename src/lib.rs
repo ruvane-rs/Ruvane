@@ -34,6 +34,7 @@ mod sessions;
 mod static_site;
 mod streaming;
 mod url;
+mod validation;
 mod view;
 
 pub use actions::{
@@ -154,6 +155,11 @@ pub use streaming::{
 pub use url::{
     InternalUrl, MAX_COMPONENT_BYTES, MAX_INTERNAL_URL_BYTES, MAX_PATH_PARAMS, MAX_QUERY_PAIRS,
     ParamError, Query, QueryMode, UrlError,
+};
+pub use validation::{
+    JsonField, JsonObject, MAX_VALIDATION_ERRORS, MAX_VALIDATION_FIELD_BYTES,
+    MAX_VALIDATION_FIELDS, MAX_VALIDATION_RESPONSE_BYTES, TextRules, ValidationCode,
+    ValidationErrors, ValidationIssue,
 };
 pub use view::{
     Component, ComponentError, ComponentProps, ComponentStats, EventValue, InitialState,

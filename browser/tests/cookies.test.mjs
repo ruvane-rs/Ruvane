@@ -1,3 +1,4 @@
+import {readinessURL} from "./readiness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
@@ -29,7 +30,7 @@ await test("typed cookies roundtrip through native forms actions private pages a
   const ready=join(directory,"ready");child=spawn(join(bundle,process.platform==="win32"?"ruvane-app.exe":"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,stdio:["pipe","ignore","pipe"]});
   let errors="";child.stderr.on("data",data=>errors+=data);
   let base;
-  for(let n=0;n<250;n++){const record=await readFile(ready,"utf8").catch(()=>"");if(record){base=`http://${record.trim().split("\t").at(-1)}`;break;}if(child.exitCode!==null)throw Error(errors);await pause(20);}
+  for(let n=0;n<250;n++){const record=await readFile(ready,"utf8").catch(()=>"");const url=readinessURL(record);if(url){base=url;break;}if(child.exitCode!==null)throw Error(errors);await pause(20);}
   assert.ok(base,"cookie fixture starts");
   const headers={Accept:"application/vnd.ruvane.page","Ruvane-Application-Revision":revision};
   const page=async(cookie="")=>{const response=await fetch(base+"/cookie",{headers:{...headers,...(cookie?{Cookie:cookie}:{})}});assert.equal(response.status,200);assert.equal(response.headers.get("cache-control"),"no-store");return decodePage(new Uint8Array(await response.arrayBuffer()));};

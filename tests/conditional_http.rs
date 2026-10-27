@@ -5,6 +5,10 @@
         any(target_arch = "x86_64", target_arch = "aarch64")
     )
 ))]
+#[path = "../examples/support/task_input.rs"]
+mod task_input;
+#[path = "support/task_input_cases.rs"]
+mod task_input_cases;
 #[path = "../examples/support/json_tasks.rs"]
 mod tasks;
 use ruvane::*;
@@ -426,4 +430,123 @@ fn put_transport_omits_validators_that_cannot_attest_to_untransformed_input() {
             }
         );
     }
+}
+
+#[test]
+fn typed_validation_accumulates_field_errors_without_changing_records_or_versions() {
+    let store = Arc::new(tasks::Tasks::new().unwrap());
+    let server = Running::new(app(store.clone(), vec![]));
+    let id = server.create("unchanged");
+    let tag = server.tag(id);
+    let before = store.counts().unwrap().1;
+    for (method, body, codes) in [
+        (
+            "PUT",
+            r#"{"title":4,"completed":"false"}"#,
+            vec!["expected_string", "expected_boolean"],
+        ),
+        (
+            "PATCH",
+            r#"{"title":"valid but not committed","completed":null}"#,
+            vec!["null_not_allowed"],
+        ),
+        (
+            "PATCH",
+            r#"{"PRIVATE_UNKNOWN_KEY":"PRIVATE_VALUE"}"#,
+            vec!["unknown_field"],
+        ),
+        ("PATCH", r#"{}"#, vec!["empty_object"]),
+        ("PUT", r#"{}"#, vec!["required", "required"]),
+    ] {
+        let response = server.request(
+            method,
+            "/api/tasks/1",
+            &format!("If-Match: {tag}\r\n"),
+            body,
+        );
+        assert_eq!(status(&response.0), 400);
+        assert_eq!(
+            header(&response.0, "content-type"),
+            Some("application/json")
+        );
+        assert_eq!(header(&response.0, "cache-control"), Some("no-store"));
+        assert!(response.1.len() <= MAX_VALIDATION_RESPONSE_BYTES);
+        assert!(!String::from_utf8_lossy(&response.1).contains("PRIVATE"));
+        let report = JsonValue::parse(&response.1).unwrap();
+        assert_eq!(report.get("error").unwrap().as_str(), Some("Bad Request"));
+        let actual = report
+            .get("errors")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|issue| issue.get("code").unwrap().as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(actual, codes);
+        assert_eq!(server.tag(id), tag);
+        assert_eq!(store.counts().unwrap().1, before);
+        let current = server.request("GET", "/api/tasks/1", "", "");
+        assert_eq!(
+            JsonValue::parse(&current.1)
+                .unwrap()
+                .get("title")
+                .unwrap()
+                .as_str(),
+            Some("unchanged")
+        );
+    }
+    let accepted = server.request(
+        "PATCH",
+        "/api/tasks/1",
+        &format!("If-Match: {tag}\r\n"),
+        r#"{"completed":false}"#,
+    );
+    assert_eq!(status(&accepted.0), 200);
+    assert_ne!(server.tag(id), tag);
+}
+#[test]
+fn task_input_types_and_shared_cases_preserve_patch_presence_and_redact_debug() {
+    let value = JsonValue::parse(br#"{"completed":false}"#).unwrap();
+    let input = task_input::PatchTask::try_from(&value).unwrap();
+    assert_eq!(input.title, None);
+    assert_eq!(input.completed, Some(false));
+    assert!(
+        task_input::PatchTask::try_from(&JsonValue::parse(br#"{"completed":null}"#).unwrap())
+            .is_err()
+    );
+    let value = JsonValue::parse(br#"{"title":"PRIVATE_TITLE"}"#).unwrap();
+    assert!(
+        !format!("{:?}", task_input::CreateTask::try_from(&value).unwrap())
+            .contains("PRIVATE_TITLE")
+    );
+    for index in 0..task_input_cases::CASES.len() {
+        let report = task_input_cases::report(index).unwrap().encode();
+        assert!(report.len() <= 1024);
+        assert!(!report.contains("PRIVATE"));
+    }
+    assert!(
+        task_input_cases::report(0).unwrap().as_array().unwrap()[0]
+            .as_bool()
+            .unwrap()
+    );
+    let value = JsonValue::object(vec![(
+        "title".into(),
+        JsonValue::string("🦀".repeat(64)).unwrap(),
+    )])
+    .unwrap();
+    assert!(task_input::CreateTask::try_from(&value).is_ok());
+    let value = JsonValue::object(vec![(
+        "title".into(),
+        JsonValue::string("🦀".repeat(65)).unwrap(),
+    )])
+    .unwrap();
+    assert_eq!(
+        task_input::CreateTask::try_from(&value)
+            .unwrap_err()
+            .iter()
+            .next()
+            .unwrap()
+            .code(),
+        ValidationCode::TooLong
+    );
 }

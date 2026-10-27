@@ -1,3 +1,4 @@
+import {readinessURL} from "./readiness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
@@ -22,7 +23,7 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
    const id=e.ruvane_mount(1,25,1,0);assert.ok(id,`Wasm JSON probe failed with ${e.ruvane_last_error()}`);const commands=decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr()>>>0,e.ruvane_commands_len()>>>0).slice());assert.ok(commands.some(command=>command.text==="Rust JSON checks passed"));assert.equal(e.ruvane_commands_clear(),1);assert.equal(e.ruvane_dispose(id),1);assert.equal(e.ruvane_commands_clear(),1);
   });
   await rename(join(project,"src"),join(project,"source-hidden"));let generation=0;
-  async function start(){const ready=join(directory,`ready-${generation++}`);child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");if(value)return `http://${value.trim().split("\t").at(-1)}`;if(child.exitCode!==null)throw Error(errors);await pause(20);}throw Error("JSON fixture did not start");}
+  async function start(){const ready=join(directory,`ready-${generation++}`);child=spawn(join(bundle,"ruvane-app"),["--ruvane-serve","0",ready],{cwd:bundle,stdio:["pipe","ignore","pipe"]});let errors="";child.stderr.on("data",data=>errors+=data);for(let n=0;n<250;n++){const value=await readFile(ready,"utf8").catch(()=>"");const url=readinessURL(value);if(url)return url;if(child.exitCode!==null)throw Error(errors);await pause(20);}throw Error("JSON fixture did not start");}
   let base=await start();
   const get=(path,cookie,method="GET")=>fetch(base+path,{method,cache:"no-store",headers:{...(cookie?{Cookie:cookie}:{})}});
   const stats=async()=>await(await get("/json-stats")).json();
@@ -30,6 +31,10 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
   const session=async(mode,cookie)=>{const claim=cookie?await token(cookie):null;const response=await fetch(base+"/session-action",{method:"POST",headers:{Origin:base,"Content-Type":"application/x-www-form-urlencoded",Accept:"application/vnd.ruvane.action","Ruvane-Application-Revision":revision,...(cookie?{Cookie:cookie}:{}),...(claim?{"Ruvane-Csrf-Token":claim}:{})},body:`mode=${mode}`});assert.equal(response.status,200);const values=response.headers.getSetCookie();assert.equal(values.length,1);await response.arrayBuffer();return values[0].split(";")[0];};
   const post=(body,cookie,claim,extra={},path="/api/tasks")=>fetch(base+path,{method:"POST",headers:{Origin:base,"Content-Type":"application/json",...(cookie?{Cookie:cookie}:{}),...(claim?{"Ruvane-Csrf-Token":claim}:{}),...extra},body});
   let cookie,claim;
+  await t.test("native and Wasm produce byte-identical validation reports for all shared cases",async()=>{
+   for(let index=0;index<16;index++){const response=await get(`/validation-result/${index}`);assert.equal(response.status,200);const expected=await response.text();assert.ok(!expected.includes("PRIVATE"));const id=e.ruvane_mount(1,26,1,index);assert.ok(id,`validation probe ${index} failed: ${e.ruvane_last_error()}`);const commands=decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr()>>>0,e.ruvane_commands_len()>>>0).slice());assert.ok(commands.some(command=>command.text===expected));assert.equal(e.ruvane_commands_clear(),1);assert.equal(e.ruvane_dispose(id),1);assert.equal(e.ruvane_commands_clear(),1);}
+   const missing=await get("/validation-result/16");assert.equal(missing.status,404);await missing.arrayBuffer();
+  });
   await t.test("anonymous access is denied and GET/HEAD return fixed no-store UTF-8 JSON",async()=>{
    const denied=await get("/api/tasks");assert.equal(denied.status,403);await denied.arrayBuffer();cookie=await session("open");claim=await token(cookie);
    for(const method of ["GET","HEAD"]){const response=await get("/api/tasks",cookie,method);assert.equal(response.status,200);assert.equal(response.headers.get("content-type"),"application/json");assert.equal(response.headers.get("cache-control"),"no-store");assert.equal(response.headers.get("x-content-type-options"),"nosniff");assert.ok(response.headers.get("content-security-policy").includes("script-src 'none'"));assert.equal(response.headers.get("content-length"),"12");assert.equal(await response.text(),method==="HEAD"?"":'{"tasks":[]}');}
@@ -54,7 +59,7 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
    await session("close",other);
   });
   await t.test("the application schema rejects unknown fields wrong types and controls before writes",async()=>{
-   const before=await stats();for(const body of ['null','[]','true','1','{}','{"title":7}','{"title":""}','{"title":"x","extra":true}','{"title":"line\\nbreak"}',JSON.stringify({title:"x".repeat(257)})]) {const response=await post(body,cookie,claim);assert.equal(response.status,400);assert.deepEqual(await response.json(),{error:"Bad Request"});}assert.equal((await stats()).writes,before.writes);
+   const before=await stats();for(const body of ['null','[]','true','1','{}','{"title":7}','{"title":""}','{"title":"x","extra":true}','{"title":"line\\nbreak"}',JSON.stringify({title:"x".repeat(257)})]) {const response=await post(body,cookie,claim);assert.equal(response.status,400);const report=await response.json();assert.equal(report.error,"Bad Request");assert.ok(report.errors.length>0);assert.equal(report.truncated,false);}assert.equal((await stats()).writes,before.writes);
   });
   await t.test("all JSON value types roundtrip and number lexemes retain exact precision",async()=>{
    for(const body of ['null','true','false','18446744073709551615','1.00e+003','"Rust \\uD83E\\uDD80"','[0,-0,1e9999]','{"__proto__":{"safe":true},"x":1}']) {const response=await post(body,cookie,claim,{},"/api/echo");assert.equal(response.status,200);const raw=await response.text();if(body==='"Rust \\uD83E\\uDD80"')assert.equal(raw,'"Rust 🦀"');else assert.equal(raw,body);}
@@ -84,13 +89,20 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
   });
   await t.test("invalid replacements and patches leave the entire stored resource unchanged",async()=>{
    const before=await stats(),task=await(await get("/api/tasks/1",cookie)).json();
-   for(const [method,body] of [["PUT",{title:"missing state"}],["PUT",{completed:true}],["PUT",{title:"valid",completed:"wrong"}],["PATCH",{}],["PATCH",{title:"valid",completed:null}],["PATCH",{title:"valid",extra:true}],["PATCH",{title:""}],["PATCH",{title:"x".repeat(257)}]]) {const response=await mutate(method,1,body);assert.equal(response.status,400);assert.deepEqual(await response.json(),{error:"Bad Request"});}
+   for(const [method,body] of [["PUT",{title:"missing state"}],["PUT",{completed:true}],["PUT",{title:"valid",completed:"wrong"}],["PATCH",{}],["PATCH",{title:"valid",completed:null}],["PATCH",{title:"valid",extra:true}],["PATCH",{title:""}],["PATCH",{title:"x".repeat(257)}]]) {const response=await mutate(method,1,body);assert.equal(response.status,400);const report=await response.json();assert.equal(report.error,"Bad Request");assert.ok(report.errors.length>0);assert.equal(report.truncated,false);}
    assert.equal((await stats()).writes,before.writes);assert.deepEqual(await(await get("/api/tasks/1",cookie)).json(),task);
    for(const id of [0,"01","missing",99999]){const response=await get(`/api/tasks/${id}`,cookie);assert.equal(response.status,404);await response.arrayBuffer();}
   });
   await t.test("all added mutations require current CSRF and reject stale revisions",async()=>{
    const before=await stats();for(const method of ["PUT","PATCH","DELETE"]){const body={title:"blocked",completed:true};for(const value of [null,"forged"]){const response=await mutate(method,1,body,value);assert.equal(response.status,403);await response.arrayBuffer();}const revisionResponse=await mutate(method,1,body,claim,{"Ruvane-Application-Revision":String(BigInt(revision)+1n)});assert.equal(revisionResponse.status,409);await revisionResponse.arrayBuffer();}
    assert.equal((await stats()).writes,before.writes);
+  });
+  await t.test("field reports accumulate safely and invalid partial edits preserve their ETag",async()=>{
+   const before=await stats(),tag=await version(1),task=await(await get("/api/tasks/1",cookie)).json();
+   const response=await mutate("PUT",1,{title:4,completed:"false"},claim,{"If-Match":tag});assert.equal(response.status,400);assert.deepEqual(await response.json(),{error:"Bad Request",errors:[{field:"title",code:"expected_string"},{field:"completed",code:"expected_boolean"}],truncated:false});
+   const partial=await mutate("PATCH",1,{title:"must not be stored",completed:null},claim,{"If-Match":tag});assert.equal(partial.status,400);assert.deepEqual((await partial.json()).errors,[{field:"completed",code:"null_not_allowed"}]);
+   const unknown=await mutate("PATCH",1,{PRIVATE_UNKNOWN_KEY:"PRIVATE_INPUT_VALUE"},claim,{"If-Match":tag});assert.equal(unknown.status,400);const text=await unknown.text();assert.ok(!text.includes("PRIVATE"));assert.deepEqual(JSON.parse(text).errors,[{code:"unknown_field"}]);
+   assert.equal(await version(1),tag);assert.equal((await stats()).writes,before.writes);assert.deepEqual(await(await get("/api/tasks/1",cookie)).json(),task);
   });
   await t.test("precise preconditions reject missing wildcard weak and stale versions without writes",async()=>{
    const before=await stats(),tag=await version(1);for(const method of ["PUT","PATCH","DELETE"]){for(const [condition,status] of [[null,428],["*",428],["W/"+tag,412],['"stale"',412]]){const response=await mutate(method,1,{title:"blocked",completed:true},claim,{"If-Match":condition});assert.equal(response.status,status);assert.equal(response.headers.get("etag"),null);assert.equal(response.headers.get("cache-control"),"no-store");await response.arrayBuffer();}}assert.equal((await stats()).writes,before.writes);

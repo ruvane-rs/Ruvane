@@ -1,5 +1,7 @@
 #[path = "support/json_tasks.rs"]
 mod json_tasks;
+#[path = "support/task_input.rs"]
+mod task_input;
 use ruvane::*;
 use std::sync::Arc;
 

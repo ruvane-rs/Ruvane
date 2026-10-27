@@ -4,7 +4,8 @@ Ruvane parses and writes JSON with `std` only. The same value engine works on
 native and Wasm targets; HTTP endpoints remain native. The profile follows
 [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html), with resource limits,
 unique decoded keys and Unicode scalar strings. There are no derive macros or
-automatic Rust struct conversions.
+automatic Rust struct conversions. Alpha.54 adds explicit checked input conversions
+and bounded field errors through [typed validation](validation.md).
 
 ## Values and numbers
 
@@ -185,3 +186,9 @@ nodes and sends each mutation once, with no automatic retry.
 CLI tests run a bundle with source files hidden, including concurrency, guard
 ordering and the shared parser inside an import-free Wasm component. Browser ABI
 v12, the 22 exports and four runtime assets stay unchanged.
+
+Alpha.54's task example decodes CreateTask, ReplaceTask and PatchTask through the
+same checked Rust module on native and Wasm targets. Domain failures return
+bounded field/code reports without submitted values; the browser keeps the draft
+and marks the declared controls invalid. Guards and conditional writes retain
+their ordering. See [typed JSON validation](validation.md).

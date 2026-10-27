@@ -162,6 +162,21 @@ impl Request {
         self.json.as_ref()
     }
 
+    /// Converts a parsed JSON body using the application's explicit checked conversion.
+    /// Missing JSON produces an object-level validation error. This does not run guards.
+    pub fn decode_json<'a, T>(&'a self) -> Result<T, crate::ValidationErrors>
+    where
+        T: TryFrom<&'a crate::JsonValue, Error = crate::ValidationErrors>,
+    {
+        match self.json() {
+            Some(value) => T::try_from(value),
+            None => {
+                let mut errors = crate::ValidationErrors::new();
+                errors.add(None, crate::ValidationCode::ExpectedObject);
+                Err(errors)
+            }
+        }
+    }
     /// Returns a decoded dynamic path capture by name, if present.
     pub fn param(&self, name: &str) -> Option<&str> {
         self.params
@@ -427,6 +442,11 @@ impl Response {
     }
     pub(crate) fn omit_etag(&mut self) {
         self.etag = None;
+    }
+    /// Returns fixed no-store JSON field errors with status 400. Empty reports and
+    /// invalid application definitions fail closed with a generic 500 response.
+    pub fn validation_errors(errors: &crate::ValidationErrors) -> Self {
+        Self::json(&errors.to_json()).with_status(errors.status())
     }
     /// Returns validated UTF-8 JSON with fixed MIME, no-store and the blocking CSP.
     /// JSON is data; this constructor does not permit HTML or JavaScript embedding.
