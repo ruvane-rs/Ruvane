@@ -5,7 +5,7 @@ is to bring server-side and browser-side development into a single stack,
 without third-party dependencies.
 
 The current alpha provides HTML rendering, a bounded loopback HTTP server,
-fixed and dynamic GET/HEAD routes, explicit POST form actions, typed parameter conversion, validated
+fixed and dynamic GET/HEAD routes, explicit form/JSON mutations, typed parameter conversion, validated
 internal links, embedded CSS/image assets, typed native GET forms, page
 metadata, canonical URLs, a fixed browser Content Security Policy, and bounded
 static export with a local preview. The `ruvane` CLI creates projects, watches
@@ -62,8 +62,8 @@ Opt-in [file routes](docs/file-routes.md) generate a shared Rust registry from
 `page.rs`, `layout.rs`, `loading.rs`, `error.rs`, `not_found.rs` and `[parameter]` directories
 during Cargo builds. Loading, error and not-found screens inherit through the
 route tree; unknown URLs use the root 404 without guessing parent layouts.
-Native-only [file endpoints](docs/file-endpoints.md) add `route.rs` GET/HEAD and
-POST handlers, sharing existing HTTP protections and atomic registration.
+Native-only [file endpoints](docs/file-endpoints.md) add `route.rs` GET/HEAD,
+POST, PUT, PATCH and DELETE handlers, sharing HTTP protections and atomic registration.
 
 Native [route guards](docs/route-guards.md) add application, inherited `guard.rs`,
 page and endpoint access checks before caches and loaders. Typed allow/private/403/503
@@ -84,7 +84,7 @@ token buckets, rotation-stable session quotas and typed 429 responses across
 native forms, navigation and Wasm actions. Browser ABI v12 keeps 22 exports.
 
 [Bounded JSON APIs](docs/json.md) add immutable values, exact number text,
-checked construction and explicit native POST JSON routes. Fixed no-store
+checked construction and explicit native POST/PUT/PATCH JSON routes plus bodyless DELETE. Fixed no-store
 responses and the existing session/CSRF/quota guards support the task API example.
 
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
@@ -711,8 +711,8 @@ when composed. Serialized output is available through `as_str()`,
 
 | Item | Purpose |
 | --- | --- |
-| `Router` | Register GET/HEAD pages and explicit POST form actions, with method-scoped ambiguity detection. |
-| `Request` | Inspect paths, captures, queries, POST form fields and validated headers. |
+| `Router` | Register GET/HEAD pages and explicit form/JSON mutations, with method-scoped ambiguity detection. |
+| `Request` | Inspect paths, captures, queries, form/JSON data and validated headers. |
 | `Query` | Look up unique decoded query keys and convert values through `FromStr`. |
 | `QueryMode` | Explicitly select URI or form query decoding without changing path semantics. |
 | `InternalUrl` | Build validated internal paths and encode segment/query data. |

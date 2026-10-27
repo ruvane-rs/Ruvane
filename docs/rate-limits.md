@@ -67,8 +67,8 @@ session resolution by the limiter does not refresh idle time or expose data.
 Other session/CSRF guards and application lookups can refresh idle time independently.
 
 Guards use the selected pattern, not the raw path, query, capture or forwarded
-headers. Dynamic captures share their declared pattern. GET, HEAD and POST at the
-same pattern share a bucket when using the same limiter. Per-route checks group
+headers. Dynamic captures share their declared pattern. All supported methods
+at the same pattern share a bucket when using the same limiter. Per-route checks group
 unmatched paths into one extra pattern scope; the anonymous session guard keeps
 using its global pool. Unknown-path churn cannot create arbitrary buckets.
 Different limiter instances have independent state
@@ -107,10 +107,10 @@ Navigation uses the reserved read-only root error component with title
 initial hydration and client navigation accept the same closed error shape. The
 Retry-After header is transport metadata and is not embedded in navigation seeds.
 
-For POST guard failures, the framework additionally emits the fixed
+For mutation guard failures, the framework additionally emits the fixed
 `Ruvane-Action-Rejected: rate-limit` marker. Together with a valid no-store 429 and
-retry delta, this proves to the bridge that the route handler was skipped. It
-delivers `ActionFailure::RateLimited` to the Rust component and `"rate-limited"`
+retry delta, this identifies a pre-handler refusal. For POST actions, it proves
+to the bridge that the route handler was skipped. It delivers `ActionFailure::RateLimited` to the Rust component and `"rate-limited"`
 from `controller.whenIdle()`. `controller.retryAfter()` reads the last bounded
 retry delta, or null. The runtime does not set uncertain mutation state for this
 confirmed refusal and never retries the POST automatically.

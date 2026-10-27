@@ -270,9 +270,7 @@ impl App {
             .with_status(status)
         };
         match failure.retry_after {
-            Some(retry) => {
-                response.guard_rate_limited(retry, request.method() == crate::Method::Post)
-            }
+            Some(retry) => response.guard_rate_limited(retry, request.method().is_mutation()),
             None => response,
         }
     }

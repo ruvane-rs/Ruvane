@@ -286,7 +286,7 @@ impl RateLimiter {
             Ok(RateLimitDecision::Limited(retry))
         }
     }
-    /// Limits all callers together per selected route pattern, including GET/HEAD and POST.
+    /// Limits all callers together per selected route pattern, across all supported methods.
     /// All unmatched requests share one additional scope. Assets outside App guards are unaffected.
     pub fn guard(&self) -> RouteGuard {
         self.make_guard(None)

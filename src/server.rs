@@ -31,7 +31,7 @@ pub struct ServerConfig {
     pub max_request_line_bytes: usize,
     /// Header fields, from 1 to 1024; defaults to 64.
     pub max_headers: usize,
-    /// Encoded form or JSON POST body bytes, from 0 to 64 KiB; defaults to 64 KiB.
+    /// Encoded form or JSON mutation body bytes, from 0 to 64 KiB; defaults to 64 KiB.
     pub max_request_body_bytes: usize,
     /// Application response body bytes, from 64 to 64 MiB; defaults to 1 MiB.
     /// Buffered oversize results become 500; streaming bodies stop before exceeding it.
@@ -101,7 +101,7 @@ impl ShutdownHandle {
 
 /// A bounded HTTP development server that binds only to a loopback IP address.
 ///
-/// This is a limited HTTP/1.1 form profile, not a general HTTP/1.1 or TLS
+/// This is a limited HTTP/1.1 request profile, not a general HTTP/1.1 or TLS
 /// implementation. Each connection receives at most one response and is closed.
 /// Host must name `localhost` or the bound IP with the actual port (port 80
 /// may be omitted). Overload closes newly accepted connections without a response.
@@ -290,8 +290,8 @@ fn serve(
         if !valid_host(request.header("host").unwrap_or(""), address) {
             return Err(StatusCode::BadRequest);
         }
-        if request.method() == Method::Post {
-            let length = router.prepare_post(&request, config.max_request_body_bytes)?;
+        if request.method().is_mutation() {
+            let length = router.prepare_mutation(&request, config.max_request_body_bytes)?;
             let body = read_body(
                 &mut job.stream,
                 &bytes[end..],
@@ -299,7 +299,7 @@ fn serve(
                 job.accepted_at + config.request_timeout,
                 stopped,
             )?;
-            router.parse_post(&mut request, &body)?;
+            router.parse_mutation(&mut request, &body)?;
         }
         Ok(request)
     }) {
@@ -338,7 +338,7 @@ fn serve(
             plan = None;
         }
     }
-    let headers = response.wire_headers(router.allowed(&path));
+    let headers = response.wire_headers(&router.allowed(&path));
     let written = write_until(&mut job.stream, headers.as_bytes(), deadline, stopped);
     if let (Some(plan), Some(mut producer)) = (plan, producer) {
         let outcome = if written.is_ok() && !head {

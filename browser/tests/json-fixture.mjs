@@ -15,10 +15,10 @@ use ruvane::{RateLimiter,RateLimitPolicy,RateLimitLimits,JsonValue};
 pub static GUARDS:AtomicUsize=AtomicUsize::new(0);
 pub static ECHOES:AtomicUsize=AtomicUsize::new(0);
 pub fn tasks()->Arc<crate::json_tasks::Tasks>{static TASKS:OnceLock<Arc<crate::json_tasks::Tasks>>=OnceLock::new();TASKS.get_or_init(||Arc::new(Default::default())).clone()}
-pub fn quota()->&'static RateLimiter {static QUOTA:OnceLock<RateLimiter>=OnceLock::new();QUOTA.get_or_init(||RateLimiter::new(RateLimitPolicy::new(128,60).unwrap(),RateLimitLimits::default()))}
+pub fn quota()->&'static RateLimiter {static QUOTA:OnceLock<RateLimiter>=OnceLock::new();QUOTA.get_or_init(||RateLimiter::new(RateLimitPolicy::new(512,60).unwrap(),RateLimitLimits::default()))}
 pub fn low()->&'static RateLimiter {static QUOTA:OnceLock<RateLimiter>=OnceLock::new();QUOTA.get_or_init(||RateLimiter::new(RateLimitPolicy::new(2,60).unwrap(),RateLimitLimits::default()))}
 pub fn audit()->ruvane::RouteGuard {ruvane::RouteGuard::new(|context|{
- let request=context.request();if request.method()==ruvane::Method::Post {assert!(request.json().is_some()&&request.form_data().is_none());}
+ let request=context.request();if matches!(request.method(),ruvane::Method::Post|ruvane::Method::Put|ruvane::Method::Patch) {assert!(request.json().is_some()&&request.form_data().is_none());}
  GUARDS.fetch_add(1,Ordering::SeqCst);ruvane::GuardDecision::Allow
 })}
 pub fn stats()->ruvane::Response {
@@ -56,8 +56,9 @@ impl ruvane::Component for JsonProbe {
   await file("json-probe/page.rs",'pub fn page()->ruvane::FilePage {ruvane::FilePage::client("json-probe",25,crate::pages::zero,|_|Ok(ruvane::ClientPageData::new("JSON probe",Default::default())))}\n');
   await file("api/guard.rs",'pub fn guard()->ruvane::RouteGuard {crate::session_server::store().csrf_guard()}\n');
   await file("api/tasks/route.rs",'pub fn route()->ruvane::FileEndpoint {crate::json_tasks::endpoint(crate::json_server::tasks())}\n');
+  await file("api/tasks/[id]/route.rs",'pub fn route()->ruvane::FileEndpoint {crate::json_tasks::resource_endpoint(crate::json_server::tasks())}\n');
   await file("api/tasks/guard.rs",'pub fn guard()->ruvane::RouteGuard {crate::json_server::quota().session_guard(crate::session_server::store().clone())}\n');
-  await file("api/limited/route.rs",'pub fn route()->ruvane::FileEndpoint {ruvane::FileEndpoint::new().post_json(|request|crate::json_server::tasks().write(request))}\n');
+  await file("api/limited/route.rs",'pub fn route()->ruvane::FileEndpoint {ruvane::FileEndpoint::new().post_json(|request|crate::json_server::tasks().write(request)).put_json(|request|crate::json_server::tasks().write(request)).patch_json(|request|crate::json_server::tasks().write(request)).delete(|_|ruvane::Response::json(&ruvane::JsonValue::from(true)))}\n');
   await file("api/limited/guard.rs",'pub fn guard()->ruvane::RouteGuard {crate::json_server::low().session_guard(crate::session_server::store().clone())}\n');
   await file("api/echo/route.rs",'pub fn route()->ruvane::FileEndpoint {ruvane::FileEndpoint::new().post_json(|request|{crate::json_server::ECHOES.fetch_add(1,std::sync::atomic::Ordering::SeqCst);ruvane::Response::json(request.json().unwrap())})}\n');
   await file("json-stats/route.rs",'pub fn route()->ruvane::FileEndpoint {ruvane::FileEndpoint::new().get(|_|crate::json_server::stats())}\n');

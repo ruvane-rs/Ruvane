@@ -84,8 +84,8 @@ The same path can render a page on GET and mutate on POST. Fixed routes win with
 each method. Path captures use the existing URI rules. POST URL queries use URI
 mode, and `query_params()` never merges with `form_data()`. Unknown actions return
 404; a path registered only for another method returns 405. Allow lists the
-registered GET/HEAD and/or POST methods; unsupported methods on an unknown path
-retain the local profile's GET/HEAD fallback.
+registered methods, including explicit JSON PUT/PATCH and bodyless DELETE.
+Unsupported known methods on an unknown path receive an empty Allow.
 
 ## Origin policy
 

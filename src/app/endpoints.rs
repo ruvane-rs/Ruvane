@@ -16,10 +16,13 @@ pub struct FileEndpoint {
     pub(super) guards: Vec<crate::RouteGuard>,
     get: Option<(QueryMode, Handler)>,
     post: Option<Post>,
+    put: Option<Handler>,
+    patch: Option<Handler>,
+    delete: Option<Handler>,
     duplicate: bool,
 }
 impl FileEndpoint {
-    /// Creates an empty endpoint to configure with one GET and/or POST handler.
+    /// Creates an empty endpoint to configure with explicit method handlers.
     pub fn new() -> Self {
         Self::default()
     }
@@ -62,6 +65,33 @@ impl FileEndpoint {
         self.post = Some(Post::Json(Arc::new(handler)));
         self
     }
+    /// Declares a JSON PUT for full resource replacement.
+    pub fn put_json(
+        mut self,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Self {
+        self.duplicate |= self.put.is_some();
+        self.put = Some(Arc::new(handler));
+        self
+    }
+    /// Declares a JSON PATCH with application-defined atomic patch semantics.
+    pub fn patch_json(
+        mut self,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Self {
+        self.duplicate |= self.patch.is_some();
+        self.patch = Some(Arc::new(handler));
+        self
+    }
+    /// Declares a bodyless DELETE with the Router's same-origin checks.
+    pub fn delete(
+        mut self,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Self {
+        self.duplicate |= self.delete.is_some();
+        self.delete = Some(Arc::new(handler));
+        self
+    }
     /// Declares a typed POST action with the same checks and revision enforcement.
     pub fn post_action(
         mut self,
@@ -87,7 +117,16 @@ impl FileEndpoint {
         self
     }
     fn count(&self) -> usize {
-        usize::from(self.get.is_some()) + usize::from(self.post.is_some())
+        [
+            self.get.is_some(),
+            self.post.is_some(),
+            self.put.is_some(),
+            self.patch.is_some(),
+            self.delete.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count()
     }
     pub(super) fn mount(&self, router: &mut Router, pattern: &str) -> Result<(), RouteError> {
         self.mount_with(router, pattern, None)
@@ -173,6 +212,37 @@ impl FileEndpoint {
                         }
                     })?;
                 }
+            }
+        }
+        for (method, handler) in [
+            (crate::Method::Put, &self.put),
+            (crate::Method::Patch, &self.patch),
+            (crate::Method::Delete, &self.delete),
+        ] {
+            let Some(handler) = handler else {
+                continue;
+            };
+            let handler = Arc::clone(handler);
+            let (app, guards, pattern_owned) =
+                (app.clone(), self.guards.clone(), pattern.to_owned());
+            let handle = move |request: &Request| {
+                if reserved(request.path()) {
+                    return Response::error(StatusCode::NotFound);
+                }
+                match &app {
+                    Some(app) => {
+                        app.guarded_endpoint(request, &pattern_owned, &guards, |request| {
+                            handler(request)
+                        })
+                    }
+                    None => handler(request),
+                }
+            };
+            match method {
+                crate::Method::Put => router.put_json(pattern, handle)?,
+                crate::Method::Patch => router.patch_json(pattern, handle)?,
+                crate::Method::Delete => router.delete(pattern, handle)?,
+                _ => unreachable!(),
             }
         }
         Ok(())

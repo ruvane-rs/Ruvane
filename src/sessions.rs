@@ -1,5 +1,5 @@
 use crate::{
-    Cookie, CsrfToken, GuardDecision, Method, Request, Response, RouteGuard, SameSite, StatusCode,
+    Cookie, CsrfToken, GuardDecision, Request, Response, RouteGuard, SameSite, StatusCode,
 };
 use std::{
     collections::HashMap,
@@ -651,10 +651,10 @@ impl SessionStore {
             Err(_) => GuardDecision::Unavailable,
         })
     }
-    /// Verifies a POST claim against its live cookie session and current generation.
+    /// Verifies a mutation claim against its live cookie session and current generation.
     /// Missing, malformed, ambiguous and cross-session claims fail without refreshing idle time.
     pub fn verify_csrf(&self, request: &Request) -> Result<bool, SessionError> {
-        if request.method() != Method::Post {
+        if !request.method().is_mutation() {
             return Ok(false);
         }
         let Some(id) = request
@@ -687,13 +687,13 @@ impl SessionStore {
         record.touched = now;
         Ok(true)
     }
-    /// Requires a live session and, for POST, its CSRF token before the route handler.
+    /// Requires a live session and, for every mutation, its CSRF token before the route handler.
     /// Accepted requests are Private; rejection is 403, store failure is 503.
     pub fn csrf_guard(&self) -> RouteGuard {
         let store = self.clone();
         RouteGuard::new(move |context| {
             let request = context.request();
-            let result = if request.method() == Method::Post {
+            let result = if request.method().is_mutation() {
                 store.verify_csrf(request)
             } else {
                 store.lookup(request).map(|session| session.is_some())

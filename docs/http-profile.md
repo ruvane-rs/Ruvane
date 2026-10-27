@@ -1,6 +1,6 @@
 # Local HTTP profile
 
-Ruvane 0.1.0-alpha.24 implements a small development profile based on the
+Ruvane 0.1.0-alpha.52 implements a small development profile based on the
 message format in [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html) and
 the semantics in [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html).
 It does **not** claim full HTTP/1.1 compliance. In particular, it does not
@@ -10,10 +10,10 @@ use behind a reverse proxy.
 ## Requests
 
 - HTTP/1.1, with exactly one space between request-line components.
-- GET, HEAD and explicitly registered form or JSON POST routes. Known unsupported
+- GET/HEAD, explicit form/JSON POST, JSON PUT/PATCH and bodyless DELETE routes. Known unsupported
   methods return 405 when the rest of the message fits this profile; unknown
   methods return 501. Allow reflects registered methods on a matching path,
-  with the existing GET/HEAD fallback on unknown paths.
+  with an empty Allow on unknown paths.
 - Origin-form targets beginning with `/`. Absolute URIs, asterisk-form,
   authority-form, fragments, backslashes, repeated slashes, and literal `.` or
   `..` path segments are rejected. Unsupported forms may produce 400 even for
@@ -39,15 +39,16 @@ use behind a reverse proxy.
   user information, and other loopback addresses are not aliases for the
   bound address.
 - GET/HEAD remain bodyless: absent Content-Length or one decimal zero is
-  accepted; positive lengths return 413. Registered POST forms require one
-  Content-Length and a bounded URL-encoded body. Malformed, overflowing,
+  accepted; positive lengths return 413. Registered POST/PUT/PATCH routes require one
+  Content-Length and a bounded body in their declared form/JSON profile. DELETE
+  accepts absent/zero Content-Length, with no Content-Type or Content-Encoding. Malformed, overflowing,
   comma-separated or duplicate lengths return 400.
 - Transfer-Encoding returns 501, or 400 when Content-Length is also present.
   Expect returns 417 without an interim response. Upgrade returns 501.
 
 There is no keep-alive or request pipelining. The server parses the first
 complete header block, writes at most one response, and closes the socket.
-For POST it reads the declared body after route/origin/media/size checks. Bytes
+For body-bearing mutations it reads the declared body after route/origin/media/size checks. Bytes
 beyond the first request's headers and declared body are discarded; a second
 request is never dispatched. Closing with unread data can reset the connection. Clients must
 not rely on receiving a response to unsupported pipelined traffic.
@@ -70,12 +71,12 @@ Invalid, duplicate, or overlapping dynamic patterns fail at registration.
 Queries do not affect matching. Ordinary and asset routes preserve literal
 `+`; form routes decode raw `+` as spaces, while `%2B` stays a plus. Unknown
 paths use the ordinary URI mode. On GET/HEAD an invalid query returns 400 before
-any handler, including on an unknown path. POST queries are checked after header
+any handler, including on an unknown path. Mutation queries are checked after header
 preflight and body validation. An unmatched valid request returns 404.
-Framing, POST preflight and unsupported-method checks happen before semantic query decoding,
+Framing, mutation preflight and unsupported-method checks happen before semantic query decoding,
 so a request with multiple faults may receive a framing or method error first.
-POST has its own route namespace and requires the fixed origin policy and body
-profile described in [server forms](post-forms.md). URL queries stay in URI mode
+Every mutation method has its own route namespace and requires the fixed origin policy and body
+profile described in [server forms](post-forms.md) and [JSON APIs](json.md). URL queries stay in URI mode
 and separate from body fields. No wildcard routes, middleware or dynamic module
 lookup are introduced. Actions are explicit Rust handlers, not remote function names.
 
@@ -84,7 +85,7 @@ type, and buffered body length, but sends no body. Stream plans preserve chunked
 framing without running their factory or producer. A handler can inspect
 `Request::method()`. Recognizable HEAD requests also suppress error bodies.
 GET/HEAD handlers must be read-only. All handlers must be safe for concurrent
-calls; POST side effects are not deduplicated or automatically rolled back.
+calls; Mutation side effects are not deduplicated or automatically rolled back.
 
 Responses have fixed headers: explicitly selected Content-Type, Content-Length in bytes
 for buffered bodies or Transfer-Encoding: chunked for explicit streams,
@@ -140,7 +141,7 @@ they are produced; exceeding the remaining budget closes the incomplete stream.
 | Complete request headers, including delimiters | 16 KiB | 32 bytes–1 MiB |
 | Request line, excluding CRLF | 4096 bytes | 14 bytes–64 KiB, within the header budget |
 | Header fields | 64 | 1–1024 |
-| Encoded POST body | 64 KiB | 0–64 KiB |
+| Encoded mutation body | 64 KiB | 0–64 KiB |
 | Application response body | 1 MiB | 64 bytes–64 MiB |
 | Receiving headers and body, including queue wait | 5 seconds | 1 ms–60 seconds |
 | Writing the response, including stream setup/production | 5 seconds | 1 ms–60 seconds |

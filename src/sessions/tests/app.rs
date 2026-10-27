@@ -113,7 +113,7 @@ fn action_preflight_revision_and_expired_session_checks_precede_mutation() {
             cookie.value()
         );
         let mut request = crate::http::parse(raw.as_bytes(), 8192, 32).unwrap();
-        match router.prepare_post(&request, 1024) {
+        match router.prepare_mutation(&request, 1024) {
             Err(status) => assert_eq!(status, expected),
             Ok(_) => {
                 request.form = Some(crate::FormData::default());
@@ -129,7 +129,7 @@ fn action_preflight_revision_and_expired_session_checks_precede_mutation() {
         cookie.value()
     );
     let mut request = crate::http::parse(raw.as_bytes(), 8192, 32).unwrap();
-    router.prepare_post(&request, 1024).unwrap();
+    router.prepare_mutation(&request, 1024).unwrap();
     request.form = Some(crate::FormData::default());
     assert_eq!(router.dispatch(request).status(), StatusCode::Forbidden);
     assert_eq!(writes.load(Ordering::SeqCst), 1);

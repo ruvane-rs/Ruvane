@@ -31,7 +31,7 @@ impl fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
-/// A router for GET/HEAD pages and explicit form/JSON POST mutations.
+/// A router for GET/HEAD pages and explicit mutation body profiles.
 ///
 /// Exact paths take priority regardless of registration order. Overlapping
 /// dynamic patterns are rejected. Matching uses raw, case-sensitive segments;
@@ -63,12 +63,13 @@ struct Route {
     handler: Handler,
     query_mode: QueryMode,
     action: bool,
-    body: PostBody,
+    body: MutationBody,
 }
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum PostBody {
+enum MutationBody {
     Form,
     Json,
+    Empty,
 }
 
 impl Route {
@@ -281,8 +282,47 @@ impl Router {
         path: impl Into<String>,
         handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
     ) -> Result<(), RouteError> {
-        self.register(path.into(), Method::Post, QueryMode::Uri, handler)?;
-        self.routes.last_mut().unwrap().body = PostBody::Json;
+        self.register_json(path.into(), Method::Post, handler)
+    }
+
+    /// Registers a same-origin JSON PUT. The handler defines full replacement semantics.
+    pub fn put_json(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.register_json(path.into(), Method::Put, handler)
+    }
+
+    /// Registers a same-origin JSON PATCH. The handler defines and atomically applies its patch format.
+    pub fn patch_json(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.register_json(path.into(), Method::Patch, handler)
+    }
+
+    /// Registers a same-origin DELETE with no body, Content-Type or Content-Encoding.
+    /// Content-Length may be absent or zero. Session and CSRF guards remain explicit.
+    pub fn delete(
+        &mut self,
+        path: impl Into<String>,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.register(path.into(), Method::Delete, QueryMode::Uri, handler)?;
+        self.routes.last_mut().unwrap().body = MutationBody::Empty;
+        Ok(())
+    }
+
+    fn register_json(
+        &mut self,
+        path: String,
+        method: Method,
+        handler: impl Fn(&Request) -> Response + Send + Sync + 'static,
+    ) -> Result<(), RouteError> {
+        self.register(path, method, QueryMode::Uri, handler)?;
+        self.routes.last_mut().unwrap().body = MutationBody::Json;
         Ok(())
     }
 
@@ -308,7 +348,7 @@ impl Router {
             dynamic,
             handler: Box::new(handler),
             action: false,
-            body: PostBody::Form,
+            body: MutationBody::Form,
             query_mode,
         };
         if dynamic
@@ -362,17 +402,22 @@ impl Router {
             })
     }
 
-    pub(crate) fn allowed(&self, path: &str) -> &'static str {
-        let get = self.select(Method::Get, path).is_some();
-        let post = self.select(Method::Post, path).is_some();
-        match (get, post) {
-            (true, true) => "GET, HEAD, POST",
-            (false, true) => "POST",
-            _ => "GET, HEAD",
-        }
+    pub(crate) fn allowed(&self, path: &str) -> String {
+        [
+            (Method::Get, "GET"),
+            (Method::Head, "HEAD"),
+            (Method::Post, "POST"),
+            (Method::Put, "PUT"),
+            (Method::Patch, "PATCH"),
+            (Method::Delete, "DELETE"),
+        ]
+        .into_iter()
+        .filter_map(|(method, name)| self.select(method, path).is_some().then_some(name))
+        .collect::<Vec<_>>()
+        .join(", ")
     }
 
-    pub(crate) fn prepare_post(
+    pub(crate) fn prepare_mutation(
         &self,
         request: &Request,
         maximum: usize,
@@ -381,9 +426,9 @@ impl Router {
             ContentTooLarge, Forbidden, LengthRequired, MethodNotAllowed, NotFound,
             UnsupportedMediaType,
         };
-        let selected = self.select(Method::Post, request.path());
+        let selected = self.select(request.method(), request.path());
         if selected.is_none() {
-            return Err(if self.select(Method::Get, request.path()).is_some() {
+            return Err(if self.has_path(request.path()) {
                 MethodNotAllowed
             } else {
                 NotFound
@@ -407,6 +452,15 @@ impl Router {
         if request.header("content-encoding").is_some() {
             return Err(UnsupportedMediaType);
         }
+        if selected.unwrap().body == MutationBody::Empty {
+            if request.content_length.is_some_and(|length| length != 0) {
+                return Err(ContentTooLarge);
+            }
+            if request.header("content-type").is_some() {
+                return Err(UnsupportedMediaType);
+            }
+            return Ok(0);
+        }
         let mut content_type = request
             .header("content-type")
             .ok_or(UnsupportedMediaType)?
@@ -415,7 +469,7 @@ impl Router {
             .next()
             .unwrap_or("")
             .trim()
-            .eq_ignore_ascii_case(if selected.unwrap().body == PostBody::Json {
+            .eq_ignore_ascii_case(if selected.unwrap().body == MutationBody::Json {
                 crate::JSON_MEDIA_TYPE
             } else {
                 "application/x-www-form-urlencoded"
@@ -443,12 +497,21 @@ impl Router {
         }
         Ok(length as usize)
     }
-    pub(crate) fn parse_post(&self, request: &mut Request, bytes: &[u8]) -> Result<(), StatusCode> {
+    pub(crate) fn parse_mutation(
+        &self,
+        request: &mut Request,
+        bytes: &[u8],
+    ) -> Result<(), StatusCode> {
         let route = self
-            .select(Method::Post, request.path())
+            .select(request.method(), request.path())
             .ok_or(StatusCode::NotFound)?;
         match route.body {
-            PostBody::Form => {
+            MutationBody::Empty => {
+                if !bytes.is_empty() {
+                    return Err(StatusCode::ContentTooLarge);
+                }
+            }
+            MutationBody::Form => {
                 request.form = Some(crate::FormData::parse(bytes).map_err(|error| match error {
                     crate::FormError::TooLarge | crate::FormError::TooManyFields => {
                         StatusCode::ContentTooLarge
@@ -456,7 +519,7 @@ impl Router {
                     _ => StatusCode::BadRequest,
                 })?)
             }
-            PostBody::Json => {
+            MutationBody::Json => {
                 request.json = Some(crate::JsonValue::parse(bytes).map_err(|error| {
                     if error.is_limit() {
                         StatusCode::ContentTooLarge
@@ -500,10 +563,15 @@ impl Router {
             }
             return self.error_response(StatusCode::NotFound);
         };
-        if request.method() == Method::Post
+        if request.method().is_mutation()
             && !match route.body {
-                PostBody::Form => request.form.is_some() && request.json.is_none(),
-                PostBody::Json => request.json.is_some() && request.form.is_none(),
+                MutationBody::Empty => {
+                    request.form.is_none()
+                        && request.json.is_none()
+                        && request.content_length.is_none_or(|length| length == 0)
+                }
+                MutationBody::Form => request.form.is_some() && request.json.is_none(),
+                MutationBody::Json => request.json.is_some() && request.form.is_none(),
             }
         {
             return Response::error(StatusCode::Forbidden);

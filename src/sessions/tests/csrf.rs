@@ -253,3 +253,31 @@ fn valid_claims_refresh_idle_without_extending_absolute_expiry() {
             .unwrap()
     );
 }
+
+#[test]
+fn all_mutations_fence_rotation_revocation_and_expiry() {
+    for method in ["POST", "PUT", "PATCH", "DELETE"] {
+        let store = store();
+        let now = Instant::now();
+        at(&store, now);
+        let (cookie, session, token) = issued(&store);
+        let claim = |cookie: &Cookie, token: &CsrfToken| {
+            crate::http::parse(
+            format!("{method} /private HTTP/1.1\r\nHost: localhost\r\nCookie: {}={}\r\nRuvane-Csrf-Token: {}\r\n\r\n",cookie.name(),cookie.value(),token.as_str()).as_bytes(),8192,32).unwrap()
+        };
+        assert!(store.verify_csrf(&claim(&cookie, &token)).unwrap());
+        let rotated = store.rotate(&session).unwrap().unwrap();
+        let fresh = handle(&store, &rotated).csrf_token().unwrap().unwrap();
+        assert!(!store.verify_csrf(&claim(&cookie, &token)).unwrap());
+        assert!(!store.verify_csrf(&claim(&rotated, &token)).unwrap());
+        assert!(store.verify_csrf(&claim(&rotated, &fresh)).unwrap());
+        store.revoke(&session).unwrap();
+        assert!(!store.verify_csrf(&claim(&rotated, &fresh)).unwrap());
+        let (cookie, _, token) = issued(&store);
+        at(
+            &store,
+            now + Duration::from_secs(u64::from(store.inner.limits.absolute)),
+        );
+        assert!(!store.verify_csrf(&claim(&cookie, &token)).unwrap());
+    }
+}

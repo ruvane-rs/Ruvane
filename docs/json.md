@@ -87,14 +87,14 @@ read-only GET handler returning `Response::json`. HEAD sends that response's
 headers and byte length without its body.
 
 The route selects the body profile. MIME cannot switch a form route to JSON or
-vice versa. JSON POSTs accept `application/json`, optionally one UTF-8 charset
+vice versa. JSON POST/PUT/PATCH routes accept `application/json`, optionally one UTF-8 charset
 parameter. Other media types, parameters, charsets or any Content-Encoding return
 415. The existing matching-Origin, Fetch Metadata, Content-Length, byte and I/O
 deadline requirements still apply. JSON syntax, UTF-8 and duplicate errors return
 400; resource-budget errors return 413. These checks precede guards and handlers.
 
-`Request::json()` is Some only for a successfully parsed JSON POST. `form_data()`
-is None there. Forms, GET/HEAD and sanitized pre-render/background GET requests
+`Request::json()` is Some only for a successfully parsed JSON POST, PUT or PATCH. `form_data()`
+is None there. Forms, GET/HEAD, DELETE and sanitized pre-render/background GET requests
 have no JSON body. Query parameters and captures stay separate. Supplied stale
 application revision headers still return 409. JSON endpoints do not require an
 RVA1 action revision and do not change that wire protocol.
@@ -108,7 +108,7 @@ fixed JSON errors. Clients must check status and MIME before decoding.
 ## Session and mutation protection
 
 Apply session, CSRF and quota guards explicitly. A session CSRF guard requires
-`Ruvane-Csrf-Token` for JSON POSTs. JSON fields never supply that claim:
+`Ruvane-Csrf-Token` for JSON mutations. JSON fields never supply that claim:
 `_ruvane_csrf` in an object is ordinary application data. Missing, forged,
 cross-session and retired header tokens fail before mutation. Native forms retain
 their separate reserved hidden field. There is no query/cookie token fallback.
@@ -117,8 +117,35 @@ Quota guards see validated immutable data and run before handlers, after earlier
 authorization/CSRF guards. Existing 429/503 behavior remains. Native page caches
 do not wrap API handlers. Validate allowed fields, domain types and permissions
 before applying changes. JSON grammar validation is not authorization. The
-loopback-only transport, unsupported methods/compression/chunking and CORS scope
+loopback-only transport, unsupported compression/chunking and CORS scope
 remain unchanged.
+
+## PUT, PATCH and DELETE
+
+Alpha.52 adds `Router::put_json`, `Router::patch_json` and `Router::delete`, with
+matching `FileEndpoint` builders. Each method has an independent registration
+slot and ambiguity checks. `Method::is_mutation()` identifies POST, PUT, PATCH
+and DELETE. The framework validates transport and JSON; resource replacement,
+patch format, atomic application and authorization belong to the handler.
+
+PUT and PATCH use the same mandatory Origin, optional same-origin Fetch Metadata,
+Content-Length, MIME, JSON budgets and absolute receive deadline as JSON POST.
+DELETE requires the same source policy, but accepts only absent/zero Content-Length
+and no Content-Type or Content-Encoding. A positive declared body returns 413;
+media/encoding headers return 415. It supplies neither JSON nor form data.
+As with all requests in this local profile, bytes beyond the declared first
+message are discarded and never dispatched as another request.
+
+`SessionStore::csrf_guard()` verifies the current header token for every JSON
+mutation and for DELETE. GET/HEAD require a live session without a CSRF claim.
+Quotas share the selected route pattern across all methods, keeping family
+identity across session rotation. Every pre-handler mutation quota refusal can
+emit the fixed rate-limit marker; the Wasm action protocol still sends POST only.
+
+A method mismatch returns 405 with only registered methods in Allow, in
+GET, HEAD, POST, PUT, PATCH, DELETE order. HEAD appears only when GET is registered.
+For unsupported known methods on unknown paths, Allow is empty. Supported methods
+on unknown paths return 404. No CORS or OPTIONS handler is added.
 
 ## Task example
 
@@ -126,13 +153,32 @@ remain unchanged.
 cargo run --offline --locked --example json_api -- 8080
 ```
 
-Open the printed address. The example creates a labeled demo session, lists
-GET `/api/tasks`, creates with JSON POST at the same URL and logs out with JSON
-POST `/api/logout`. It applies session, CSRF and quota guards. The store caps
-entries at 32 and titles at 256 UTF-8 bytes, validates the complete schema and
-constructs a response before committing a new record. Data is shared demo memory,
-discarded on restart; this is not real user authentication or a database. The
-first-party browser module renders titles with text nodes and never replays POST.
+Open the printed address. The example opens a labeled demo session and applies
+session, CSRF and quota guards to every API method:
+
+| Method and path | Input | Result |
+| --- | --- | --- |
+| GET/HEAD `/api/tasks` | No body | List tasks |
+| POST `/api/tasks` | `{"title":"Read"}` | Create an incomplete task |
+| GET/HEAD `/api/tasks/{id}` | No body | Read one task |
+| PUT `/api/tasks/{id}` | `{"title":"Read","completed":true}` | Replace all editable fields |
+| PATCH `/api/tasks/{id}` | `{"title":"Write"}` or `{"completed":true}` or both | Update only supplied fields |
+| DELETE `/api/tasks/{id}` | No body | Remove the task and return `{"deleted":id}` |
+| POST `/api/logout` | `{}` | Revoke the demo session |
+
+Task responses contain `id`, `title` and `completed`. PUT requires both editable
+fields. PATCH requires at least one and preserves omitted fields; null, unknown
+fields and incorrect types fail. This application-defined JSON patch format is
+not JSON Patch or JSON Merge Patch. IDs are positive canonical decimal integers;
+unknown or removed resources return 404. Creation never reuses deleted IDs.
+
+The store caps entries at 32 and titles at 256 UTF-8 bytes. It validates the entire
+schema and builds the response before committing a change under one mutex.
+Concurrent partial updates preserve independent fields; concurrent replacements
+use last-writer-wins order. There are no conditional requests or conflict detection
+for stale client reads. Data is shared demo memory and disappears on restart;
+this is not real user authentication or a database. The browser module uses text
+nodes and sends each mutation once, with no automatic retry.
 
 CLI tests run a bundle with source files hidden, including concurrency, guard
 ordering and the shared parser inside an import-free Wasm component. Browser ABI

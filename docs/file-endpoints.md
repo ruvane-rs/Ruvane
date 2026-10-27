@@ -35,8 +35,11 @@ or component factories.
 | `post_action` | POST | Bounded URL-encoded form | `Result<ActionReply, ActionError>` |
 | `post_action_response` | POST | Bounded URL-encoded form | Cookie-capable action `Response` |
 | `post_json` | POST | Bounded UTF-8 JSON | `Response` |
+| `put_json` | PUT | Bounded UTF-8 JSON | `Response` |
+| `patch_json` | PATCH | Bounded UTF-8 JSON | `Response` |
+| `delete` | DELETE | No body or media/encoding headers | `Response` |
 
-One file can declare one GET handler and one POST handler. `get` and `get_form`
+One file can declare one handler per supported method. `get` and `get_form`
 share a method slot; all POST declarations share the POST slot. Repeated
 methods and empty declarations fail registration instead of replacing a handler.
 HEAD follows the existing read-only GET behavior and suppresses response bytes.
@@ -74,10 +77,10 @@ Framework route prefixes remain reserved. Literal `_ruvane` and `ruvane-runtime`
 prefixes are rejected. Dynamic endpoints cannot execute their handlers for those
 raw prefixes; known framework routes retain their normal dispatch. Method
 mismatches keep 405/Allow behavior. Alpha.51 adds an explicit
-[JSON body profile](json.md); supported HTTP methods remain GET/HEAD/POST.
+[JSON body profile](json.md); alpha.52 adds JSON PUT/PATCH and bodyless DELETE.
 
-POST endpoints reuse the Router's mandatory Origin comparison, Fetch Metadata,
-MIME, body/form budgets and absolute I/O deadlines. These checks do not authenticate
+Mutation endpoints reuse the Router's mandatory Origin comparison, Fetch Metadata,
+route-selected MIME, body budgets and absolute I/O deadlines. These checks do not authenticate
 users. Each handler must validate fields and authorize its operation. Page loaders,
 layouts, loading/error screens and not-found presentations are not endpoint guards
 and do not wrap endpoint responses. GET/HEAD handlers must be read-only; all trusted
@@ -101,7 +104,7 @@ planning. The trusted `route()` declaration function does run natively and must
 be bounded and deterministic.
 
 All six special source kinds share the existing 128-file, 256 KiB/file, 4 MiB
-combined source and 1 MiB generated-module limits. Each registered GET or POST
+combined source and 1 MiB generated-module limits. Each registered method
 slot counts toward the combined 128 App routes with pages, assets and runtime
 routes. Existing path, query, form, response and worker limits still apply.
 

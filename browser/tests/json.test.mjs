@@ -36,7 +36,7 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
   });
   await t.test("a Unicode task is created once and reads do not cache earlier output",async()=>{
    const before=await stats(),title='Rust 🦀 "quotes" \\ slash </script>';
-   const response=await post(JSON.stringify({title}),cookie,claim);assert.equal(response.status,200);assert.deepEqual(await response.json(),{id:1,title});assert.deepEqual(await(await get("/api/tasks",cookie)).json(),{tasks:[{id:1,title}]});const after=await stats();assert.equal(after.writes,before.writes+1);assert.equal(after.calls,before.calls+1);
+   const response=await post(JSON.stringify({title}),cookie,claim);assert.equal(response.status,200);assert.deepEqual(await response.json(),{id:1,title,completed:false});assert.deepEqual(await(await get("/api/tasks",cookie)).json(),{tasks:[{id:1,title,completed:false}]});const after=await stats();assert.equal(after.writes,before.writes+1);assert.equal(after.calls,before.calls+1);
   });
   await t.test("malformed and oversized JSON never reaches guards or mutation handlers",async()=>{
    const before=await stats();
@@ -68,6 +68,46 @@ await test("bounded JSON APIs use native guards and an import-free shared Rust p
   await t.test("concurrent creates publish unique complete records within the store budget",async()=>{
    const responses=await Promise.all(Array.from({length:8},(_,n)=>post(JSON.stringify({title:`parallel ${n}`}),cookie,claim)));const items=[];for(const response of responses){assert.equal(response.status,200);items.push(await response.json());}assert.equal(new Set(items.map(item=>item.id)).size,8);assert.equal(new Set(items.map(item=>item.title)).size,8);
    const list=await(await get("/api/tasks",cookie)).json();for(const item of items)assert.ok(list.tasks.some(value=>value.id===item.id&&value.title===item.title));
+  });
+  const mutate=(method,id,body,value=claim,extra={})=>fetch(base+`/api/tasks/${id}`,{method,headers:{Origin:base,Cookie:cookie,...(value?{"Ruvane-Csrf-Token":value}:{}),...(method==="DELETE"?{}:{"Content-Type":"application/json"}),...extra},...(method==="DELETE"?{}:{body:JSON.stringify(body)})});
+  await t.test("resource GET HEAD and exact Allow expose independent method slots",async()=>{
+   const before=await stats(),getResponse=await get("/api/tasks/1",cookie);assert.equal(getResponse.status,200);assert.deepEqual(await getResponse.json(),{id:1,title:'Rust 🦀 "quotes" \\ slash </script>',completed:false});
+   const head=await get("/api/tasks/1",cookie,"HEAD");assert.equal(head.status,200);assert.equal((await head.arrayBuffer()).byteLength,0);assert.equal((await stats()).writes,before.writes);
+   const options=await get("/api/tasks/1",cookie,"OPTIONS");assert.equal(options.status,405);assert.equal(options.headers.get("allow"),"GET, HEAD, PUT, PATCH, DELETE");await options.arrayBuffer();
+   const wrong=await post('{}',cookie,claim,{},"/api/tasks/1");assert.equal(wrong.status,405);assert.equal(wrong.headers.get("allow"),"GET, HEAD, PUT, PATCH, DELETE");await wrong.arrayBuffer();
+  });
+  await t.test("PUT replaces all fields and PATCH preserves omitted fields",async()=>{
+   let response=await mutate("PUT",1,{title:"replacement",completed:true});assert.equal(response.status,200);assert.deepEqual(await response.json(),{id:1,title:"replacement",completed:true});
+   response=await mutate("PATCH",1,{title:"partial 🦀"});assert.equal(response.status,200);assert.deepEqual(await response.json(),{id:1,title:"partial 🦀",completed:true});
+   response=await mutate("PATCH",1,{completed:false});assert.equal(response.status,200);assert.deepEqual(await response.json(),{id:1,title:"partial 🦀",completed:false});
+  });
+  await t.test("invalid replacements and patches leave the entire stored resource unchanged",async()=>{
+   const before=await stats(),task=await(await get("/api/tasks/1",cookie)).json();
+   for(const [method,body] of [["PUT",{title:"missing state"}],["PUT",{completed:true}],["PUT",{title:"valid",completed:"wrong"}],["PATCH",{}],["PATCH",{title:"valid",completed:null}],["PATCH",{title:"valid",extra:true}],["PATCH",{title:""}],["PATCH",{title:"x".repeat(257)}]]) {const response=await mutate(method,1,body);assert.equal(response.status,400);assert.deepEqual(await response.json(),{error:"Bad Request"});}
+   assert.equal((await stats()).writes,before.writes);assert.deepEqual(await(await get("/api/tasks/1",cookie)).json(),task);
+   for(const id of [0,"01","missing",99999]){const response=await get(`/api/tasks/${id}`,cookie);assert.equal(response.status,404);await response.arrayBuffer();}
+  });
+  await t.test("all added mutations require current CSRF and reject stale revisions",async()=>{
+   const before=await stats();for(const method of ["PUT","PATCH","DELETE"]){const body={title:"blocked",completed:true};for(const value of [null,"forged"]){const response=await mutate(method,1,body,value);assert.equal(response.status,403);await response.arrayBuffer();}const revisionResponse=await mutate(method,1,body,claim,{"Ruvane-Application-Revision":String(BigInt(revision)+1n)});assert.equal(revisionResponse.status,409);await revisionResponse.arrayBuffer();}
+   assert.equal((await stats()).writes,before.writes);
+  });
+  await t.test("concurrent patches preserve independent fields and replacements never publish mixed fields",async()=>{
+   await(await mutate("PUT",1,{title:"base",completed:false})).arrayBuffer();
+   const patches=await Promise.all([mutate("PATCH",1,{title:"parallel"}),mutate("PATCH",1,{completed:true})]);for(const response of patches){assert.equal(response.status,200);await response.arrayBuffer();}assert.deepEqual(await(await get("/api/tasks/1",cookie)).json(),{id:1,title:"parallel",completed:true});
+   const replacements=Array.from({length:8},(_,n)=>({title:`pair ${n}`,completed:n%2===0}));
+   const responses=await Promise.all(replacements.map(body=>mutate("PUT",1,body)));for(let n=0;n<responses.length;n++){assert.equal(responses[n].status,200);assert.deepEqual(await responses[n].json(),{id:1,...replacements[n]});}
+   const final=await(await get("/api/tasks/1",cookie)).json();assert.ok(replacements.some(item=>item.title===final.title&&item.completed===final.completed));
+  });
+  await t.test("concurrent delete and patch are atomic and deleted IDs are never reused",async()=>{
+   const task=await(await post('{"title":"delete race"}',cookie,claim)).json();const before=await stats();
+   const [deleted,patched]=await Promise.all([mutate("DELETE",task.id),mutate("PATCH",task.id,{title:"race update"})]);assert.equal(deleted.status,200);assert.deepEqual(await deleted.json(),{deleted:task.id});assert.ok([200,404].includes(patched.status));await patched.arrayBuffer();
+   const missing=await get(`/api/tasks/${task.id}`,cookie);assert.equal(missing.status,404);await missing.arrayBuffer();
+   const repeat=await mutate("DELETE",task.id);assert.equal(repeat.status,404);await repeat.arrayBuffer();const after=await stats();assert.equal(after.tasks,before.tasks-1);assert.ok([1,2].includes(after.writes-before.writes));
+   const created=await post('{"title":"new after delete"}',cookie,claim);assert.equal(created.status,200);assert.ok((await created.json()).id>task.id);
+  });
+  await t.test("PUT PATCH POST and DELETE share one quota and each refusal skips the handler",async()=>{
+   await(await fetch(base+"/json-reset",{method:"POST",headers:{Origin:base,"Content-Type":"application/x-www-form-urlencoded"},body:""})).arrayBuffer();const before=await stats();
+   for(const [n,method] of ["PUT","PATCH","DELETE","POST"].entries()){const response=await fetch(base+"/api/limited",{method,headers:{Origin:base,Cookie:cookie,"Ruvane-Csrf-Token":claim,...(method==="DELETE"?{}:{"Content-Type":"application/json"})},...(method==="DELETE"?{}:{body:'{"title":"quota"}'})});assert.equal(response.status,n<2?200:429);if(n>=2){assert.equal(response.headers.get("ruvane-action-rejected"),"rate-limit");assert.ok(Number(response.headers.get("retry-after"))>0);}await response.arrayBuffer();}assert.equal((await stats()).writes,before.writes+2);
   });
   await t.test("task capacity rejects further creation without partial writes",async()=>{
    let count=(await stats()).tasks;while(count<32){const response=await post(JSON.stringify({title:`capacity ${count}`}),cookie,claim);assert.equal(response.status,200);await response.arrayBuffer();count++;}const before=await stats(),response=await post('{"title":"overflow"}',cookie,claim);assert.equal(response.status,503);await response.arrayBuffer();assert.equal((await stats()).writes,before.writes);assert.equal((await stats()).tasks,32);

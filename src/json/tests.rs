@@ -316,8 +316,8 @@ fn requests_keep_body_profiles_separate_and_sanitized_gets_drop_json() {
         router.dispatch(request.clone()).status(),
         crate::StatusCode::Forbidden
     );
-    router.prepare_post(&request, MAX_JSON_BYTES).unwrap();
-    router.parse_post(&mut request, body).unwrap();
+    router.prepare_mutation(&request, MAX_JSON_BYTES).unwrap();
+    router.parse_mutation(&mut request, body).unwrap();
     assert!(request.json().is_some());
     assert!(request.form_data().is_none());
     assert!(!format!("{request:?}").contains("PRIVATE_BODY"));

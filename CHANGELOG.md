@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.1.0-alpha.51 — Unreleased
+## 0.1.0-alpha.52 — Unreleased
+
+- Add JSON PUT/PATCH and bodyless DELETE in Router and FileEndpoint, with separate
+  method slots, atomic registration and precise 405/Allow responses.
+- Share source, body, deadline, CSRF and quota checks across every mutation.
+  Refuse DELETE bodies and media/encoding headers before native callbacks.
+- Extend the task API and browser demo with full replacement, partial updates,
+  individual reads and deletion. Validate schemas before atomic state changes.
+- Cover method combinations, malformed framing, authorization, shared quotas,
+  concurrent updates and deletion in native, CLI bundle and browser checks.
+- Keep zero third-party dependencies, browser ABI v12 and 22 exports.
+
+## 0.1.0-alpha.51
 
 - Add a std-only UTF-8 JSON parser and immutable bounded values, with arrays,
   ordered objects, strings, booleans, null and exact number representations.

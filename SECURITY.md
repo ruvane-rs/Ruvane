@@ -1,5 +1,15 @@
 # Security
 
+Alpha.52 extends explicit mutation profiles to JSON PUT/PATCH and bodyless DELETE.
+All mutations share mandatory source validation, current-session CSRF verification
+when guarded, and route/family quotas. DELETE refuses positive declared lengths
+and media/encoding headers before guards or handlers. Method-scoped registration
+and exact Allow values prevent MIME or method fallback into a different handler.
+The task example validates entire replacements/patches before atomic updates;
+applications remain responsible for resource authorization and stale-write policy.
+No mutation is automatically retried, and the Wasm action protocol remains POST.
+See [JSON APIs](docs/json.md).
+
 Alpha.51 adds opt-in [bounded JSON APIs](docs/json.md). Parsing and immutable
 construction enforce input/output bytes, depth, total values, members, strings
 and number-text limits. Decoded duplicate keys, invalid UTF-8, unpaired surrogates,
@@ -19,7 +29,7 @@ rotation; anonymous or invalid identifiers share one global quota per limiter. S
 and one unmatched scope prevent raw-path churn from creating arbitrary buckets.
 Entry/route-byte exhaustion fails closed with 503. Guards reject over-quota requests
 with no-store 429 and bounded Retry-After before cache lookup, loaders or handlers.
-Only POST guard failures emit the fixed pre-handler refusal marker; a manual 429
+Only mutation guard failures emit the fixed pre-handler refusal marker; a manual 429
 does not assert non-execution. The bridge never retries POST automatically. This
 is process-local admission control after request parsing, not a distributed or
 network DDoS defense. Existing session, CSRF and origin checks remain separate.

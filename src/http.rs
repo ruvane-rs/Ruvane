@@ -28,6 +28,18 @@ pub enum Method {
     Head,
     /// Submit a body in the explicit route's form or JSON profile.
     Post,
+    /// Replace a resource using an explicit JSON body.
+    Put,
+    /// Partially update a resource using an explicit JSON body.
+    Patch,
+    /// Delete a resource without a request body.
+    Delete,
+}
+impl Method {
+    /// Whether this method can change application state and requires mutation checks.
+    pub const fn is_mutation(self) -> bool {
+        matches!(self, Self::Post | Self::Put | Self::Patch | Self::Delete)
+    }
 }
 
 /// A validated request in Ruvane's local HTTP profile.
@@ -136,8 +148,8 @@ impl Request {
     pub fn form_data(&self) -> Option<&FormData> {
         self.form.as_ref()
     }
-    /// Borrows the validated body of an explicitly registered JSON POST route.
-    /// GET/HEAD, form routes and sanitized background requests return None.
+    /// Borrows the validated body of an explicitly registered JSON mutation route.
+    /// GET/HEAD, DELETE, form routes and sanitized background requests return None.
     pub fn json(&self) -> Option<&crate::JsonValue> {
         self.json.as_ref()
     }
@@ -242,7 +254,7 @@ pub enum StatusCode {
     RequestTimeout,
     /// 409: the browser and server application revisions differ.
     Conflict,
-    /// 411: a POST form has no declared content length.
+    /// 411: a body-bearing mutation has no declared content length.
     LengthRequired,
     /// 413: the request body exceeds the supported budget.
     ContentTooLarge,
@@ -897,7 +909,7 @@ pub(crate) fn parse(
             return Err(BadRequest);
         }
         let length = value.parse::<u64>().map_err(|_| BadRequest)?;
-        if length != 0 && method != "POST" {
+        if length != 0 && !matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") {
             return Err(ContentTooLarge);
         }
         Some(length)
@@ -914,7 +926,10 @@ pub(crate) fn parse(
         "GET" => Method::Get,
         "HEAD" => Method::Head,
         "POST" => Method::Post,
-        "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "CONNECT" | "TRACE" => {
+        "PUT" => Method::Put,
+        "PATCH" => Method::Patch,
+        "DELETE" => Method::Delete,
+        "OPTIONS" | "CONNECT" | "TRACE" => {
             return Err(MethodNotAllowed);
         }
         _ => return Err(NotImplemented),

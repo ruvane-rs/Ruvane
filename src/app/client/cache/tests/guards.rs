@@ -242,7 +242,7 @@ fn post_protocol_checks_and_endpoint_guards_precede_mutation() {
             "POST /action HTTP/1.1\r\nHost: localhost\r\nOrigin: {origin}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 0\r\nRuvane-Application-Revision: {revision}\r\n\r\n"
         );
         let mut request = crate::http::parse(raw.as_bytes(), 8192, 32).unwrap();
-        if router.prepare_post(&request, 1024).is_err() {
+        if router.prepare_mutation(&request, 1024).is_err() {
             continue;
         }
         request.form = Some(crate::FormData::default());
@@ -435,7 +435,7 @@ fn file_page_and_endpoint_local_guards_inherit_branches_without_running_at_regis
         StatusCode::Forbidden
     );
     let mut post = crate::http::parse(b"POST /local HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nOrigin: http://localhost\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n",8192,32).unwrap();
-    router.prepare_post(&post, 8192).unwrap();
+    router.prepare_mutation(&post, 8192).unwrap();
     post.form = Some(crate::FormData::default());
     assert_eq!(
         router.dispatch(post).status(),

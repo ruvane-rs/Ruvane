@@ -33,7 +33,7 @@ pub struct GuardContext<'a> {
     pub(crate) private: bool,
 }
 impl GuardContext<'_> {
-    /// Includes decoded captures/query/form fields after routing and POST checks.
+    /// Includes decoded captures/query/form fields after routing and mutation checks.
     pub fn request(&self) -> &Request {
         self.request
     }

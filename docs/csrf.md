@@ -25,7 +25,8 @@ The endpoint needs no CORS permissions and must not redirect or be publicly cach
 Its path must fall within the configured session cookie's path scope.
 
 Use `store.csrf_guard()` on protected App branches or native `guard.rs` endpoints.
-GET/HEAD require a live session. POST additionally requires its current CSRF token.
+GET/HEAD require a live session. POST, PUT, PATCH and DELETE additionally require its current CSRF token.
+JSON mutations and bodyless DELETE use the dedicated header.
 Accepted requests are Private; invalid claims return 403 and store failure returns
 503. Guards run before loaders, page caches and endpoint handlers. Manually added
 Router handlers are outside App guards: explicitly call `verify_csrf(request)`

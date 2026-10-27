@@ -51,7 +51,7 @@ app.guard_branch("/account", store.guard())?;
 or invalid one, and Unavailable when a required store lookup fails. In a file tree,
 a native-only guard.rs can obtain the application's shared store and return its
 guard. This protects pages, endpoints and unmatched descendants in that branch.
-POST origin, MIME, form and revision checks still precede guard callbacks.
+Mutation origin, body-profile and revision checks still precede guard callbacks.
 
 The handle and payload types, store and entropy provider are excluded entirely
 from Wasm. Place store construction and session-using handlers in native modules

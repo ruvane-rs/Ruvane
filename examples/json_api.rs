@@ -73,7 +73,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     routes.endpoint(
         "api/tasks/route.rs",
         "/api/tasks",
-        json_tasks::endpoint(tasks)
+        json_tasks::endpoint(tasks.clone())
+            .guard(store.csrf_guard())
+            .guard(quota.session_guard(store.clone())),
+    )?;
+    routes.endpoint(
+        "api/tasks/[id]/route.rs",
+        "/api/tasks/{id}",
+        json_tasks::resource_endpoint(tasks)
             .guard(store.csrf_guard())
             .guard(quota.session_guard(store.clone())),
     )?;
