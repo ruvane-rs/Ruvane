@@ -1,7 +1,6 @@
-//! Shared page declarations. Native loaders capture the application's backend.
-use crate::components;
+//! Shared page declarations and the application's generic shell.
+use crate::{components, model};
 use ruvane::*;
-
 pub fn application() -> App {
     with_loader(|_| Err(PageError::InternalServerError))
 }
@@ -12,16 +11,49 @@ pub fn with_loader(
     app.components(components::create_component, components::ERROR)
         .unwrap();
     let load = std::sync::Arc::new(load);
-    for (name, path, component) in [
-        ("tickets", "/tickets", components::LIST),
-        ("new-ticket", "/tickets/new", components::EDITOR),
-        ("ticket", "/tickets/{id}", components::EDITOR),
+    for (name, path, component, state) in [
+        (
+            "workspaces",
+            "/workspaces",
+            components::WORKSPACES,
+            zero as fn(&NavigationMatch) -> Result<InitialState, PageError>,
+        ),
+        (
+            "tickets",
+            "/w/{workspace}/tickets",
+            components::LIST,
+            space_state,
+        ),
+        (
+            "new-ticket",
+            "/w/{workspace}/new-ticket",
+            components::EDITOR,
+            new_state,
+        ),
+        (
+            "ticket",
+            "/w/{workspace}/tickets/{id}",
+            components::EDITOR,
+            ticket_state,
+        ),
+        (
+            "members",
+            "/w/{workspace}/members",
+            components::MEMBERS,
+            space_state,
+        ),
+        (
+            "files",
+            "/w/{workspace}/tickets/{id}/files",
+            components::FILES,
+            ticket_state,
+        ),
     ] {
         let loader = load.clone();
         app.client_page(
             PageRoute::new(name, path).unwrap(),
             component,
-            if name == "ticket" { ticket_state } else { zero },
+            state,
             move |context| loader(context),
         )
         .unwrap();
@@ -31,11 +63,21 @@ pub fn with_loader(
 fn zero(_: &NavigationMatch) -> Result<InitialState, PageError> {
     Ok(InitialState::Number(0))
 }
+fn workspace(route: &NavigationMatch) -> Result<u32, PageError> {
+    model::workspace_id(route.param("workspace").ok_or(PageError::BadRequest)?)
+        .ok_or(PageError::BadRequest)
+}
+fn space_state(route: &NavigationMatch) -> Result<InitialState, PageError> {
+    Ok(InitialState::Number(workspace(route)?))
+}
+fn new_state(route: &NavigationMatch) -> Result<InitialState, PageError> {
+    Ok(InitialState::Number(model::packed(workspace(route)?, 0)))
+}
 fn ticket_state(route: &NavigationMatch) -> Result<InitialState, PageError> {
-    Ok(InitialState::Number(
-        crate::model::id(route.param("id").ok_or(PageError::BadRequest)?)
-            .ok_or(PageError::BadRequest)?,
-    ))
+    Ok(InitialState::Number(model::packed(
+        workspace(route)?,
+        model::id(route.param("id").ok_or(PageError::BadRequest)?).ok_or(PageError::BadRequest)?,
+    )))
 }
 pub fn url(path: &str) -> InternalUrl {
     InternalUrl::from_target(path).unwrap()
@@ -44,22 +86,28 @@ pub fn shell(children: Html) -> Html {
     element(Tag::Main)
         .child(
             element(Tag::Header)
-                .child(element(Tag::P).child("RUVANE / LOCAL WORKSPACE"))
+                .child(element(Tag::P).child("RUVANE / LOCAL WORKSPACES"))
                 .child(element(Tag::H1).child("Ruvane Desk"))
-                .child(element(Tag::P).child("Project Ruvane · alpha.61"))
+                .child(element(Tag::P).child("Spaces, tickets and attachments · alpha.62"))
                 .child(
                     element(Tag::Nav)
-                        .child(link(&url("/tickets"), "Tickets"))
+                        .child(link(&url("/workspaces"), "Workspaces"))
                         .child(" · ")
-                        .child(link(&url("/tickets/new"), "New ticket"))
-                        .child(" · ")
-                        .child(link(&url("/"), "Local session")),
+                        .child(link(&url("/"), "Local test profile")),
                 ),
         )
         .child(children)
         .child(
             element(Tag::Footer)
-                .child("Local pilot · data stays on this computer · no account authentication"),
+                .child("Local pilot · selectable test profiles · no account authentication"),
         )
         .render()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn shared_routes_register_without_ambiguity() {
+        let _ = super::application();
+    }
 }

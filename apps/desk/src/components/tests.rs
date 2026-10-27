@@ -2,16 +2,17 @@ use super::*;
 fn ticket(id: u32, title: &str, revision: u64) -> Ticket {
     Ticket {
         id,
+        workspace: 1,
         revision,
         input: TicketInput::new(title, "Description", "open").unwrap(),
     }
 }
 fn seeded(id: u32) -> Editor {
-    let mut e = Editor::new(id);
+    let mut e = Editor::new(1, id);
     e.page_data(if id == 0 {
-        model::empty_seed()
+        scoped(model::empty_seed())
     } else {
-        ticket(id, "Original", 1).seed("\"one\"")
+        scoped(ticket(id, "Original", 1).seed("\"one\""))
     })
     .unwrap();
     e
@@ -132,13 +133,22 @@ fn malformed_success_is_uncertain_and_cannot_switch_an_existing_id() {
 }
 #[test]
 fn seeds_reject_wrong_ids_weak_versions_unknown_fields_and_bad_pagination() {
-    let mut e = Editor::new(1);
-    assert!(e.page_data(ticket(2, "Wrong", 1).seed("\"one\"")).is_err());
-    assert!(e.page_data(ticket(1, "Weak", 1).seed("W/\"one\"")).is_err());
-    let mut data = ticket(1, "Extra", 1).seed("\"one\"");
+    let mut e = Editor::new(1, 1);
+    assert!(
+        e.page_data(scoped(ticket(2, "Wrong", 1).seed("\"one\"")))
+            .is_err()
+    );
+    assert!(
+        e.page_data(scoped(ticket(1, "Weak", 1).seed("W/\"one\"")))
+            .is_err()
+    );
+    let mut data = scoped(ticket(1, "Extra", 1).seed("\"one\""));
     data.insert("extra", ActionValue::Boolean(true)).unwrap();
     assert!(e.page_data(data).is_err());
     let mut listing = Listing {
+        workspace: 1,
+        workspace_name: "Ruvane".into(),
+        role: Role::Editor,
         page: 0,
         total: 0,
         items: vec![],
@@ -156,6 +166,9 @@ fn full_fields_and_pages_fit_view_and_snapshot_limits() {
     e.description = "é".repeat(512);
     e.view().unwrap().snapshot().unwrap();
     let listing = Listing {
+        workspace: 1,
+        workspace_name: "Ruvane".into(),
+        role: Role::Editor,
         page: 0,
         total: model::MAX_TICKETS,
         items: (1..=PAGE_SIZE)
@@ -165,4 +178,56 @@ fn full_fields_and_pages_fit_view_and_snapshot_limits() {
     let view = listing.view().unwrap();
     view.snapshot().unwrap();
     assert!(view.event_count() <= MAX_VIEW_EVENTS);
+}
+
+fn scoped(data: ActionData) -> ActionData {
+    model::scope_seed(
+        data,
+        &model::Space {
+            id: 1,
+            name: "Ruvane".into(),
+            revision: 1,
+            members: [Some(Role::Owner); 4],
+        },
+        Role::Editor,
+    )
+}
+
+#[test]
+fn viewers_can_inspect_a_ticket_but_cannot_queue_mutations() {
+    let mut e = Editor::new(1, 1);
+    let space = model::Space {
+        id: 1,
+        name: "Ruvane".into(),
+        revision: 1,
+        members: [Some(Role::Viewer); 4],
+    };
+    e.page_data(model::scope_seed(
+        ticket(1, "Read only", 1).seed("\"one\""),
+        &space,
+        Role::Viewer,
+    ))
+    .unwrap();
+    let html = e.view().unwrap().render().unwrap();
+    assert!(!html.as_str().contains("Save ticket"));
+    assert!(html.as_str().contains("Attachments"));
+    assert!(e.dispatch(1).is_err());
+    assert!(e.dispatch(2).is_err());
+    assert!(
+        e.dispatch_value(10, EventValue::Text("Denied".into()))
+            .is_err()
+    );
+    assert!(e.take_json().is_none());
+}
+#[test]
+fn a_valid_response_from_another_workspace_cannot_replace_the_draft() {
+    let mut e = seeded(1);
+    e.dispatch(1).unwrap();
+    e.take_json();
+    let mut foreign = ticket(1, "Foreign", 2);
+    foreign.workspace = 2;
+    e.json_result(1, reply(200, "\"foreign\"", foreign.json(), true))
+        .unwrap();
+    assert_eq!(e.title, "Original");
+    assert!(e.blocked && e.uncertain);
 }

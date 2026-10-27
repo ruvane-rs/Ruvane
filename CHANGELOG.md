@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.1.0-alpha.61 — Unreleased
+## 0.1.0-alpha.62 — Unreleased
+
+- Extend Desk with isolated workspaces, persistent memberships and Owner/Editor/Viewer
+  roles, using selectable local test profiles rather than verified accounts.
+- Scope ticket IDs, validators and routes to workspaces. Enforce current rights
+  inside the business mutex; preserve conflict drafts and the last owner.
+- Read RDS1 data without rewriting it on reads/no-ops/rejections and publish RDS2
+  on the first successful business write, preserving legacy ticket IDs/revisions.
+- Integrate the public FileStore with ticket-bound owner keys, private downloads,
+  bounded quotas and upload receipts. Check authorization before every replay.
+- Add shared Rust/Wasm workspace, membership and attachment controls with native
+  HTML forms; serialize permission revocation with file operations.
+- Cover migration/failure recovery, cross-space/ticket isolation, live revocation,
+  conditional writers, native forms and source-hidden standalone execution.
+- Keep zero third-party Cargo/npm dependencies, ABI v15/RVN9, 22 numeric exports,
+  four runtime assets and the four-package local pilot dependency graph.
+
+## 0.1.0-alpha.61
 
 - Add Ruvane Desk, an autonomous CLI-generated ticket pilot under `apps/desk`,
   consuming public APIs through a separate workspace with four local packages.

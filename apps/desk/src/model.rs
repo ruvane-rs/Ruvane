@@ -125,6 +125,7 @@ impl TryFrom<&JsonValue> for TicketInput {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Ticket {
     pub id: u32,
+    pub workspace: u32,
     pub revision: u64,
     pub input: TicketInput,
 }
@@ -132,16 +133,21 @@ impl Ticket {
     pub fn json(&self) -> JsonValue {
         let mut fields = self.input.json().as_object().unwrap().to_vec();
         fields.extend([
+            ("workspace".into(), (self.workspace as u64).into()),
             ("id".into(), (self.id as u64).into()),
             ("revision".into(), self.revision.into()),
         ]);
         JsonValue::object(fields).unwrap()
     }
     pub fn decode(value: &JsonValue) -> Option<Self> {
-        if value.as_object()?.len() != 5 {
+        if value.as_object()?.len() != 6 {
             return None;
         }
         let id = value.get("id")?.as_number()?.to_u64().ok()?;
+        let workspace = u32::try_from(value.get("workspace")?.as_number()?.to_u64().ok()?).ok()?;
+        if !(1..=MAX_WORKSPACES).contains(&workspace) {
+            return None;
+        }
         let revision = value.get("revision")?.as_number()?.to_u64().ok()?;
         if !(1..=MAX_TICKETS as u64).contains(&id) || revision == 0 {
             return None;
@@ -154,6 +160,7 @@ impl Ticket {
         .ok()?;
         Some(Self {
             id: id as u32,
+            workspace,
             revision,
             input,
         })
@@ -224,4 +231,153 @@ mod tests {
         assert!(id("01").is_none());
         assert!(id("129").is_none());
     }
+}
+
+pub const MAX_WORKSPACES: u32 = 4;
+pub const PROFILE_KEYS: [&str; 4] = ["alex", "blair", "casey", "drew"];
+pub const PROFILE_NAMES: [&str; 4] = ["Alex", "Blair", "Casey", "Drew"];
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Actor(u8);
+impl Actor {
+    pub fn parse(raw: &str) -> Option<Self> {
+        PROFILE_KEYS
+            .iter()
+            .position(|s| *s == raw)
+            .map(|i| Self(i as u8))
+    }
+    pub fn key(self) -> &'static str {
+        PROFILE_KEYS[self.index()]
+    }
+    pub fn name(self) -> &'static str {
+        PROFILE_NAMES[self.index()]
+    }
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Viewer,
+    Editor,
+    Owner,
+}
+impl Role {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "viewer" => Some(Self::Viewer),
+            "editor" => Some(Self::Editor),
+            "owner" => Some(Self::Owner),
+            _ => None,
+        }
+    }
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Viewer => "viewer",
+            Self::Editor => "editor",
+            Self::Owner => "owner",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Viewer => "Viewer",
+            Self::Editor => "Editor",
+            Self::Owner => "Owner",
+        }
+    }
+    pub fn can_edit(self) -> bool {
+        self != Self::Viewer
+    }
+}
+#[derive(Clone, PartialEq, Eq)]
+pub struct Space {
+    pub id: u32,
+    pub name: String,
+    pub revision: u64,
+    pub members: [Option<Role>; 4],
+}
+impl Space {
+    pub fn role(&self, actor: Actor) -> Option<Role> {
+        self.members[actor.index()]
+    }
+}
+#[derive(Clone)]
+pub struct WorkspaceInput {
+    pub name: String,
+}
+impl TryFrom<&JsonValue> for WorkspaceInput {
+    type Error = ValidationErrors;
+    fn try_from(value: &JsonValue) -> Result<Self, Self::Error> {
+        let mut object = JsonObject::new(value, &["name"]);
+        let name = object.required_string(
+            "name",
+            TextRules::new(1, 48).unwrap().non_blank().no_controls(),
+        );
+        object.finish()?;
+        Ok(Self {
+            name: name.unwrap().into(),
+        })
+    }
+}
+impl WorkspaceInput {
+    pub fn new(name: &str) -> Result<Self, ValidationErrors> {
+        if name.len() > 48 {
+            let mut errors = ValidationErrors::new();
+            errors.add(Some("name"), ValidationCode::TooLong);
+            return Err(errors);
+        }
+        Self::try_from(
+            &JsonValue::object(vec![("name".into(), JsonValue::string(name).unwrap())]).unwrap(),
+        )
+    }
+}
+#[derive(Clone)]
+pub struct MembersInput(pub [Option<Role>; 4]);
+impl TryFrom<&JsonValue> for MembersInput {
+    type Error = ValidationErrors;
+    fn try_from(value: &JsonValue) -> Result<Self, Self::Error> {
+        let mut object = JsonObject::new(value, &PROFILE_KEYS);
+        let mut roles = [None; 4];
+        for (i, key) in PROFILE_KEYS.iter().enumerate() {
+            let raw = object.required_string(key, TextRules::new(1, 6).unwrap());
+            if raw != Some("none") {
+                roles[i] = raw.and_then(Role::parse);
+                if roles[i].is_none() {
+                    object.error(Some(key), ValidationCode::InvalidValue);
+                }
+            }
+        }
+        object.finish()?;
+        Ok(Self(roles))
+    }
+}
+pub fn packed(workspace: u32, id: u32) -> u32 {
+    workspace * 256 + id
+}
+pub fn unpacked(value: u32) -> Option<(u32, u32)> {
+    let (workspace, id) = (value / 256, value % 256);
+    ((1..=MAX_WORKSPACES).contains(&workspace) && id <= MAX_TICKETS as u32)
+        .then_some((workspace, id))
+}
+pub fn workspace_id(raw: &str) -> Option<u32> {
+    let value = raw.parse::<u32>().ok()?;
+    ((1..=MAX_WORKSPACES).contains(&value) && value.to_string() == raw).then_some(value)
+}
+pub fn ticket_path(workspace: u32, id: Option<u32>) -> String {
+    match id {
+        Some(0) => format!("/w/{workspace}/new-ticket"),
+        Some(id) => format!("/w/{workspace}/tickets/{id}"),
+        None => format!("/w/{workspace}/tickets"),
+    }
+}
+pub fn scope_seed(mut data: ActionData, space: &Space, role: Role) -> ActionData {
+    data.insert("workspace", ruvane::ActionValue::Number(space.id as u64))
+        .unwrap();
+    data.insert(
+        "workspace_name",
+        ruvane::ActionValue::Text(space.name.clone()),
+    )
+    .unwrap();
+    data.insert("role", ruvane::ActionValue::Text(role.wire().into()))
+        .unwrap();
+    data
 }

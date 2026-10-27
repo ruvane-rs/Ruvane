@@ -10,7 +10,7 @@ use std::{
     },
 };
 const LOCK: &[u8] = b"RDL1\n";
-const NAMES: [&str; 4] = ["identity", "LOCK", "store.bin", "next.bin"];
+const NAMES: [&str; 5] = ["identity", "LOCK", "store.bin", "next.bin", "attachments"];
 static ACTIVE: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 struct Lease(PathBuf);
 impl Lease {
@@ -55,11 +55,11 @@ impl Disk {
             Some(read(&root.join("store.bin"), MAX_BYTES)?)
         };
         if let Some(bytes) = &saved {
-            decode(bytes)?;
+            wire::decode(bytes)?;
         }
         if recovery {
             if let Some(bytes) = &saved {
-                decode(bytes)?;
+                wire::decode(bytes)?;
             }
             if root
                 .join("LOCK")
@@ -208,7 +208,7 @@ fn directory(path: &Path, application: &str) -> Result<(PathBuf, bool), StoreErr
     }
     let entries = fs::read_dir(&root)
         .map_err(|_| StoreError::Unavailable)?
-        .take(5)
+        .take(6)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| StoreError::Unavailable)?;
     if entries.len() > NAMES.len() {
@@ -218,7 +218,14 @@ fn directory(path: &Path, application: &str) -> Result<(PathBuf, bool), StoreErr
         if !NAMES.iter().any(|name| entry.file_name() == *name) {
             return Err(StoreError::Corrupt);
         }
-        private_metadata(&entry.path(), MAX_BYTES)?;
+        if entry.file_name() == "attachments" {
+            let meta = fs::symlink_metadata(entry.path()).map_err(|_| StoreError::Corrupt)?;
+            if !meta.is_dir() || meta.file_type().is_symlink() || meta.mode() & 0o777 != 0o700 {
+                return Err(StoreError::Corrupt);
+            }
+        } else {
+            private_metadata(&entry.path(), MAX_BYTES)?;
+        }
     }
     let identity = format!("ruvane-desk\t1\t{application}\n");
     let fresh = entries.is_empty();

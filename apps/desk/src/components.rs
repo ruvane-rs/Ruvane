@@ -1,5 +1,5 @@
 //! Ticket views shared by SSR and Rust/Wasm.
-use crate::model::{self, PAGE_SIZE, State, Ticket, TicketInput};
+use crate::model::{self, PAGE_SIZE, Role, State, Ticket, TicketInput};
 use crate::pages::url;
 use ruvane::{BrowserTag::*, *};
 fn paragraph(v: &mut View, parent: u32, key: u32, text: &str) -> Result<(), ViewError> {
@@ -10,18 +10,33 @@ fn paragraph(v: &mut View, parent: u32, key: u32, text: &str) -> Result<(), View
 pub const LIST: u32 = 1;
 pub const EDITOR: u32 = 2;
 pub const ERROR: u32 = 3;
+pub const WORKSPACES: u32 = 4;
+pub const MEMBERS: u32 = 5;
+pub const FILES: u32 = 6;
 
 pub fn create_component(props: ComponentProps) -> Result<Box<dyn Component>, ComponentError> {
     let InitialState::Number(id) = props.state() else {
         return Err(ComponentError::InvalidProps);
     };
     match props.component() {
-        LIST if id == 0 => Ok(Box::new(Listing {
+        LIST if (1..=model::MAX_WORKSPACES).contains(&id) => Ok(Box::new(Listing {
+            workspace: id,
+            workspace_name: String::new(),
+            role: Role::Viewer,
             page: 0,
             total: 0,
             items: Vec::new(),
         })),
-        EDITOR if id <= model::MAX_TICKETS as u32 => Ok(Box::new(Editor::new(id))),
+        EDITOR if model::unpacked(id).is_some() => {
+            let (w, t) = model::unpacked(id).unwrap();
+            Ok(Box::new(Editor::new(w, t)))
+        }
+        WORKSPACES if id == 0 => Ok(crate::spaces::workspaces()),
+        MEMBERS if (1..=model::MAX_WORKSPACES).contains(&id) => Ok(crate::spaces::members(id)),
+        FILES if model::unpacked(id).is_some_and(|(_, t)| t > 0) => {
+            let (w, t) = model::unpacked(id).unwrap();
+            Ok(crate::attachments::create(w, t))
+        }
         ERROR if matches!(id, 400 | 403 | 404 | 409 | 429 | 500 | 503) => {
             Ok(Box::new(ErrorPage(id)))
         }
@@ -30,12 +45,16 @@ pub fn create_component(props: ComponentProps) -> Result<Box<dyn Component>, Com
 }
 type ListingSeed = (usize, usize, Vec<(u32, String, State)>);
 struct Listing {
+    workspace: u32,
+    workspace_name: String,
+    role: Role,
     page: usize,
     total: usize,
     items: Vec<(u32, String, State)>,
 }
 impl Component for Listing {
     fn page_data(&mut self, data: ActionData) -> Result<(), ComponentError> {
+        let (name, role) = scope(&data, self.workspace)?;
         let read = || -> Option<ListingSeed> {
             let page = usize::try_from(data.number("page")?).ok()?;
             let total = usize::try_from(data.number("total")?).ok()?;
@@ -43,7 +62,7 @@ impl Component for Listing {
             if total > model::MAX_TICKETS
                 || page > total.saturating_sub(1) / PAGE_SIZE
                 || count != total.saturating_sub(page * PAGE_SIZE).min(PAGE_SIZE)
-                || data.len() != 3 + 3 * count
+                || data.len() != 6 + 3 * count
             {
                 return None;
             }
@@ -52,7 +71,11 @@ impl Component for Listing {
                 let id = data.number(&format!("id{i}"))?;
                 let title = data.text(&format!("title{i}"))?;
                 let state = State::parse(data.text(&format!("state{i}"))?)?;
-                if id != (page * PAGE_SIZE + i + 1) as u64
+                if id == 0
+                    || id > model::MAX_TICKETS as u64
+                    || items
+                        .last()
+                        .is_some_and(|(previous, _, _)| *previous >= id as u32)
                     || TicketInput::new(title, "", state.wire()).is_err()
                 {
                     return None;
@@ -62,6 +85,8 @@ impl Component for Listing {
             Some((page, total, items))
         };
         let (page, total, items) = read().ok_or(ComponentError::InvalidProps)?;
+        self.workspace_name = name;
+        self.role = role;
         self.page = page;
         self.total = total;
         self.items = items;
@@ -76,19 +101,32 @@ impl Component for Listing {
             root,
             2,
             &format!(
-                "Project Ruvane · {} tickets · page {}",
+                "{} · {} · {} tickets · page {}",
+                self.workspace_name,
+                self.role.label(),
                 self.total,
                 self.page + 1
             ),
         )?;
-        v.link(root, 3, &url("/tickets/new"), "Create ticket")?;
-        if self.items.is_empty() {
-            paragraph(
-                &mut v,
+        if self.role.can_edit() {
+            v.link(
                 root,
-                4,
-                "No tickets yet. Start with the first issue.",
+                3,
+                &url(&model::ticket_path(self.workspace, Some(0))),
+                "Create ticket",
             )?;
+        }
+        if self.role == Role::Owner {
+            v.link(
+                root,
+                8,
+                &url(&format!("/w/{}/members", self.workspace)),
+                "Manage members",
+            )?;
+        }
+        v.link(root, 9, &url("/workspaces"), "Switch workspace")?;
+        if self.items.is_empty() {
+            paragraph(&mut v, root, 4, "No tickets in this workspace yet.")?;
         }
         let list = v.keyed_element(root, 5, List)?;
         for (i, (id, title, state)) in self.items.iter().enumerate() {
@@ -96,7 +134,7 @@ impl Component for Listing {
             v.link(
                 row,
                 1,
-                &url(&format!("/tickets/{id}")),
+                &url(&model::ticket_path(self.workspace, Some(*id))),
                 &format!("#{id} {title}"),
             )?;
             v.keyed_leaf(row, 2, Span, state.label())?;
@@ -105,7 +143,7 @@ impl Component for Listing {
             v.link(
                 root,
                 6,
-                &url(&format!("/tickets?page={}", self.page)),
+                &url(&format!("/w/{}/tickets?page={}", self.workspace, self.page)),
                 "Previous page",
             )?;
         }
@@ -113,7 +151,11 @@ impl Component for Listing {
             v.link(
                 root,
                 7,
-                &url(&format!("/tickets?page={}", self.page + 2)),
+                &url(&format!(
+                    "/w/{}/tickets?page={}",
+                    self.workspace,
+                    self.page + 2
+                )),
                 "Next page",
             )?;
         }
@@ -124,6 +166,9 @@ impl Component for Listing {
     }
 }
 struct Editor {
+    workspace: u32,
+    workspace_name: String,
+    editable: bool,
     route_id: u32,
     id: u32,
     revision: u64,
@@ -139,8 +184,11 @@ struct Editor {
     epoch: u32,
 }
 impl Editor {
-    fn new(id: u32) -> Self {
+    fn new(workspace: u32, id: u32) -> Self {
         Self {
+            workspace,
+            workspace_name: String::new(),
+            editable: false,
             route_id: id,
             id,
             revision: 0,
@@ -157,7 +205,10 @@ impl Editor {
         }
     }
     fn adopt(&mut self, ticket: Ticket, tag: EntityTag) -> Option<()> {
-        if tag.is_weak() || (self.id != 0 && ticket.id != self.id) {
+        if tag.is_weak()
+            || ticket.workspace != self.workspace
+            || (self.id != 0 && ticket.id != self.id)
+        {
             return None;
         }
         self.id = ticket.id;
@@ -193,8 +244,9 @@ impl Editor {
 }
 impl Component for Editor {
     fn page_data(&mut self, data: ActionData) -> Result<(), ComponentError> {
+        let (name, role) = scope(&data, self.workspace)?;
         let read = || -> Option<(Ticket, Option<EntityTag>)> {
-            if data.len() != 6 {
+            if data.len() != 9 {
                 return None;
             }
             let id = data.number("id")?;
@@ -218,6 +270,7 @@ impl Component for Editor {
                 return Some((
                     Ticket {
                         id: 0,
+                        workspace: self.workspace,
                         revision: 0,
                         input: TicketInput {
                             title: String::new(),
@@ -239,6 +292,7 @@ impl Component for Editor {
             Some((
                 Ticket {
                     id: id as u32,
+                    workspace: self.workspace,
                     revision,
                     input,
                 },
@@ -246,6 +300,8 @@ impl Component for Editor {
             ))
         };
         let (ticket, tag) = read().ok_or(ComponentError::InvalidProps)?;
+        self.workspace_name = name;
+        self.editable = role.can_edit();
         if let Some(tag) = tag {
             self.adopt(ticket, tag)
                 .ok_or(ComponentError::InvalidProps)?;
@@ -266,6 +322,8 @@ impl Component for Editor {
             Heading,
             if self.id == 0 {
                 "New ticket"
+            } else if !self.editable {
+                "Ticket details"
             } else {
                 "Edit ticket"
             },
@@ -275,9 +333,12 @@ impl Component for Editor {
             root,
             2,
             &if self.id == 0 {
-                "Project Ruvane".into()
+                self.workspace_name.clone()
             } else {
-                format!("Project Ruvane · #{} · revision {}", self.id, self.revision)
+                format!(
+                    "{} · #{} · revision {}",
+                    self.workspace_name, self.id, self.revision
+                )
             },
         )?;
         let form = v.form(root, 3, 1)?;
@@ -293,26 +354,28 @@ impl Component for Editor {
                 v.textarea(label, 2, value, event, false)?
             };
             v.field_epoch(field, self.epoch)?;
-            v.field_disabled(field, self.pending)?;
+            v.field_disabled(field, self.pending || !self.editable)?;
         }
         v.keyed_leaf(form, 3, Output, &format!("State: {}", self.state.label()))?;
-        v.keyed_button(
-            form,
-            4,
-            &format!("Move to {}", self.state.next().label()),
-            2,
-            self.pending,
-        )?;
-        v.submit(
-            form,
-            5,
-            if self.id == 0 {
-                "Create ticket"
-            } else {
-                "Save ticket"
-            },
-            self.pending || self.blocked,
-        )?;
+        if self.editable {
+            v.keyed_button(
+                form,
+                4,
+                &format!("Move to {}", self.state.next().label()),
+                2,
+                self.pending,
+            )?;
+            v.submit(
+                form,
+                5,
+                if self.id == 0 {
+                    "Create ticket"
+                } else {
+                    "Save ticket"
+                },
+                self.pending || self.blocked,
+            )?;
+        }
         v.keyed_leaf(root, 4, Output, &self.message)?;
         if self.id != 0 {
             v.keyed_button(
@@ -327,11 +390,24 @@ impl Component for Editor {
             v.link(
                 root,
                 6,
-                &url(&format!("/tickets/{}", self.id)),
+                &url(&model::ticket_path(self.workspace, Some(self.id))),
                 "Open saved ticket",
             )?;
         }
-        v.link(root, 7, &url("/tickets"), "Back to tickets")?;
+        v.link(
+            root,
+            7,
+            &url(&model::ticket_path(self.workspace, None)),
+            "Back to tickets",
+        )?;
+        if self.id > 0 {
+            v.link(
+                root,
+                9,
+                &url(&format!("/w/{}/tickets/{}/files", self.workspace, self.id)),
+                "Attachments",
+            )?;
+        }
         if self.uncertain && self.id == 0 {
             v.keyed_button(
                 root,
@@ -348,7 +424,7 @@ impl Component for Editor {
             return Err(ComponentError::InvalidEvent);
         }
         match event {
-            1 if !self.blocked => {
+            1 if !self.blocked && self.editable => {
                 let input = match TicketInput::new(
                     &self.title,
                     &self.description,
@@ -361,25 +437,36 @@ impl Component for Editor {
                     }
                 };
                 let (method, path) = if self.id == 0 {
-                    (JsonMethod::Post, "/api/tickets".into())
+                    (
+                        JsonMethod::Post,
+                        format!("/api/w/{}/tickets", self.workspace),
+                    )
                 } else {
-                    (JsonMethod::Patch, format!("/api/tickets/{}", self.id))
+                    (
+                        JsonMethod::Patch,
+                        format!("/api/w/{}/tickets/{}", self.workspace, self.id),
+                    )
                 };
                 self.send(1, method, path, Some(input.json()))
             }
-            2 => {
+            2 if self.editable => {
                 self.state = self.state.next();
                 Ok(())
             }
             3 if self.id != 0 => self.send(
                 3,
                 JsonMethod::Get,
-                format!("/api/tickets/{}", self.id),
+                format!("/api/w/{}/tickets/{}", self.workspace, self.id),
                 None,
             ),
             4 if self.uncertain && self.id == 0 => {
                 let epoch = self.epoch.wrapping_add(1);
-                *self = Self::new(0);
+                let workspace = self.workspace;
+                let name = self.workspace_name.clone();
+                let editable = self.editable;
+                *self = Self::new(workspace, 0);
+                self.workspace_name = name;
+                self.editable = editable;
                 self.epoch = epoch;
                 self.message =
                     "Draft discarded. Inspect the list before creating another ticket.".into();
@@ -389,7 +476,7 @@ impl Component for Editor {
         }
     }
     fn dispatch_value(&mut self, event: u32, value: EventValue) -> Result<(), ComponentError> {
-        if self.pending {
+        if self.pending || !self.editable {
             return Err(ComponentError::InvalidEvent);
         }
         match (event, value) {
@@ -435,7 +522,7 @@ impl Component for Editor {
                         .into();
             }
             Ok(reply) => {
-                if reply.status() == 403 {
+                if matches!(reply.status(), 403 | 404) {
                     self.title.clear();
                     self.description.clear();
                     self.tag = None;
@@ -444,8 +531,10 @@ impl Component for Editor {
                     self.state = State::Open;
                     self.uncertain = false;
                     self.blocked = true;
+                    self.editable = false;
                     self.epoch = self.epoch.wrapping_add(1);
-                    self.message = "Local session expired. Open Local session to continue.".into();
+                    self.message =
+                        "Access changed or session expired. Open workspaces to continue.".into();
                     return Ok(());
                 }
                 self.uncertain |= action == 1 && (reply.uncertain() || reply.status() >= 500);
@@ -497,3 +586,18 @@ impl Component for ErrorPage {
 
 #[cfg(test)]
 mod tests;
+
+fn scope(data: &ActionData, workspace: u32) -> Result<(String, Role), ComponentError> {
+    if data.number("workspace") != Some(workspace as u64) {
+        return Err(ComponentError::InvalidProps);
+    }
+    let name = data
+        .text("workspace_name")
+        .ok_or(ComponentError::InvalidProps)?;
+    model::WorkspaceInput::new(name).map_err(|_| ComponentError::InvalidProps)?;
+    let role = data
+        .text("role")
+        .and_then(Role::parse)
+        .ok_or(ComponentError::InvalidProps)?;
+    Ok((name.into(), role))
+}

@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let backend = Backend::open(std::path::Path::new(&args[1]), true)?;
         println!(
             "Recovered {} tickets. The server was not started.",
-            backend.store.list()?.len()
+            backend.store.count()?
         );
         return Ok(());
     }

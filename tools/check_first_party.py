@@ -17,7 +17,7 @@ assert len(metadata["workspace_members"]) == len(expected), "unexpected workspac
 for package in metadata["packages"]:
     assert package["source"] is None, "registry/git dependency is forbidden"
     assert package["name"] in expected and Path(package["manifest_path"]).resolve() == expected[package["name"]], "unexpected package path"
-    assert package["version"] == "0.1.0-alpha.61", "workspace versions must match"
+    assert package["version"] == "0.1.0-alpha.62", "workspace versions must match"
 desk = root / "apps/desk"
 pilot = json.loads(subprocess.run(
     [os.environ.get("CARGO", "cargo"), "metadata", "--offline", "--locked", "--all-features", "--format-version", "1"],
@@ -28,7 +28,7 @@ assert len(pilot["packages"]) == 4 and len(pilot["workspace_members"]) == 2, "un
 for package in pilot["packages"]:
     assert package["source"] is None, "third-party dependency is forbidden"
     assert package["name"] in pilot_expected and Path(package["manifest_path"]).resolve() == pilot_expected[package["name"]], "unexpected Desk package path"
-    assert package["version"] == "0.1.0-alpha.61", "Desk and framework versions must match"
+    assert package["version"] == "0.1.0-alpha.62", "Desk and framework versions must match"
 for source in [*(desk / "src").rglob("*.rs"), *(desk / "browser/src").rglob("*.rs")]:
     assert not re.search(r"\bunsafe\s*\{|\bunsafe\s+(?:fn|extern)|#\[unsafe\(", source.read_text()), "unsafe Desk code is forbidden"
 abi = root / "browser/src/abi.rs"

@@ -3,7 +3,7 @@ set -eu
 # Run from the repository root with a Wasm-capable Rust toolchain.
 cargo build --offline --locked --bin ruvane
 cargo fmt --all --manifest-path apps/desk/Cargo.toml --check
-export RUVANE_APPLICATION_REVISION=61
+export RUVANE_APPLICATION_REVISION=62
 cargo build --offline --locked -p ruvane-browser --target wasm32-unknown-unknown --release
 desk_target=${CARGO_TARGET_DIR:-target}
 case "$desk_target" in /*) ;; *) desk_target="$(pwd)/$desk_target" ;; esac

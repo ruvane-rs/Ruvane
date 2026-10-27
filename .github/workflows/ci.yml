@@ -56,7 +56,7 @@ jobs:
           node --test browser/tests/layout-snapshot.test.mjs
           node --test browser/tests/development.test.mjs
           cargo check --offline --locked -p ruvane-browser --no-default-features --target wasm32-unknown-unknown
-      - name: Check standalone Desk pilot
+      - name: Check Desk workspaces, roles and attachments
         run: tools/check_desk.sh
       - name: Build documentation
         env:

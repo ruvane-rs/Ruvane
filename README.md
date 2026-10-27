@@ -4,9 +4,10 @@ Ruvane is an experimental web framework written from scratch in Rust. Its goal
 is to bring server-side and browser-side development into a single stack,
 without third-party dependencies.
 
-[Ruvane Desk](apps/desk/README.md) is the alpha.61 application pilot: persistent
-local tickets, shared SSR/Rust-Wasm editing, native forms and retained conflict
-drafts. It uses only public Ruvane APIs and first-party local Cargo packages.
+[Ruvane Desk](apps/desk/README.md) is the alpha.62 application pilot: persistent
+workspaces and tickets, role checks, private attachments, shared SSR/Rust-Wasm
+editing and native forms. It uses public Ruvane APIs and local first-party Cargo
+packages, with selectable test profiles and explicit conflict/uncertainty handling.
 
 The current alpha provides HTML rendering, a bounded loopback HTTP server,
 fixed and dynamic GET/HEAD routes, explicit form/multipart/JSON mutations, typed parameter conversion, validated

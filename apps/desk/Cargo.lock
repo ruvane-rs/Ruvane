@@ -4,18 +4,18 @@ version = 4
 
 [[package]]
 name = "desk"
-version = "0.1.0-alpha.61"
+version = "0.1.0-alpha.62"
 dependencies = [
  "ruvane",
 ]
 
 [[package]]
 name = "ruvane"
-version = "0.1.0-alpha.61"
+version = "0.1.0-alpha.62"
 
 [[package]]
 name = "ruvane-application-browser"
-version = "0.1.0-alpha.61"
+version = "0.1.0-alpha.62"
 dependencies = [
  "desk",
  "ruvane-browser",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "ruvane-browser"
-version = "0.1.0-alpha.61"
+version = "0.1.0-alpha.62"
 dependencies = [
  "ruvane",
 ]

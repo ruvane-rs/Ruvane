@@ -833,11 +833,28 @@ authentication or public upload mount. See [multipart limits](docs/multipart.md)
 
 ## Desk local pilot
 
-Alpha.61 adds the separate [Desk application](apps/desk/README.md). Its local
-session grants access to one local project; it does not verify identity. The
-server still binds loopback HTTP only. Business files are private, bounded RDS1
-snapshots, with CRC32 corruption detection, not encryption or authentication.
-A trusted local OS account and trusted existing parent directory are required.
-Stop every writer before offline recovery. Corrupt committed files are preserved.
-Ticket creation has no replay identity; lost acknowledgements require inspection
-before any new attempt. Existing FileStore upload receipts do not cover tickets.
+Alpha.62 [Desk](apps/desk/README.md) adds persistent workspace memberships and
+Owner/Editor/Viewer roles. Four selectable local test profiles exercise these
+checks; anyone with local access can select them. They do not authenticate a real
+identity. The server remains loopback HTTP only, without passwords or TLS.
+
+The session contains a fixed profile key, never a cached role. Every operation
+checks current workspace membership and ticket association. Mutation/version
+checks share the business mutex. File operations hold it through the FileStore
+call, so completed revocations also apply before preparation, replay and removal.
+An already authorized download may finish. Hidden fields and guessed IDs grant no
+rights. Private metadata, pages and downloads remain no-store.
+
+Business snapshots migrate lazily from RDS1 to RDS2; file/receipt snapshots use a
+separate nested FileStore. Owner keys are derived from workspace/ticket identities
+on the server. No attachment-link update is needed, and no transaction across the
+two catalogs is claimed. File receipts do not make ticket/workspace creation
+idempotent. Unknown creation outcomes require inspection and explicit discard.
+
+Private files, bounded snapshots and CRC32 detect/refuse accidental corruption;
+they do not encrypt or authenticate local data. A trusted OS account and trusted
+parent directory are required. Back up/restore the entire directory only while
+all writers are stopped. Never mix catalogs from different points in time. The
+offline recovery command recovers both stores, preserves corrupt committed data
+and cannot determine whether another process remains active. Older binaries do
+not support the upgraded directory layout; keep an offline backup before upgrade.

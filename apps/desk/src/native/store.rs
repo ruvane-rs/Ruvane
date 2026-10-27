@@ -1,5 +1,7 @@
-use crate::model::{MAX_TICKETS, State, Ticket, TicketInput};
-use ruvane::{EntityTag, EntityTagSource, IfMatch};
+use crate::model::{
+    Actor, MAX_TICKETS, MAX_WORKSPACES, Role, Space, State, Ticket, TicketInput, WorkspaceInput,
+};
+use ruvane::{EntityTag, EntityTagSource, FileOwner, IfMatch};
 use std::{
     path::Path,
     sync::{
@@ -8,6 +10,7 @@ use std::{
     },
 };
 mod disk;
+mod wire;
 const MAX_BYTES: usize = 160 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreError {
@@ -19,6 +22,8 @@ pub enum StoreError {
     UnsupportedPlatform,
     Full,
     Missing,
+    Forbidden,
+    FileConflict,
     Conflict,
     Precondition,
 }
@@ -33,224 +38,332 @@ pub struct Snapshot {
     pub ticket: Ticket,
     pub tag: EntityTag,
 }
+#[derive(Clone)]
+pub struct SpaceSnapshot {
+    pub space: Space,
+    pub tag: EntityTag,
+}
+#[derive(Clone)]
+struct Catalog {
+    spaces: Vec<SpaceSnapshot>,
+    tickets: Vec<Snapshot>,
+}
+#[derive(Clone, Copy)]
+pub enum Access {
+    Read,
+    Edit,
+    Manage,
+}
 pub struct Store {
     disk: disk::Disk,
-    versions: EntityTagSource,
-    rows: Mutex<Vec<Snapshot>>,
+    versions: Vec<EntityTagSource>,
+    state: Mutex<Catalog>,
     failed: AtomicBool,
+}
+fn defaults() -> Vec<Space> {
+    vec![
+        Space {
+            id: 1,
+            name: "Ruvane".into(),
+            revision: 1,
+            members: [
+                Some(Role::Owner),
+                Some(Role::Editor),
+                Some(Role::Viewer),
+                None,
+            ],
+        },
+        Space {
+            id: 2,
+            name: "Sandbox".into(),
+            revision: 1,
+            members: [Some(Role::Owner), None, None, Some(Role::Viewer)],
+        },
+    ]
 }
 impl Store {
     pub fn open(path: &Path, recover: bool) -> Result<Self, StoreError> {
-        let versions = EntityTagSource::new().map_err(|_| StoreError::Unavailable)?;
+        let versions = (0..MAX_WORKSPACES)
+            .map(|_| EntityTagSource::new().map_err(|_| StoreError::Unavailable))
+            .collect::<Result<Vec<_>, _>>()?;
         let (disk, saved) = disk::Disk::open(path, "desk", recover)?;
-        let tickets = saved
+        let (spaces, tickets) = saved
             .as_deref()
-            .map(decode)
+            .map(wire::decode)
             .transpose()?
-            .unwrap_or_default();
-        let rows = tickets
+            .unwrap_or((defaults(), vec![]));
+        let spaces = spaces
             .into_iter()
-            .map(|ticket| {
-                Ok(Snapshot {
-                    ticket,
-                    tag: versions.next_tag().map_err(|_| StoreError::Unavailable)?,
+            .map(|space| {
+                Ok(SpaceSnapshot {
+                    tag: versions[space.id as usize - 1]
+                        .next_tag()
+                        .map_err(|_| StoreError::Unavailable)?,
+                    space,
                 })
             })
             .collect::<Result<Vec<_>, StoreError>>()?;
+        let tickets = tickets
+            .into_iter()
+            .map(|ticket| {
+                Ok(Snapshot {
+                    tag: versions[ticket.workspace as usize - 1]
+                        .next_tag()
+                        .map_err(|_| StoreError::Unavailable)?,
+                    ticket,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let state = Catalog { spaces, tickets };
         if saved.is_none() {
-            disk.publish(&encode(&[])?)?;
+            disk.publish(&wire::encode(&state)?)?;
         }
         Ok(Self {
             disk,
             versions,
-            rows: Mutex::new(rows),
+            state: Mutex::new(state),
             failed: AtomicBool::new(false),
         })
     }
-    fn locked(&self) -> Result<std::sync::MutexGuard<'_, Vec<Snapshot>>, StoreError> {
-        let rows = self.rows.lock().map_err(|_| StoreError::Unavailable)?;
+    fn locked(&self) -> Result<std::sync::MutexGuard<'_, Catalog>, StoreError> {
+        let state = self.state.lock().map_err(|_| StoreError::Unavailable)?;
         if self.failed.load(Ordering::Relaxed) {
             return Err(StoreError::Uncertain);
         }
-        Ok(rows)
+        Ok(state)
     }
-    pub fn list(&self) -> Result<Vec<Ticket>, StoreError> {
-        Ok(self.locked()?.iter().map(|s| s.ticket.clone()).collect())
-    }
-    pub fn get(&self, id: u32) -> Result<Snapshot, StoreError> {
-        self.locked()?
+    fn authorize(
+        state: &Catalog,
+        actor: Actor,
+        workspace: u32,
+        access: Access,
+    ) -> Result<&SpaceSnapshot, StoreError> {
+        let space = state
+            .spaces
             .iter()
-            .find(|s| s.ticket.id == id)
-            .cloned()
+            .find(|s| s.space.id == workspace)
+            .ok_or(StoreError::Missing)?;
+        let role = space.space.role(actor).ok_or(StoreError::Missing)?;
+        if matches!(access, Access::Edit) && !role.can_edit()
+            || matches!(access, Access::Manage) && role != Role::Owner
+        {
+            return Err(StoreError::Forbidden);
+        }
+        Ok(space)
+    }
+    pub fn spaces(&self, actor: Actor) -> Result<Vec<Space>, StoreError> {
+        Ok(self
+            .locked()?
+            .spaces
+            .iter()
+            .filter(|s| s.space.role(actor).is_some())
+            .map(|s| s.space.clone())
+            .collect())
+    }
+    pub fn space(
+        &self,
+        actor: Actor,
+        workspace: u32,
+        access: Access,
+    ) -> Result<SpaceSnapshot, StoreError> {
+        let state = self.locked()?;
+        Ok(Self::authorize(&state, actor, workspace, access)?.clone())
+    }
+    pub fn count(&self) -> Result<usize, StoreError> {
+        Ok(self.locked()?.tickets.len())
+    }
+    pub fn create_space(&self, actor: Actor, input: WorkspaceInput) -> Result<Space, StoreError> {
+        let mut state = self.locked()?;
+        if !state
+            .spaces
+            .iter()
+            .any(|s| s.space.role(actor) == Some(Role::Owner))
+        {
+            return Err(StoreError::Forbidden);
+        }
+        if state.spaces.len() == MAX_WORKSPACES as usize {
+            return Err(StoreError::Full);
+        }
+        if state
+            .spaces
+            .iter()
+            .any(|s| s.space.role(actor).is_some() && s.space.name == input.name)
+        {
+            return Err(StoreError::InvalidInput);
+        }
+        WorkspaceInput::new(&input.name).map_err(|_| StoreError::InvalidInput)?;
+        let mut members = [None; 4];
+        members[actor.index()] = Some(Role::Owner);
+        let space = Space {
+            id: state.spaces.len() as u32 + 1,
+            name: input.name,
+            revision: 1,
+            members,
+        };
+        let mut next = state.clone();
+        next.spaces.push(SpaceSnapshot {
+            tag: self.tag(space.id)?,
+            space: space.clone(),
+        });
+        self.publish(&next)?;
+        *state = next;
+        Ok(space)
+    }
+    pub fn members(&self, actor: Actor, workspace: u32) -> Result<SpaceSnapshot, StoreError> {
+        self.space(actor, workspace, Access::Manage)
+    }
+    pub fn set_members(
+        &self,
+        actor: Actor,
+        workspace: u32,
+        members: [Option<Role>; 4],
+        condition: Option<&IfMatch>,
+    ) -> Result<SpaceSnapshot, StoreError> {
+        let mut state = self.locked()?;
+        let space = Self::authorize(&state, actor, workspace, Access::Manage)?;
+        check(condition, &space.tag)?;
+        if !members.contains(&Some(Role::Owner)) {
+            return Err(StoreError::InvalidInput);
+        }
+        if space.space.members == members {
+            return Ok(space.clone());
+        }
+        let mut next = state.clone();
+        let row = &mut next.spaces[workspace as usize - 1];
+        row.space.members = members;
+        row.space.revision = row.space.revision.checked_add(1).ok_or(StoreError::Full)?;
+        row.tag = self.tag(workspace)?;
+        let result = row.clone();
+        self.publish(&next)?;
+        *state = next;
+        Ok(result)
+    }
+    pub fn list(&self, actor: Actor, workspace: u32) -> Result<Vec<Ticket>, StoreError> {
+        let state = self.locked()?;
+        Self::authorize(&state, actor, workspace, Access::Read)?;
+        Ok(state
+            .tickets
+            .iter()
+            .filter(|s| s.ticket.workspace == workspace)
+            .map(|s| s.ticket.clone())
+            .collect())
+    }
+    fn find(state: &Catalog, workspace: u32, id: u32) -> Result<&Snapshot, StoreError> {
+        state
+            .tickets
+            .iter()
+            .find(|s| s.ticket.workspace == workspace && s.ticket.id == id)
             .ok_or(StoreError::Missing)
     }
-    pub fn create(&self, input: TicketInput) -> Result<Snapshot, StoreError> {
-        let mut rows = self.locked()?;
-        if rows.len() == MAX_TICKETS {
+    pub fn get(&self, actor: Actor, workspace: u32, id: u32) -> Result<Snapshot, StoreError> {
+        let state = self.locked()?;
+        Self::authorize(&state, actor, workspace, Access::Read)?;
+        Ok(Self::find(&state, workspace, id)?.clone())
+    }
+    pub fn create(
+        &self,
+        actor: Actor,
+        workspace: u32,
+        input: TicketInput,
+    ) -> Result<Snapshot, StoreError> {
+        let mut state = self.locked()?;
+        Self::authorize(&state, actor, workspace, Access::Edit)?;
+        if state.tickets.len() == MAX_TICKETS {
             return Err(StoreError::Full);
         }
         let row = Snapshot {
             ticket: Ticket {
-                id: rows.len() as u32 + 1,
+                id: state
+                    .tickets
+                    .iter()
+                    .filter(|s| s.ticket.workspace == workspace)
+                    .count() as u32
+                    + 1,
+                workspace,
                 revision: 1,
                 input,
             },
-            tag: self
-                .versions
-                .next_tag()
-                .map_err(|_| StoreError::Unavailable)?,
+            tag: self.tag(workspace)?,
         };
-        let mut next = rows.clone();
-        next.push(row.clone());
+        let mut next = state.clone();
+        next.tickets.push(row.clone());
+        next.tickets
+            .sort_by_key(|s| (s.ticket.workspace, s.ticket.id));
         self.publish(&next)?;
-        *rows = next;
+        *state = next;
         Ok(row)
     }
     pub fn update(
         &self,
+        actor: Actor,
+        workspace: u32,
         id: u32,
         input: TicketInput,
         condition: Option<&IfMatch>,
     ) -> Result<Snapshot, StoreError> {
-        let mut rows = self.locked()?;
-        let index = rows
+        let mut state = self.locked()?;
+        Self::authorize(&state, actor, workspace, Access::Edit)?;
+        let current = Self::find(&state, workspace, id)?;
+        check(condition, &current.tag)?;
+        if current.ticket.input == input {
+            return Ok(current.clone());
+        }
+        let mut next = state.clone();
+        let index = next
+            .tickets
             .iter()
-            .position(|s| s.ticket.id == id)
+            .position(|s| s.ticket.workspace == workspace && s.ticket.id == id)
             .ok_or(StoreError::Missing)?;
-        let condition = condition
-            .filter(|c| !c.is_any())
-            .ok_or(StoreError::Precondition)?;
-        if !condition.matches(Some(&rows[index].tag)) {
-            return Err(StoreError::Conflict);
-        }
-        if rows[index].ticket.input == input {
-            return Ok(rows[index].clone());
-        }
-        let mut next = rows.clone();
-        next[index] = Snapshot {
-            ticket: Ticket {
-                id,
-                revision: rows[index]
-                    .ticket
-                    .revision
-                    .checked_add(1)
-                    .ok_or(StoreError::Full)?,
-                input,
-            },
-            tag: self
-                .versions
-                .next_tag()
-                .map_err(|_| StoreError::Unavailable)?,
-        };
+        let row = &mut next.tickets[index];
+        row.ticket.input = input;
+        row.ticket.revision = row.ticket.revision.checked_add(1).ok_or(StoreError::Full)?;
+        row.tag = self.tag(workspace)?;
+        let result = row.clone();
         self.publish(&next)?;
-        let row = next[index].clone();
-        *rows = next;
-        Ok(row)
+        *state = next;
+        Ok(result)
     }
-    fn publish(&self, rows: &[Snapshot]) -> Result<(), StoreError> {
-        let bytes = encode(&rows.iter().map(|s| s.ticket.clone()).collect::<Vec<_>>())?;
-        self.disk.publish(&bytes).inspect_err(|_| {
+    pub fn with_ticket<T>(
+        &self,
+        actor: Actor,
+        workspace: u32,
+        id: u32,
+        access: Access,
+        operation: impl FnOnce(&FileOwner, Role) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        let state = self.locked()?;
+        let role = Self::authorize(&state, actor, workspace, access)?
+            .space
+            .role(actor)
+            .unwrap();
+        Self::find(&state, workspace, id)?;
+        let owner = FileOwner::new(&format!("desk-w{workspace}-t{id}"))
+            .map_err(|_| StoreError::InvalidInput)?;
+        let result = operation(&owner, role);
+        drop(state);
+        result
+    }
+    fn tag(&self, workspace: u32) -> Result<EntityTag, StoreError> {
+        self.versions
+            .get(workspace as usize - 1)
+            .ok_or(StoreError::InvalidInput)?
+            .next_tag()
+            .map_err(|_| StoreError::Unavailable)
+    }
+    fn publish(&self, state: &Catalog) -> Result<(), StoreError> {
+        self.disk.publish(&wire::encode(state)?).inspect_err(|_| {
             self.failed.store(true, Ordering::Relaxed);
         })
     }
 }
-fn crc(bytes: &[u8]) -> u32 {
-    let mut c = !0u32;
-    for b in bytes {
-        c ^= *b as u32;
-        for _ in 0..8 {
-            c = (c >> 1) ^ (0xedb88320u32 & (0u32.wrapping_sub(c & 1)));
-        }
+fn check(condition: Option<&IfMatch>, tag: &EntityTag) -> Result<(), StoreError> {
+    let condition = condition
+        .filter(|c| !c.is_any())
+        .ok_or(StoreError::Precondition)?;
+    if !condition.matches(Some(tag)) {
+        return Err(StoreError::Conflict);
     }
-    !c
-}
-fn encode(rows: &[Ticket]) -> Result<Vec<u8>, StoreError> {
-    if rows.len() > MAX_TICKETS {
-        return Err(StoreError::Corrupt);
-    }
-    let mut bytes = b"RDS1".to_vec();
-    bytes.extend((rows.len() as u32).to_le_bytes());
-    for (i, row) in rows.iter().enumerate() {
-        if row.id != i as u32 + 1
-            || row.revision == 0
-            || TicketInput::new(
-                &row.input.title,
-                &row.input.description,
-                row.input.state.wire(),
-            )
-            .is_err()
-        {
-            return Err(StoreError::Corrupt);
-        }
-        bytes.extend(row.id.to_le_bytes());
-        bytes.extend(row.revision.to_le_bytes());
-        bytes.push(match row.input.state {
-            State::Open => 0,
-            State::InProgress => 1,
-            State::Closed => 2,
-        });
-        bytes.extend((row.input.title.len() as u16).to_le_bytes());
-        bytes.extend((row.input.description.len() as u16).to_le_bytes());
-        bytes.extend(row.input.title.as_bytes());
-        bytes.extend(row.input.description.as_bytes());
-    }
-    bytes.extend(crc(&bytes).to_le_bytes());
-    Ok(bytes)
-}
-fn decode(bytes: &[u8]) -> Result<Vec<Ticket>, StoreError> {
-    let bad = || StoreError::Corrupt;
-    if bytes.len() < 12
-        || bytes.len() > MAX_BYTES
-        || &bytes[..4] != b"RDS1"
-        || crc(&bytes[..bytes.len() - 4])
-            != u32::from_le_bytes(bytes[bytes.len() - 4..].try_into().map_err(|_| bad())?)
-    {
-        return Err(bad());
-    }
-    let mut rest = &bytes[4..bytes.len() - 4];
-    fn take<'a>(rest: &mut &'a [u8], n: usize) -> Result<&'a [u8], StoreError> {
-        if rest.len() < n {
-            return Err(StoreError::Corrupt);
-        }
-        let (a, b) = rest.split_at(n);
-        *rest = b;
-        Ok(a)
-    }
-    let count = u32::from_le_bytes(take(&mut rest, 4)?.try_into().map_err(|_| bad())?) as usize;
-    if count > MAX_TICKETS {
-        return Err(bad());
-    }
-    let mut rows = Vec::with_capacity(count);
-    for i in 0..count {
-        let id = u32::from_le_bytes(take(&mut rest, 4)?.try_into().map_err(|_| bad())?);
-        let revision = u64::from_le_bytes(take(&mut rest, 8)?.try_into().map_err(|_| bad())?);
-        let state = match take(&mut rest, 1)?[0] {
-            0 => State::Open,
-            1 => State::InProgress,
-            2 => State::Closed,
-            _ => return Err(bad()),
-        };
-        let title_len =
-            u16::from_le_bytes(take(&mut rest, 2)?.try_into().map_err(|_| bad())?) as usize;
-        let description_len =
-            u16::from_le_bytes(take(&mut rest, 2)?.try_into().map_err(|_| bad())?) as usize;
-        let title = std::str::from_utf8(take(&mut rest, title_len)?).map_err(|_| bad())?;
-        let description =
-            std::str::from_utf8(take(&mut rest, description_len)?).map_err(|_| bad())?;
-        let input = TicketInput::new(title, description, state.wire()).map_err(|_| bad())?;
-        if id != i as u32 + 1 || revision == 0 {
-            return Err(bad());
-        }
-        rows.push(Ticket {
-            id,
-            revision,
-            input,
-        });
-    }
-    if !rest.is_empty() {
-        return Err(bad());
-    }
-    Ok(rows)
+    Ok(())
 }
 #[cfg(test)]
 mod tests;
