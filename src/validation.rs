@@ -112,6 +112,78 @@ pub struct ValidationErrors {
     definition_error: bool,
 }
 impl ValidationErrors {
+    /// Decodes a bounded remote report. Fields must match trusted static declarations.
+    /// Unknown fields, codes and extra members are rejected without retaining their contents.
+    pub fn from_json(
+        value: &JsonValue,
+        fields: &'static [&'static str],
+    ) -> Result<Self, crate::JsonError> {
+        let invalid = crate::JsonError::InvalidSyntax;
+        if fields.len() > MAX_VALIDATION_FIELDS
+            || fields
+                .iter()
+                .enumerate()
+                .any(|(i, name)| !valid_name(name) || fields[..i].contains(name))
+            || value.encode().len() > MAX_VALIDATION_RESPONSE_BYTES
+            || value.as_object().is_none_or(|members| members.len() != 3)
+            || value.get("error").and_then(JsonValue::as_str) != Some("Bad Request")
+        {
+            return Err(invalid);
+        }
+        let truncated = value
+            .get("truncated")
+            .and_then(JsonValue::as_bool)
+            .ok_or(invalid)?;
+        let issues = value
+            .get("errors")
+            .and_then(JsonValue::as_array)
+            .ok_or(invalid)?;
+        if issues.len() > MAX_VALIDATION_ERRORS || (issues.is_empty() && !truncated) {
+            return Err(invalid);
+        }
+        let mut report = Self::new();
+        for issue in issues {
+            let members = issue.as_object().ok_or(invalid)?;
+            if members.len() != 1 + usize::from(issue.get("field").is_some()) {
+                return Err(invalid);
+            }
+            let field = match issue.get("field") {
+                Some(name) => Some(
+                    *fields
+                        .iter()
+                        .find(|field| Some(**field) == name.as_str())
+                        .ok_or(invalid)?,
+                ),
+                None => None,
+            };
+            let code = [
+                ValidationCode::Required,
+                ValidationCode::NullNotAllowed,
+                ValidationCode::ExpectedObject,
+                ValidationCode::ExpectedString,
+                ValidationCode::ExpectedBoolean,
+                ValidationCode::ExpectedInteger,
+                ValidationCode::OutOfRange,
+                ValidationCode::TooShort,
+                ValidationCode::TooLong,
+                ValidationCode::Blank,
+                ValidationCode::InvalidCharacters,
+                ValidationCode::UnknownField,
+                ValidationCode::EmptyObject,
+                ValidationCode::InvalidValue,
+            ]
+            .into_iter()
+            .find(|code| Some(code.as_str()) == issue.get("code").and_then(JsonValue::as_str))
+            .ok_or(invalid)?;
+            let before = report.len();
+            report.add(field, code);
+            if report.len() == before {
+                return Err(invalid);
+            }
+        }
+        report.truncated = truncated;
+        Ok(report)
+    }
     /// Creates an empty report.
     pub fn new() -> Self {
         Self::default()

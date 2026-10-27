@@ -1,6 +1,19 @@
 # Changelog
 
-## 0.1.0-alpha.54 — Unreleased
+## 0.1.0-alpha.55 — Unreleased
+
+- Add component-owned GET/POST/PUT/PATCH/DELETE JSON requests with exact Rust
+  decoding, explicit typed results, retained strong If-Match and bounded reports.
+- Share the form/JSON pending slot; abort disposed requests and ignore stale
+  replies. Bound deadlines and streamed responses without retrying mutations.
+- Preserve submission uncertainty in Rust and navigation cache state; distinguish
+  validation, conflicts, pre-handler quotas and unconfirmed failures.
+- Move the task editor's model, validation, requests and errors into Rust/Wasm,
+  including bounded pagination, draft retention and explicit conflict reload.
+- Use ABI v13 and RVN7/RVJ1 with the same 22 exports, four core assets and two
+  first-party Cargo packages. Rebuild Wasm with the matching bridge.
+
+## 0.1.0-alpha.54
 
 - Add strict flat-object JSON decoding, exact presence/type checks, bounded text
   rules and checked signed/unsigned integer ranges without coercion.

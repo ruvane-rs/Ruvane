@@ -157,10 +157,10 @@ page cache and two bounded speculative requests; no-store remains the default.
 At most two page owners overlap during preparation, within the runtime's
 16-view budget; reserve space for the prepared page alongside layout islands.
 
-Browser ABI v12 provides `ruvane_page_begin`, `ruvane_page_chunk`,
+Browser ABI v13 provides `ruvane_page_begin`, `ruvane_page_chunk`,
 `ruvane_page_mount` and `ruvane_page_validate`. Input arrives in exact-length
 chunks of 1..=4 bytes, without input pointers or imports. Error 11 means an invalid
-page/route/seed. RVN6 carries link tag 15, opcode 12 (node u32, target length u32,
+page/route/seed. RVN7 carries link tag 15, opcode 12 (node u32, target length u32,
 encoded target bytes) and opcode 13 (node u32, prefetch boolean u8).
 Rebuild Wasm with the matching bridge; older versions are rejected.
 

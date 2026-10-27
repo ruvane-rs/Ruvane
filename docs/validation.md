@@ -124,5 +124,9 @@ submissions keep its draft and show the same rule messages as the server; the
 server independently revalidates submitted JSON. Sixteen shared cases compare
 native and Wasm reports byte for byte, including Unicode, null/absence, unknown
 keys, wrong types and exact integer extrema. All business code remains application
-code; no new Wasm export or action wire format is introduced. ABI v12, 22 exports
+code; no new Wasm export or action wire format is introduced. ABI v13, 22 exports
 and four core runtime assets remain unchanged.
+
+Alpha.55 adds `ValidationErrors::from_json` and `JsonReply::validation` for bounded
+remote reports. Supply trusted static fields; unknown fields/codes and extra data
+are rejected. See [component JSON requests](json-client.md).

@@ -6,11 +6,26 @@ use ruvane::*;
 use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port = std::env::args()
-        .nth(1)
+    let mut args = std::env::args().skip(1);
+    let port = args
+        .next()
         .map(|value| value.parse::<u16>())
         .transpose()?
         .unwrap_or(8080);
+    let wasm = args
+        .next()
+        .unwrap_or_else(|| "target/wasm32-unknown-unknown/release/ruvane_browser.wasm".into());
+    if args.next().is_some() {
+        return Err("usage: json_api [PORT] [WASM_FILE]".into());
+    }
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(wasm)?
+        .take((MAX_ASSET_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_ASSET_BYTES || !bytes.starts_with(b"\0asm\x01\0\0\0") {
+        return Err("invalid or oversized Wasm module".into());
+    }
     let store = SessionStore::new(
         SessionLimits::default(),
         SessionCookie::local_http("ruvane_json_demo")?,
@@ -19,6 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let public = RateLimiter::new(RateLimitPolicy::new(5, 60)?, RateLimitLimits::default());
     let tasks = Arc::new(json_tasks::Tasks::new()?);
     let mut app = App::new();
+    app.asset(
+        "/assets/bridge.mjs",
+        BROWSER_BRIDGE_MODULE.as_bytes(),
+        MediaType::JavaScript,
+    )?;
     app.asset(
         "/json-demo.mjs",
         include_bytes!("support/json_api.mjs"),
@@ -51,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "demo-session/route.rs",
         "/demo-session",
         FileEndpoint::new()
-            .post_form(move |request| {
+            .post_json(move |request| {
                 let active = match open.lookup(request) {
                     Ok(value) => value.is_some(),
                     Err(_) => return json_tasks::error(StatusCode::ServiceUnavailable),
@@ -113,8 +133,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .guard(quota.session_guard(store)),
     )?;
     routes.finish()?;
-    let server = Server::bind(format!("127.0.0.1:{port}").parse()?, app.router(None)?)?;
-    println!("Ruvane JSON demo at http://{}", server.local_addr()?);
+    let mut router = app.router(None)?;
+    router.get("/assets/app.wasm", move |_| {
+        Response::bytes(bytes.clone(), MediaType::WebAssembly)
+    })?;
+    let server = Server::bind(format!("127.0.0.1:{port}").parse()?, router)?;
+    let stop = server.shutdown_handle();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        stop.shutdown();
+    });
+    println!(
+        "Ruvane JSON demo at http://{} — Enter to stop",
+        server.local_addr()?
+    );
     server.run()?;
     Ok(())
 }

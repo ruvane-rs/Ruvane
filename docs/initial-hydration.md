@@ -104,7 +104,7 @@ Callers must finish the transaction; the standard navigator manages it. The
 
 Manual navigators calling `start()` without a snapshot retain the complete GET
 startup path. The standard App bootstrap requires the embedded snapshot. Browser
-ABI v12 and the same 22 numeric exports are reused; RVS1/RVP4 navigation and
+ABI v13 and the same 22 numeric exports are reused; RVS1/RVP4 navigation and
 RVA1 action formats are unchanged. Rebuild native/Wasm and matching browser
 assets together when upgrading.
 

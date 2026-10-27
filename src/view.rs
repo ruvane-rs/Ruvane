@@ -612,6 +612,18 @@ impl From<ViewError> for ComponentError {
 
 /// A reusable component. Dropping it must release its owned resources.
 pub trait Component {
+    /// Takes one queued JSON request. Shares the pending slot with form actions.
+    fn take_json(&mut self) -> Option<crate::JsonRequest> {
+        None
+    }
+    /// Receives a JSON completion after its live view and request identity are checked.
+    fn json_result(
+        &mut self,
+        _action: u32,
+        _outcome: crate::JsonOutcome,
+    ) -> Result<(), ComponentError> {
+        Err(ComponentError::InvalidEvent)
+    }
     /// Applies a public navigation seed before the first view. Page mounts forbid initial actions.
     fn page_data(&mut self, _data: crate::ActionData) -> Result<(), ComponentError> {
         Err(ComponentError::InvalidProps)

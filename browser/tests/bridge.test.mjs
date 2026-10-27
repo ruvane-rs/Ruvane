@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { decodeCommands, validateExports, validateProps, planCommands, LIMITS } from "../../web/bridge.mjs";
 
 function frame(payload = [], count = 0) {
-  return new Uint8Array([82, 86, 78, 54, ...word(count), ...payload]);
+  return new Uint8Array([82, 86, 78, 55, ...word(count), ...payload]);
 }
 const word = n => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
 
@@ -52,7 +52,7 @@ test("compiled Rust module has no host imports and executes the real reactor", a
     assert.equal(e.ruvane_commands_clear(), 1);
     return commands;
   };
-  assert.equal(e.ruvane_abi_version(), 12);
+  assert.equal(e.ruvane_abi_version(), 13);
   assert.equal(e.ruvane_mount(0, 1, 1, 0), 0);
   assert.equal(e.ruvane_last_error(), 1);
   for (const args of [[1, 1, 2, 1], [1, 2, 2, 2], [1, 1, 1, 1001], [1, 99, 1, 0]]) {
@@ -356,4 +356,17 @@ test("page validation exports check schemas without consuming instance or node i
   for(let n=0;n<1000;n++){assert.equal(validate(pagePacket()),1);assert.equal(e.ruvane_live_instances(),1);assert.equal(e.ruvane_live_signals(),2);assert.deepEqual(decodeCommands(new Uint8Array(e.memory.buffer,e.ruvane_commands_ptr(),e.ruvane_commands_len())),[]);}
   assert.equal(validate(pagePacket("/other")),0);assert.equal(e.ruvane_last_error(),11);assert.equal(e.ruvane_live_instances(),1);
   const next=e.ruvane_mount(2,1,1,0);assert.equal(next,counter+1);e.ruvane_commands_clear();e.ruvane_dispose(next);e.ruvane_commands_clear();e.ruvane_dispose(counter);e.ruvane_commands_clear();assert.equal(e.ruvane_live_instances(),0);
+});
+
+test("JSON commands validate methods, internal targets, body profiles and retained validators", () => {
+  const text = value => { const bytes = [...new TextEncoder().encode(value)]; return [...word(bytes.length), ...bytes]; };
+  const json = (method, url, body, tag='"retained"') => frame([14,...word(1),...word(2),...word(3),method,...text(url),...text(body),...text(tag)],1);
+  for (const method of [0,1,2,3,4]) {
+    const bytes = json(method,"/api?view=all",[0,4].includes(method)?"":'{"n":18446744073709551615}');
+    const command = decodeCommands(bytes)[0];
+    assert.equal(command.method,["GET","POST","PUT","PATCH","DELETE"][method]); assert.equal(command.etag,'"retained"');
+    for (let size=0;size<bytes.length;size++) assert.throws(()=>decodeCommands(bytes.slice(0,size)));
+    assert.throws(()=>decodeCommands(new Uint8Array([...bytes,0])));
+  }
+  for (const bytes of [json(5,"/api","{}"),json(0,"//other/api",""),json(0,"/api/../secret",""),json(0,"/api","{}"),json(4,"/api","{}"),json(1,"/api",""),json(1,"/api","{}",'W/"weak"'),json(1,"/api","{}",'"bad\r\nheader"'),json(1,"/api","x".repeat(16385))]) assert.throws(()=>decodeCommands(bytes));
 });

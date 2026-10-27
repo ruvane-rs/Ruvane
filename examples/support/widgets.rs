@@ -17,6 +17,11 @@ pub fn validate_page(page: &ruvane::NavigationPage) -> bool {
     navigation_pages::validate(page)
 }
 
+#[path = "json_component.rs"]
+mod json_component;
+#[path = "task_input.rs"]
+mod task_input;
+
 #[path = "action_probe.rs"]
 mod action_probe;
 #[path = "fields_probe.rs"]
@@ -319,6 +324,7 @@ pub fn create(props: ComponentProps) -> Result<Box<dyn Component>, ComponentErro
         }
         (TASK_FORM, InitialState::Number(count)) => tasks::create(count),
         (FIELDS_PROBE, InitialState::Number(0)) => Ok(fields_probe::create()),
+        (27, InitialState::Number(0)) => Ok(json_component::create()),
         (REMOTE_TASKS, InitialState::Number(0)) => Ok(remote_tasks::create()),
         (ACTION_PROBE, InitialState::Number(mode)) if mode <= 9 => Ok(action_probe::create(mode)),
         _ => navigation_pages::create(props),

@@ -183,9 +183,12 @@ error precedence and the two-tab conflict example. Data is shared demo memory an
 this is not real user authentication or a database. The browser module uses text
 nodes and sends each mutation once, with no automatic retry.
 
+[Component JSON requests](json-client.md) use the same parser in Rust/Wasm and
+move the example editor model and requests into Rust.
+
 CLI tests run a bundle with source files hidden, including concurrency, guard
 ordering and the shared parser inside an import-free Wasm component. Browser ABI
-v12, the 22 exports and four runtime assets stay unchanged.
+v13 retains 22 exports and four core runtime assets.
 
 Alpha.54's task example decodes CreateTask, ReplaceTask and PatchTask through the
 same checked Rust module on native and Wasm targets. Domain failures return

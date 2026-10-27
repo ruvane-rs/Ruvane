@@ -3,7 +3,7 @@
 Alpha.17 connects browser components to explicit server actions. The browser
 performs same-origin POST requests; Rust owns the model, validation results and
 view updates. There are no third-party crates, npm packages, host imports or
-input pointers. This profile uses browser ABI v12, RVN6 commands and RVA1 replies.
+input pointers. This profile uses browser ABI v13, RVN7 commands and RVA1 replies.
 Rebuild the Wasm and serve its matching bridge together.
 
 Alpha.50 adds `ActionFailure::RateLimited` for a confirmed quota-guard refusal.
@@ -188,3 +188,6 @@ on `ClientRuntime` and protect mutation routes with `SessionStore::csrf_guard()`
 The bridge retrieves a fresh same-origin token before each action. Failed token
 retrieval sends no POST and leaves no uncertain mutation; failures after sending
 retain the existing conservative behavior.
+
+JSON requests share the same live-owner pending slot. Their bounded RVJ1 results
+are delivered through separate component hooks; see [component JSON](json-client.md).

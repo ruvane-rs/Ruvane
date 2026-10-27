@@ -81,11 +81,16 @@ independent OS-generated tokens, generation checks and automatic same-origin ret
 
 [Native request quotas](docs/rate-limits.md) add bounded per-route and per-session
 token buckets, rotation-stable session quotas and typed 429 responses across
-native forms, navigation and Wasm actions. Browser ABI v12 keeps 22 exports.
+native forms, navigation and Wasm actions. Browser ABI v13 keeps 22 exports.
 
 [Bounded JSON APIs](docs/json.md) add immutable values, exact number text,
 checked construction and explicit native POST/PUT/PATCH JSON routes plus bodyless DELETE. Fixed no-store
 responses and the existing session/CSRF/quota guards support the task API example.
+
+[Component JSON requests](docs/json-client.md) add explicit GET/POST/PUT/PATCH/DELETE
+from Rust/Wasm, exact response decoding, retained versions, bounded transport and
+late-response disposal. Typed failures preserve mutation uncertainty without
+retries; the task editor now keeps its complete model and requests in Rust.
 
 [Conditional resource updates](docs/conditional-requests.md) add bounded ETag and
 If-Match types, atomic version checks and explicit conflicts that preserve browser

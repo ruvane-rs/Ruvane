@@ -17,6 +17,7 @@ mod guards;
 mod html;
 mod http;
 mod json;
+mod json_client;
 mod layout_snapshot;
 mod metadata;
 mod navigation;
@@ -98,6 +99,10 @@ pub use http::{
 pub use json::{
     JSON_MEDIA_TYPE, JsonError, JsonNumber, JsonValue, MAX_JSON_BYTES, MAX_JSON_DEPTH,
     MAX_JSON_ITEMS, MAX_JSON_NUMBER_BYTES, MAX_JSON_STRING_BYTES, MAX_JSON_VALUES,
+};
+pub use json_client::{
+    JsonFailure, JsonMethod, JsonOutcome, JsonReply, JsonRequest, MAX_JSON_REPLY_BYTES,
+    MAX_JSON_REQUEST_BYTES, decode_json_reply,
 };
 pub use layout_snapshot::{LayoutSnapshot, MAX_LAYOUT_SNAPSHOT_BYTES};
 pub use metadata::{

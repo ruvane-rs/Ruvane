@@ -81,7 +81,7 @@ uses runtime disposal on page departure. Custom callers must dispose their shell
 controllers or runtime too. The bridge validates controller identity before retirement and rechecks DOM
 ownership before releasing a shell gate.
 
-The profile still uses ABI v12, 22 Wasm exports and four runtime assets. The shell
+The profile still uses ABI v13, 22 Wasm exports and four runtime assets. The shell
 adds bounded HTML metadata and first-party JavaScript lifecycle methods, without
 a new binary packet format or external dependency.
 

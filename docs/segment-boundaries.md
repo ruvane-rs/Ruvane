@@ -113,10 +113,10 @@ asks for reload and disables retry/cache reuse for that navigator.
 
 ## Wire and limits
 
-ABI v12 provides `ruvane_boundary_mount(root, component, kind, value) -> u32`, retaining
+ABI v13 provides `ruvane_boundary_mount(root, component, kind, value) -> u32`, retaining
 numeric input, no host imports and 22 reviewed exports. `mountBoundary(host,
 props)` uses an empty seed and rejects event-bearing views or initial actions.
-Rebuild Wasm with the matching bridge. RVN6 commands and RVA1 seeds are unchanged.
+Rebuild Wasm with the matching bridge. RVN7 commands and RVA1 seeds are unchanged.
 
 RVP1 leaf pages and RVP2 successful branches remain supported. RVP3 error packets
 carry magic RVP3, selected-segment u8, failed-segment u8, the RVP1 body after its

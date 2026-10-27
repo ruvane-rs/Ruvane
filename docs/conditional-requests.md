@@ -116,7 +116,7 @@ for an explicit reload. Titles render through text nodes.
 
 Tests cover strong/weak/list grammar, byte/member limits, redaction, sanitized
 requests, source failures, counter overflow, concurrent writers, authorization
-ordering, deletion, recreated IDs and actual process restarts. Browser ABI v12,
+ordering, deletion, recreated IDs and actual process restarts. Browser ABI v13,
 22 exports and four core runtime assets remain unchanged.
 
 Alpha.54 adds [typed input validation](validation.md). A validation failure returns

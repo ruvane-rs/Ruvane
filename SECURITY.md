@@ -54,7 +54,7 @@ Only mutation guard failures emit the fixed pre-handler refusal marker; a manual
 does not assert non-execution. The bridge never retries POST automatically. This
 is process-local admission control after request parsing, not a distributed or
 network DDoS defense. Existing session, CSRF and origin checks remain separate.
-ABI v12 pairs the new typed action failure and closed read-only 429 navigation shape.
+ABI v13 pairs the new typed action failure and closed read-only 429 navigation shape.
 
 Alpha.49 adds opt-in [session CSRF tokens](docs/csrf.md). Tokens use independent
 256-bit OS randomness and remain bound to one live session generation. Native forms
@@ -286,7 +286,7 @@ DOM commands. Applications must still check their response schema and resource
 authorization. MediaType::Action declares MIME only; it is not a byte validator
 and cannot be used for static export.
 
-Browser ABI v11/RVN6 isolate twenty-two reviewed numeric exports. The reply
+Browser ABI v11/RVN7 isolate twenty-two reviewed numeric exports. The reply
 ingress uses exact-length bounded chunks and accepts no input pointers. Each
 request has a checked, never-reused token bound to a live component. One action
 per view can await I/O without holding the synchronous ABI busy. Disposal aborts

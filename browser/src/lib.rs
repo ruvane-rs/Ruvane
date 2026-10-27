@@ -11,6 +11,8 @@ use std::fmt;
 
 // Export attributes are isolated in the Wasm ABI.
 mod abi;
+#[cfg(test)]
+mod json_tests;
 /// ABI version used by application exports.
 pub const ABI_VERSION: u32 = ruvane::BROWSER_ABI_VERSION;
 #[doc(hidden)]
@@ -90,7 +92,12 @@ struct Instance {
     component: Box<dyn Component>,
     view: View,
     snapshot: ViewSnapshot,
-    action: Option<(u32, u32)>,
+    action: Option<(u32, u32, Option<bool>)>,
+}
+
+enum Completion {
+    Form(ActionOutcome),
+    Json(ruvane::JsonOutcome),
 }
 
 struct PendingText {
@@ -236,7 +243,7 @@ impl BrowserRuntime {
             .map_err(|_| BrowserError::InvalidView)?;
         let mut action = None;
         if seed.is_some() {
-            if component.take_action().is_some() {
+            if component.take_action().is_some() || component.take_json().is_some() {
                 return Err(BrowserError::InvalidPage);
             }
         } else {
@@ -329,7 +336,7 @@ impl BrowserRuntime {
                 .map_err(|_| BrowserError::InvalidView)?
                 .commands(1)
                 .map_err(|_| BrowserError::InvalidView)?;
-            if component.take_action().is_some() {
+            if component.take_action().is_some() || component.take_json().is_some() {
                 return Err(BrowserError::InvalidPage);
             }
         }
@@ -418,20 +425,31 @@ impl BrowserRuntime {
 
     fn queue_action(
         component: &mut dyn Component,
-        active: &mut Option<(u32, u32)>,
+        active: &mut Option<(u32, u32, Option<bool>)>,
         next: &mut u32,
         commands: &mut BrowserCommands,
         view: u32,
     ) -> Result<(), BrowserError> {
-        if let Some(action) = component.take_action() {
-            if active.is_some() {
+        let form = component.take_action();
+        let json = component.take_json();
+        if form.is_some() || json.is_some() {
+            if active.is_some() || (form.is_some() && json.is_some()) {
                 return Err(BrowserError::InvalidView);
             }
             *next = next.checked_add(1).ok_or(BrowserError::Limit)?;
-            commands
-                .action(view, *next, &action)
-                .map_err(|_| BrowserError::InvalidView)?;
-            *active = Some((*next, action.action()));
+            let (action, kind) = if let Some(json) = json {
+                commands
+                    .json(view, *next, &json)
+                    .map_err(|_| BrowserError::InvalidView)?;
+                (json.action(), Some(json.method().is_mutation()))
+            } else {
+                let form = form.unwrap();
+                commands
+                    .action(view, *next, &form)
+                    .map_err(|_| BrowserError::InvalidView)?;
+                (form.action(), None)
+            };
+            *active = Some((*next, action, kind));
         }
         Ok(())
     }
@@ -443,18 +461,30 @@ impl BrowserRuntime {
         request: u32,
         outcome: ActionOutcome,
     ) -> Result<(), BrowserError> {
+        self.complete_request(view, request, Completion::Form(outcome))
+    }
+
+    fn complete_request(
+        &mut self,
+        view: u32,
+        request: u32,
+        outcome: Completion,
+    ) -> Result<(), BrowserError> {
         self.ready()?;
         let instance = self
             .instances
             .get_mut(&view)
             .ok_or(BrowserError::InvalidAction)?;
-        let (token, action) = instance.action.ok_or(BrowserError::InvalidAction)?;
-        if token != request {
+        let (token, action, json) = instance.action.ok_or(BrowserError::InvalidAction)?;
+        if token != request || matches!(&outcome, Completion::Json(_)) != json.is_some() {
             return Err(BrowserError::InvalidAction);
         }
         instance.action = None;
         let update = (|| {
-            instance.component.action_result(action, outcome)?;
+            match outcome {
+                Completion::Form(outcome) => instance.component.action_result(action, outcome)?,
+                Completion::Json(outcome) => instance.component.json_result(action, outcome)?,
+            }
             Self::resources(instance.component.as_ref())?;
             let next = instance.component.view()?;
             let (snapshot, mut commands) = instance
@@ -485,7 +515,7 @@ impl BrowserRuntime {
         }
     }
 
-    /// Starts bounded RVA1 input for the current action token.
+    /// Starts bounded RVA1 or RVJ1 input for the current request token.
     pub fn begin_reply(
         &mut self,
         view: u32,
@@ -497,11 +527,18 @@ impl BrowserRuntime {
             .instances
             .get(&view)
             .and_then(|instance| instance.action)
-            .is_none_or(|(token, _)| token != request)
+            .is_none_or(|(token, _, _)| token != request)
         {
             return Err(BrowserError::InvalidAction);
         }
-        if length as usize > ruvane::MAX_ACTION_REPLY_BYTES {
+        let json = self.instances[&view].action.unwrap().2;
+        if length as usize
+            > if json.is_some() {
+                ruvane::MAX_JSON_REPLY_BYTES
+            } else {
+                ruvane::MAX_ACTION_REPLY_BYTES
+            }
+        {
             return Err(BrowserError::InvalidPayload);
         }
         self.reply = Some(PendingReply {
@@ -529,7 +566,8 @@ impl BrowserRuntime {
         Ok(())
     }
 
-    /// Commits RVA1 (kind 0) or ActionFailure (1..=5). False reports malformed RVA1.
+    /// Commits the owner's RVA1/RVJ1 frame (0), or a transport failure (1..=5).
+    /// False reports a protocol failure.
     pub fn complete_wire(
         &mut self,
         view: u32,
@@ -542,6 +580,37 @@ impl BrowserRuntime {
             .is_some_and(|reply| reply.view != view || reply.request != request)
         {
             return Err(BrowserError::InvalidPayload);
+        }
+        if let Some(mutation) = self
+            .instances
+            .get(&view)
+            .and_then(|instance| instance.action)
+            .filter(|(token, _, _)| *token == request)
+            .ok_or(BrowserError::InvalidAction)?
+            .2
+        {
+            if kind > 5 {
+                return Err(BrowserError::InvalidPayload);
+            }
+            let mut fallback = *b"RVJ1\0\0\0\0\0\0\0\0\0\0";
+            fallback[4] = kind as u8;
+            fallback[5] = u8::from(kind != 4);
+            let bytes = if kind == 0 {
+                reply
+                    .as_ref()
+                    .filter(|reply| reply.bytes.len() == reply.length)
+                    .map_or(&[][..], |reply| reply.bytes.as_slice())
+            } else {
+                &fallback
+            };
+            let outcome = ruvane::decode_json_reply(bytes, mutation);
+            let malformed = kind == 0
+                && outcome
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error.kind() == ActionFailure::Protocol);
+            self.complete_request(view, request, Completion::Json(outcome))?;
+            return Ok(!malformed);
         }
         let outcome = match kind {
             0 => match reply {
@@ -895,7 +964,7 @@ mod tests {
             };
             assert_eq!(runtime.dispatch(id, 42), Err(expected));
             assert_eq!(runtime.live_instances(), 0);
-            assert_eq!(runtime.command_bytes(), b"RVN6\0\0\0\0");
+            assert_eq!(runtime.command_bytes(), b"RVN7\0\0\0\0");
             assert_eq!(runtime.dispatch(id, 42), Err(BrowserError::InvalidHandle));
         }
         assert_eq!(runtime.mount(1, counter(1)), Err(BrowserError::Limit));
@@ -978,7 +1047,7 @@ mod tests {
     fn wire_rate_limit_is_delivered_as_a_known_typed_failure() {
         let mut runtime = BrowserRuntime::new(demo::create);
         let id = runtime.mount(1, remote()).unwrap();
-        let (token, _) = runtime.instances[&id].action.unwrap();
+        let (token, _, _) = runtime.instances[&id].action.unwrap();
         runtime.clear_commands();
         assert_eq!(runtime.complete_wire(id, token, 5), Ok(true));
         assert!(
@@ -998,7 +1067,7 @@ mod tests {
     fn action_tokens_staging_and_late_results_are_bound_to_live_owners() {
         let mut runtime = BrowserRuntime::new(demo::create);
         let id = runtime.mount(1, remote()).unwrap();
-        let (token, _) = runtime.instances[&id].action.unwrap();
+        let (token, _, _) = runtime.instances[&id].action.unwrap();
         runtime.clear_commands();
         assert_eq!(
             runtime.begin_reply(id, token + 1, 0),
@@ -1032,7 +1101,7 @@ mod tests {
             Err(BrowserError::InvalidAction)
         );
         runtime.dispatch(id, 4).unwrap();
-        let (next, _) = runtime.instances[&id].action.unwrap();
+        let (next, _, _) = runtime.instances[&id].action.unwrap();
         assert!(next > token);
         runtime.clear_commands();
         runtime
@@ -1040,7 +1109,7 @@ mod tests {
             .unwrap();
         runtime.clear_commands();
         runtime.dispatch(id, 4).unwrap();
-        let (last, _) = runtime.instances[&id].action.unwrap();
+        let (last, _, _) = runtime.instances[&id].action.unwrap();
         runtime.clear_commands();
         runtime.dispose(id).unwrap();
         runtime.clear_commands();
@@ -1054,7 +1123,7 @@ mod tests {
             runtime.complete_action(other, last, Ok(empty_tasks())),
             Err(BrowserError::InvalidAction)
         );
-        let (current, _) = runtime.instances[&other].action.unwrap();
+        let (current, _, _) = runtime.instances[&other].action.unwrap();
         runtime.begin_reply(other, current, 0).unwrap();
         runtime.clear_commands();
         runtime
@@ -1076,7 +1145,7 @@ mod tests {
         let mut previous = 0;
         for _ in 0..1000 {
             let id = runtime.mount(1, remote()).unwrap();
-            let (token, _) = runtime.instances[&id].action.unwrap();
+            let (token, _, _) = runtime.instances[&id].action.unwrap();
             assert!(token > previous);
             previous = token;
             runtime.clear_commands();

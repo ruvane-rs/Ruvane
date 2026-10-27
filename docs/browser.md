@@ -47,7 +47,7 @@ Initial props identify a registered component and one typed number or boolean.
 The server emits fixed attributes on the host div:
 
 ```html
-<div data-ruvane-version="12" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
+<div data-ruvane-version="13" data-ruvane-component="1" data-ruvane-state="1:5">…</div>
 ```
 
 State kind 1 is a u32; kind 2 is a boolean encoded as 0 or 1. Numeric fields use
@@ -140,7 +140,11 @@ GET and HEAD use the same selected headers. Including JS/Wasm assets alone does
 not make a page interactive. Static suffix/manifest support for .js, .mjs and
 .wasm retains the blocking header contract.
 
-## Browser ABI v12
+## Browser ABI v13
+
+Alpha.55 adds component-owned JSON transport in RVN7 commands and RVJ1 replies.
+The 22 function exports remain. Rebuild Wasm with its matching bridge; v12
+modules and hydration roots are rejected. See [component JSON](json-client.md).
 
 Alpha.50 adds failure kind 5 (`RateLimited`) and the reserved read-only 429
 navigation shape. The 22 function signatures and four runtime assets remain;
@@ -161,13 +165,13 @@ Alpha.22 adds read-only presentation mounts and RVP3 typed error scopes. See
 Alpha.21 adds RVP2 layout branches and segment selection through the existing
 page ingress. See [client layouts](client-layouts.md).
 
-Alpha.20 adds read-only page validation and explicit prefetch eligibility in RVN6 frames. Rebuild the Wasm and use its
+Alpha.20 adds read-only page validation and explicit prefetch eligibility in RVN7 frames. Rebuild the Wasm and use its
 matching bridge together. The module exports memory and these twenty-two functions,
 with no host imports:
 
 | Export | Contract |
 | --- | --- |
-| `ruvane_abi_version()` | Returns 12 |
+| `ruvane_abi_version()` | Returns 13 |
 | `ruvane_application_revision()` | Returns the application build revision as u64/BigInt |
 | `ruvane_boundary_mount(root, component, kind, value)` | Empty-seed, event-free presentation owner, or zero on rejection |
 | `ruvane_mount(root, component, kind, value)` | New nonzero view ID, or zero on error |
@@ -176,7 +180,7 @@ with no host imports:
 | `ruvane_event_chunk(word, count)` | Append 1..=4 little-endian bytes |
 | `ruvane_action_begin(view, request, length)` | Stage at most 64 KiB for a live action |
 | `ruvane_action_chunk(word, count)` | Append 1..=4 little-endian reply bytes |
-| `ruvane_action_complete(view, request, kind)` | Commit RVA1 (0) or failure (1..=5); 1 handled, 2 handled malformed RVA1, 0 ABI error |
+| `ruvane_action_complete(view, request, kind)` | Commit RVA1/RVJ1 (0) or failure (1..=5); 1 handled, 2 handled malformed RVA1, 0 ABI error |
 | `ruvane_page_begin(length)` | Stage one RVP1/RVP2/RVP3 packet of at most 64 KiB |
 | `ruvane_page_chunk(word, count)` | Append 1..=4 little-endian page bytes |
 | `ruvane_page_validate()` | Check the staged packet without IDs, commands or retained instances |
@@ -217,9 +221,9 @@ memory view, checks ranges and copies the bounded batch before acknowledging
 it. Signed JavaScript i32 results are interpreted as u32 bit patterns; public
 JavaScript inputs are validated before crossing the ABI.
 
-## RVN6 command frames
+## RVN7 command frames
 
-Integers are little-endian. The header is `RVN6` plus a u32 count, with no trailing
+Integers are little-endian. The header is `RVN7` plus a u32 count, with no trailing
 bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 
 | Opcode | Remaining fields | Operation |
@@ -239,6 +243,7 @@ bytes. Each command starts with a u8 opcode and a nonzero u32 view ID.
 | 12 | node u32, target length u32, encoded ASCII target | Set an internal link href |
 
 | 13 | node u32, boolean u8 | Set explicit link prefetch eligibility |
+| 14 | request/action u32, method u8, URL/body/If-Match each u32 length + bytes | Queue a bounded JSON request |
 
 Tags are section=1, h2=2, p=3, span=4, output=5, button=6, ul=7, li=8,
 form=9, label=10, text input=11, checkbox=12, textarea=13, submit button=14 and

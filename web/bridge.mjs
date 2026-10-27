@@ -1,5 +1,5 @@
-// DOM and action bridge for RVN6 commands.
-export const ABI_VERSION = 12;
+// DOM and action bridge for RVN7 commands.
+export const ABI_VERSION = 13;
 export const LIMITS = Object.freeze({ bytes: 65536, commands: 256, text: 1024, views: 16, nodes: 32, listeners: 16, moduleBytes: 1048576, signals: 16384, effects: 16384 });
 const TAGS = Object.freeze({ 1: "section", 2: "h2", 3: "p", 4: "span", 5: "output", 6: "button", 7: "ul", 8: "li", 9: "form", 10: "label", 11: "input", 12: "input", 13: "textarea", 14: "button", 15: "a" });
 const FUNCTIONS = ["ruvane_mount", "ruvane_dispatch", "ruvane_dispose", "ruvane_commands_ptr", "ruvane_commands_len", "ruvane_commands_clear", "ruvane_last_error", "ruvane_live_instances", "ruvane_live_signals", "ruvane_live_effects", "ruvane_event_begin", "ruvane_event_chunk", "ruvane_action_begin", "ruvane_action_chunk", "ruvane_action_complete", "ruvane_page_begin", "ruvane_page_chunk", "ruvane_page_mount", "ruvane_application_revision", "ruvane_page_validate", "ruvane_boundary_mount"];
@@ -139,7 +139,7 @@ export function validateExports(exports) {
 /** Decodes a batch before touching the DOM. */
 export function decodeCommands(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 8 || bytes.length > LIMITS.bytes) throw invalid();
-  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 54) throw invalid();
+  if (bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 78 || bytes[3] !== 55) throw invalid();
   const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 4;
   const u8 = () => { if (offset >= bytes.length) throw invalid(); return bytes[offset++]; };
@@ -159,6 +159,14 @@ export function decodeCommands(bytes) {
       const body = decoder.decode(bytes.subarray(offset, offset + size)); offset += size;
       if (/[^\x21-\x7e]/.test(body)) throw invalid();
       commands.push({ op, view, request, action, url, body }); continue;
+    }
+    if (op === 14) {
+      const request = uint(u32()), action = uint(u32()), method = ["GET", "POST", "PUT", "PATCH", "DELETE"][u8()];
+      if (!method) throw invalid();
+      const text = limit => { const size = u32(); if (size > limit || offset + size > bytes.length) throw invalid(); const value = decoder.decode(bytes.subarray(offset, offset + size)); offset += size; return value; };
+      const url = internalTarget(text(1024)), body = text(16384), etag = text(128);
+      if ((["GET", "DELETE"].includes(method) ? body !== "" : body === "") || (etag !== "" && !/^"[\x21\x23-\x7e]*"$/.test(etag))) throw invalid();
+      commands.push({ op, view, request, action, method, url, body, etag, mutation: method !== "GET" }); continue;
     }
     if (![1, 2, 3, 4, 6, 7, 8, 9, 10, 12, 13].includes(op)) throw invalid();
     const node = uint(u32());
@@ -421,12 +429,12 @@ export async function createRuntime(url, options = {}) {
   if (applicationRevision !== null && exports.ruvane_application_revision() !== BigInt(applicationRevision)) throw new Error("Ruvane application revision mismatch");
   const views = new Map(), actionObservers = new Set();
   let actionEpoch = 0, uncertainActions = false;
-  function actionState() { return Object.freeze({ state: closed ? faulted ? "faulted" : "disposed" : "active", epoch: actionEpoch, uncertain: uncertainActions, pending: [...views.values()].filter(view => view.action).length, subscribers: actionObservers.size }); }
+  function actionState() { return Object.freeze({ state: closed ? faulted ? "faulted" : "disposed" : "active", epoch: actionEpoch, uncertain: uncertainActions, pending: [...views.values()].filter(view => view.action && (view.action.op !== 14 || view.action.mutation)).length, subscribers: actionObservers.size }); }
   function actionChanged() {
     actionEpoch = actionEpoch === null || actionEpoch === Number.MAX_SAFE_INTEGER ? null : actionEpoch + 1;
     const state = actionState(); for (const observer of [...actionObservers]) { try { observer(state); } catch { /* Observers do not control delivery. */ } }
   }
-  function endAction(operation, uncertain = false) { if (!operation.ended) { operation.ended = true; uncertainActions ||= uncertain; actionChanged(); } }
+  function endAction(operation, uncertain = false) { if (!operation.ended) { operation.ended = true; if(operation.op !== 14 || operation.mutation) { uncertainActions ||= uncertain; actionChanged(); } } }
   let nextRoot = 0, busy = false, closed = false, faulted = false, finalRust = null, hydratingBranch = false;
 
   function live() { if (closed) throw new Error("Ruvane browser runtime disposed"); }
@@ -509,16 +517,21 @@ export async function createRuntime(url, options = {}) {
       if (![1, 2].includes(completed)) throw invalid();
       if (completed === 2) kind = 3;
       drain(id, "dispatch");
-      settle(view, kind ? ["", "network", "timeout", "protocol", "rejected", "rate-limited"][kind] : bytes[4] === 1 ? "validation" : "success", kind === 5 ? operation.retryAfter : null); delivered = true;
+      const transport = operation.op === 14 && kind === 0 ? bytes[4] : kind;
+      const status = operation.op === 14 && bytes && bytes[4] === 0 ? bytes[6] | bytes[7] << 8 : 0;
+      const outcome = transport ? ["", "network", "timeout", "protocol", "rejected", "rate-limited"][transport] : operation.op === 14 ? status < 300 ? "success" : status === 400 ? "validation" : status === 412 ? "conflict" : status === 428 ? "precondition-required" : status === 429 ? "rate-limited" : "rejected" : bytes[4] === 1 ? "validation" : "success";
+      settle(view, outcome, outcome === "rate-limited" ? operation.retryAfter : null); delivered = true;
     } catch { stop(true); }
-    finally { busy = false; endAction(operation,operation.sent && (!delivered || (kind !== 0 && !(kind === 5 && operation.rateRejected)))); }
+    finally { busy = false; endAction(operation,operation.op === 14 ? operation.mutation && (operation.uncertain || (operation.sent && (!delivered || kind !== 0))) : operation.sent && (!delivered || (kind !== 0 && !(kind === 5 && operation.rateRejected)))); }
   }
   class TransportError extends Error { constructor(kind) { super("Ruvane action transport failed"); this.kind = kind; } }
-  async function perform(id, view, operation) {
-    let bytes = null, kind = 0;
-    try {
-      const headers = { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": ACTION_MEDIA_TYPE, ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) };
-      if (csrfEndpoint !== null) {
+  function cancelOnAbort(reader, signal) {
+    const cancel = () => { void reader.cancel().catch(() => {}); };
+    if (signal.aborted) cancel(); else signal.addEventListener("abort", cancel, {once: true});
+    return () => signal.removeEventListener("abort", cancel);
+  }
+  async function csrfHeaders(headers, operation) {
+    if (csrfEndpoint !== null) {
         const tokenResponse = await fetch(csrfEndpoint, { method: "GET", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers: { "Accept": CSRF_MEDIA_TYPE, ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) }, signal: operation.controller.signal });
         const tokenDelay = readRetryAfter(tokenResponse);
         if (tokenDelay !== null) { operation.retryAfter = tokenDelay; await tokenResponse.body?.cancel(); throw new TransportError(5); }
@@ -527,12 +540,67 @@ export async function createRuntime(url, options = {}) {
           await tokenResponse.body?.cancel(); throw new TransportError(4);
         }
         if (tokenResponse.body) {
-          const reader = tokenResponse.body.getReader();
+          const reader = tokenResponse.body.getReader(), detach = cancelOnAbort(reader, operation.controller.signal);
           try { while (true) { const part = await reader.read(); if (part.done) break; if (part.value.length) { await reader.cancel(); throw new TransportError(4); } } }
-          finally { reader.releaseLock(); }
+          finally { detach(); reader.releaseLock(); }
         }
         if (token !== null) headers[CSRF_HEADER] = token;
       }
+  }
+  function jsonFrame(operation, kind, status = 0, tag = "", body = new Uint8Array()) {
+    const encodedTag = new TextEncoder().encode(tag), frame = new Uint8Array(14 + encodedTag.length + body.length), data = new DataView(frame.buffer);
+    frame.set([82, 86, 74, 49, kind, kind ? Number(operation.sent) : operation.rateRejected ? 2 : 0]);
+    data.setUint16(6, status, true); data.setUint32(8, operation.retryAfter ?? 0, true); data.setUint16(12, encodedTag.length, true);
+    frame.set(encodedTag, 14); frame.set(body, 14 + encodedTag.length); return frame;
+  }
+  async function performJson(id, view, operation) {
+    let frame;
+    try {
+      const headers = { Accept: "application/json", ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) };
+      if (operation.body !== "") headers["Content-Type"] = "application/json";
+      if (operation.etag !== "") headers["If-Match"] = operation.etag;
+      if (operation.mutation) await csrfHeaders(headers, operation);
+      if (operation.controller.signal.aborted) throw new TransportError(4);
+      operation.sent = true;
+      const response = await fetch(operation.url, { method: operation.method, mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers, ...(operation.body === "" ? {} : { body: operation.body }), signal: operation.controller.signal });
+      operation.retryAfter = readRetryAfter(response);
+      operation.rateRejected = operation.retryAfter !== null && response.headers.get("ruvane-action-rejected") === "rate-limit";
+      const json = response.headers.get("content-type")?.trim().toLowerCase() === "application/json";
+      operation.uncertain = operation.mutation && response.status >= 300 && ![400,401,403,404,405,409,412,415,422,428].includes(response.status) && !operation.rateRejected;
+      if (response.status >= 400 && response.status < 600 && !json && response.headers.get("cache-control")?.trim().toLowerCase() === "no-store") {
+        await response.body?.cancel();
+        frame = jsonFrame(operation, 0, response.status); frame[5] |= 4;
+      } else {
+      const tag = response.headers.get("etag") ?? "", length = response.headers.get("content-length");
+      if (!((response.status >= 200 && response.status < 300) || (response.status >= 400 && response.status < 600)) || response.headers.get("content-type")?.trim().toLowerCase() !== "application/json" || response.headers.get("cache-control")?.trim().toLowerCase() !== "no-store" || !response.body || tag.length > 128 || /[^\x21-\x7e]/.test(tag) || (length !== null && (!/^\d+$/.test(length) || Number(length) > 65536))) {
+        await response.body?.cancel(); throw new TransportError(3);
+      }
+      const reader = response.body.getReader(), detach = cancelOnAbort(reader, operation.controller.signal), parts = []; let total = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read(); if (done) break;
+          total += value.length; if (total > 65536) { await reader.cancel(); throw new TransportError(3); } parts.push(value);
+        }
+      } finally { detach(); reader.releaseLock(); }
+      if (operation.controller.signal.aborted) throw new TransportError(operation.timedOut ? 2 : 4);
+      const body = new Uint8Array(total); let offset = 0;
+      for (const part of parts) { body.set(part, offset); offset += part.length; }
+      operation.uncertain = operation.mutation && response.status >= 300 && ![400,401,403,404,405,409,412,415,422,428].includes(response.status) && !operation.rateRejected;
+      frame = jsonFrame(operation, 0, response.status, tag, body);
+      }
+    } catch (error) {
+      const kind = operation.timedOut ? 2 : error instanceof TransportError ? error.kind : 1;
+      if (kind !== 5) operation.retryAfter = null;
+      operation.uncertain = operation.mutation && operation.sent;
+      frame = jsonFrame(operation, kind);
+    } finally { clearTimeout(operation.timer); }
+    deliver(id, view, operation, frame, 0);
+  }
+  async function perform(id, view, operation) {
+    let bytes = null, kind = 0;
+    try {
+      const headers = { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": ACTION_MEDIA_TYPE, ...(applicationRevision === null ? {} : { "Ruvane-Application-Revision": applicationRevision }) };
+      await csrfHeaders(headers, operation);
       if (operation.controller.signal.aborted) throw new TransportError(4);
       operation.sent = true;
       const response = await fetch(operation.url, { method: "POST", mode: "same-origin", credentials: "same-origin", redirect: "error", cache: "no-store", headers, body: operation.body, signal: operation.controller.signal });
@@ -544,13 +612,14 @@ export async function createRuntime(url, options = {}) {
       if (response.headers.get("content-type")?.trim().toLowerCase() !== ACTION_MEDIA_TYPE || !response.body) { await response.body?.cancel(); throw new TransportError(3); }
       const length = response.headers.get("content-length");
       if (length !== null && (!/^\d+$/.test(length) || Number(length) > 65536)) { await response.body.cancel(); throw new TransportError(3); }
-      const reader = response.body.getReader(), parts = []; let total = 0;
+      const reader = response.body.getReader(), detach = cancelOnAbort(reader, operation.controller.signal), parts = []; let total = 0;
       try {
         while (true) {
           const { done, value } = await reader.read(); if (done) break;
           total += value.length; if (total > 65536) { await reader.cancel(); throw new TransportError(3); } parts.push(value);
         }
-      } finally { reader.releaseLock(); }
+      } finally { detach(); reader.releaseLock(); }
+      if (operation.controller.signal.aborted) throw new TransportError(operation.timedOut ? 2 : 4);
       bytes = new Uint8Array(total); let offset = 0;
       for (const part of parts) { bytes.set(part, offset); offset += part.length; }
       if (bytes.length < 7 || bytes[0] !== 82 || bytes[1] !== 86 || bytes[2] !== 65 || bytes[3] !== 49 || bytes[4] !== (response.status === 400 ? 1 : 0)) throw new TransportError(3);
@@ -568,9 +637,15 @@ export async function createRuntime(url, options = {}) {
       return;
     }
     const operation = { ...command, controller: new AbortController(), timer: null, timedOut: false, ended: false, sent: false, rateRejected: false, retryAfter: null };
-    view.action = operation; view.lastAction = command.request; actionChanged();
-    operation.timer = setTimeout(() => { operation.timedOut = true; operation.controller.abort(); }, actionTimeout);
-    void perform(id, view, operation);
+    view.action = operation; view.lastAction = command.request; if(command.op !== 14 || command.mutation) actionChanged();
+    operation.timer = setTimeout(() => {
+      operation.timedOut = true; operation.controller.abort();
+      if (operation.op === 14) {
+        operation.retryAfter = null; operation.uncertain = operation.mutation && operation.sent;
+        deliver(id, view, operation, jsonFrame(operation, 2), 0);
+      }
+    }, actionTimeout);
+    void (command.op === 14 ? performJson(id, view, operation) : perform(id, view, operation));
   }
   function context(view, id) {
     if (!view.edits.has(id)) view.edits.set(id, { composing: false, pending: null });
@@ -682,7 +757,7 @@ export async function createRuntime(url, options = {}) {
   }
   function drain(id, phase, decoded = commands()) {
     const view = views.get(id);
-    const actions = decoded.filter(command => command.op === 11), batch = decoded.filter(command => command.op !== 11);
+    const actions = decoded.filter(command => command.op === 11 || command.op === 14), batch = decoded.filter(command => command.op !== 11 && command.op !== 14);
     if(hydratingBranch&&actions.length)throw new HydrationMismatch();
     if (actions.length > 1 || (phase === "dispose" && actions.length) || actions.some(command => command.view !== id || command.request <= view.lastAction || view.action)) throw invalid();
     if (phase === "dispose") {

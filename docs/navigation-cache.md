@@ -148,13 +148,13 @@ code; even then, in-flight server side effects are not a transaction.
 
 ## ABI and verification
 
-Browser ABI v12 provides `ruvane_page_validate() -> u32` after normal bounded page
+Browser ABI v13 provides `ruvane_page_validate() -> u32` after normal bounded page
 staging. It checks framing, registered route/props, application seed schema,
 view/resource budgets and absence of initial actions, then drops temporary state.
 It emits no commands, consumes no view IDs and retains no instances or scopes.
 The core still forbids unsafe code and the adapter isolates 22 numeric exports.
 
-RVN6 adds opcode 13: view u32, node u32, boolean u8. Every initial link includes
+RVN7 adds opcode 13: view u32, node u32, boolean u8. Every initial link includes
 its prefetch eligibility; updates can toggle it while keeping the keyed node.
 Leaf RVP1 and RVA1 remain supported; RVP2 carries complete layout branches.
 All layouts must permit storage. See [client layouts](client-layouts.md). Rebuild Wasm with its matching bridge.

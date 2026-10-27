@@ -1,8 +1,8 @@
-//! RVN6 browser command encoding.
+//! RVN7 browser command encoding.
 use std::fmt;
 
 /// Browser export and hydration ABI version.
-pub const BROWSER_ABI_VERSION: u32 = 12;
+pub const BROWSER_ABI_VERSION: u32 = 13;
 /// Maximum bytes in one command batch, including its eight-byte header.
 pub const MAX_BROWSER_COMMAND_BYTES: usize = 64 * 1024;
 /// Maximum commands in one batch.
@@ -83,6 +83,25 @@ impl Default for BrowserCommands {
 }
 
 impl BrowserCommands {
+    /// Queues an explicit JSON request after this batch's DOM updates.
+    pub fn json(
+        &mut self,
+        view: u32,
+        request: u32,
+        action: &crate::JsonRequest,
+    ) -> Result<(), BrowserCommandError> {
+        Self::ids(&[view, request, action.action()])?;
+        let mut data = vec![action.method() as u8];
+        for value in [
+            action.url().as_str(),
+            action.body(),
+            action.if_match().map_or("", crate::EntityTag::as_str),
+        ] {
+            data.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            data.extend_from_slice(value.as_bytes());
+        }
+        self.push(14, &[view, request, action.action()], &data)
+    }
     /// Sets a validated internal link target.
     pub fn link(
         &mut self,
@@ -124,10 +143,10 @@ impl BrowserCommands {
         data.extend_from_slice(body);
         self.push(11, &[view, request, action.action()], &data)
     }
-    /// Creates an empty batch with an RVN6 header.
+    /// Creates an empty batch with an RVN7 header.
     pub fn new() -> Self {
         Self {
-            bytes: b"RVN6\0\0\0\0".to_vec(),
+            bytes: b"RVN7\0\0\0\0".to_vec(),
             count: 0,
         }
     }
