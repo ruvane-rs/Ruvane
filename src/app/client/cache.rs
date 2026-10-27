@@ -96,10 +96,7 @@ impl App {
         index: usize,
         request: &Request,
     ) -> Result<Access, Response> {
-        if self.pages[index].server_cache.max_age_seconds().is_none()
-            || request.header("cookie").is_some()
-            || request.header("authorization").is_some()
-        {
+        if self.pages[index].server_cache.max_age_seconds().is_none() || request.cache_bypass() {
             return Ok(Access::Bypass);
         }
         let Some(cache) = &self.server_cache else {

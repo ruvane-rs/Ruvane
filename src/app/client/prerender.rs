@@ -214,8 +214,7 @@ impl App {
     ) -> Option<Response> {
         if self.pages[index].prerender.is_none()
             || request.query().is_some()
-            || request.header("cookie").is_some()
-            || request.header("authorization").is_some()
+            || request.cache_bypass()
         {
             return None;
         }

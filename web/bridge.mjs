@@ -55,7 +55,7 @@ export function decodePage(bytes) {
   const selected = version !== "RVP1" ? take(1)[0] : 0;
   const failed=version==="RVP3"?take(1)[0]:null;
   const pending=version==="RVP4"?take(1)[0]:null;
-  take(2);const status=data.getUint16(pos-2,true);if(![200,400,404,500].includes(status))throw invalid();
+  take(2);const status=data.getUint16(pos-2,true);if(![200,400,403,404,500,503].includes(status))throw invalid();
   const url=internalTarget(string(4096)),title=string(1024);
   if(!title.trim()||/[\u0000-\u001f\u007f-\u009f]/.test(title))throw invalid();
   const componentSeed = () => {
@@ -75,6 +75,10 @@ export function decodePage(bytes) {
     }
   }
   if(pos!==bytes.length)throw invalid();
+  if(leaf.component===4294967295||status===403||status===503){
+    const titleFor={403:"Access denied",500:"Page unavailable",503:"Service unavailable"};
+    if(leaf.component!==4294967295||leaf.kind!==1||leaf.value!==status||title!==titleFor[status]||selected!==0||failed!==null||pending!==null||layouts.length||leaf.seed.length!==7||leaf.seed[5]!==0||leaf.seed[6]!==0)throw invalid();
+  }
   return Object.freeze({url,title,status,component:leaf.component,kind:leaf.kind,value:leaf.value,selected,failed,pending,layouts:Object.freeze(layouts)});
 }
 /** Decodes an inert initial-page envelope. Rust still checks ownership and schemas. */

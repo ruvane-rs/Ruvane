@@ -11,7 +11,11 @@ impl ClientBoundary {
     /// Loading accepts Number(0); errors accept Number(0/408/400/404/500).
     /// Both components accept an empty page seed and must not start actions.
     pub fn new(loading: u32, error: u32) -> Result<Self, AppError> {
-        if loading == 0 || error == 0 {
+        if loading == 0
+            || error == 0
+            || loading == crate::GUARD_COMPONENT_ID
+            || error == crate::GUARD_COMPONENT_ID
+        {
             return Err(AppError::InvalidPage);
         }
         Ok(Self { loading, error })
@@ -29,6 +33,9 @@ impl App {
         component: u32,
         states: &[u32],
     ) -> Result<(), PageError> {
+        if component == crate::GUARD_COMPONENT_ID {
+            return Err(PageError::InternalServerError);
+        }
         let factory = self.client_factory.ok_or(PageError::InternalServerError)?;
         Self::guarded(|| {
             for state in states {
@@ -332,10 +339,7 @@ impl App {
             }
         };
         cacheable &= !page.client_no_store;
-        policy = if page.client_no_store
-            || request.header("cookie").is_some()
-            || request.header("authorization").is_some()
-        {
+        policy = if page.client_no_store || request.cache_bypass() {
             NavigationCachePolicy::no_store()
         } else {
             Self::combine_cache(policy, self.pages[index].client.unwrap().cache)
@@ -355,8 +359,7 @@ impl App {
                 || (self.pages[index].server_cache.max_age_seconds().is_some()
                     && self.server_cache.is_some()
                     && self.has_not_found(index)))
-                && request.header("cookie").is_none()
-                && request.header("authorization").is_none()
+                && !request.cache_bypass()
             {
                 self.pages[index]
                     .client

@@ -1,5 +1,6 @@
 mod client;
 mod endpoints;
+mod guards;
 use crate::page_route::valid_name;
 use crate::{
     Document, ExportError, Html, InternalUrl, MAX_ASSET_BYTES, MAX_ASSETS, MAX_METADATA_TEXT_BYTES,
@@ -58,6 +59,8 @@ pub enum AppError {
     RenderFailed,
     /// An endpoint is empty or declares a method more than once.
     InvalidEndpoint,
+    /// A guard scope or combined guard count is invalid.
+    InvalidGuard,
     /// A GET endpoint overlaps a page, asset or framework route.
     EndpointConflict,
     /// A low-level route registration was rejected.
@@ -85,6 +88,7 @@ impl fmt::Display for AppError {
             Self::OutputTooLarge => "page output limit exceeded",
             Self::RenderFailed => "page rendering failed",
             Self::InvalidEndpoint => "endpoint must declare unique GET and/or POST handlers",
+            Self::InvalidGuard => "invalid route guard declaration or budget",
             Self::EndpointConflict => "GET endpoint overlaps a page, asset or framework route",
             Self::Route(_) => "invalid application route",
             Self::Url(_) => "invalid application URL",
@@ -296,6 +300,7 @@ struct PageEntry {
     server_cache: crate::ServerCachePolicy,
     prerender: Option<Vec<PageParams>>,
     revalidation: Option<crate::PrerenderRevalidationPolicy>,
+    guards: Vec<crate::RouteGuard>,
 }
 #[derive(Clone)]
 struct Layout {
@@ -326,6 +331,7 @@ struct ErrorPage {
 /// checks run after caller allocations and cannot sandbox CPU or memory use.
 #[derive(Clone, Default)]
 pub struct App {
+    guards: Vec<guards::Registration>,
     pages: Vec<PageEntry>,
     layouts: Vec<Layout>,
     assets: Vec<Asset>,
@@ -421,6 +427,7 @@ impl App {
             server_cache: crate::ServerCachePolicy::no_store(),
             prerender: None,
             revalidation: None,
+            guards: Vec::new(),
         };
         let mut candidate = self.clone();
         candidate.pages.push(entry);
@@ -575,6 +582,7 @@ impl App {
         self.validate_client_routes(&mut router)?;
         let mut paths = Vec::new();
         self.prerender_entries()?;
+        self.validate_guards()?;
         let mut outputs: Vec<String> = Vec::new();
         for page in &self.pages {
             if let PageMode::Static(params) = &page.mode {
@@ -679,6 +687,28 @@ impl App {
             let failed = internal.clone();
             let handler = move |request: &Request| {
                 let page = &app.pages[index];
+                let guarded = match app.evaluate_guards(
+                    request,
+                    Some(page.route.pattern()),
+                    Some(page.route.name()),
+                    &page.guards,
+                ) {
+                    Ok(result) => result,
+                    Err(status) => {
+                        return app.guard_failure(request, status, page.client.is_some());
+                    }
+                };
+                let private;
+                let request = if guarded.private {
+                    private = {
+                        let mut request = request.clone();
+                        request.guard_private = true;
+                        request
+                    };
+                    &private
+                } else {
+                    request
+                };
                 let path = match app.url(
                     page.route.name(),
                     &request
@@ -705,7 +735,12 @@ impl App {
                     stream: None,
                 };
                 if page.client.is_some() {
-                    return app.client_response(index, &context, request);
+                    let response = app.client_response(index, &context, request);
+                    return if guarded.active {
+                        response.guard_no_store()
+                    } else {
+                        response
+                    };
                 }
                 match (page.render)(&context).and_then(|rendered| {
                     let status = if rendered.bad_request {
@@ -744,11 +779,21 @@ impl App {
         }
         self.mount_client_assets(&mut router)?;
         for endpoint in &self.endpoints {
-            endpoint.declaration.mount(&mut router, &endpoint.pattern)?;
+            endpoint
+                .declaration
+                .mount_guarded(&mut router, &endpoint.pattern, Arc::clone(&app))?;
         }
-        if self.client_runtime.is_some() {
+        if self.client_runtime.is_some() || !self.guards.is_empty() {
             let app = Arc::clone(&app);
-            router.client_not_found(move |request| app.client_missing(request));
+            router.client_not_found(move |request| {
+                match app.evaluate_guards(request, None, None, &[]) {
+                    Err(status) => app.guard_failure(request, status, app.client_runtime.is_some()),
+                    Ok(_) if app.client_runtime.is_some() => app.client_missing(request),
+                    Ok(_) => not_found
+                        .clone()
+                        .unwrap_or_else(|| Response::error(StatusCode::NotFound)),
+                }
+            });
         }
         Ok(router)
     }
@@ -834,6 +879,12 @@ impl App {
     /// the complete plan before any export destination is written.
     pub fn static_site(&self, origin: &SiteOrigin) -> Result<StaticSite, AppError> {
         self.validate()?;
+        if self.pages.iter().any(|page| {
+            matches!(page.mode, PageMode::Static(_))
+                && self.guarded_pattern(page.route.pattern(), &page.guards)
+        }) {
+            return Err(AppError::InvalidGuard);
+        }
         catch_unwind(AssertUnwindSafe(|| {
             let mut site = StaticSite::new();
             for page in &self.pages {

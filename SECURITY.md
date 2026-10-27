@@ -1,5 +1,17 @@
 # Security
 
+Alpha.46 adds [native route guards](docs/route-guards.md). Inherited and local
+callbacks run after request validation and before page caches, persistent restore,
+loaders and endpoint mutation. Denials stop execution; Private bypasses public
+storage without rewriting credentials. All guarded responses are no-store so
+browser caches cannot reuse earlier decisions. Built-in read-only failures remove
+the old route branch and metadata; retained SPA shells must remain public.
+Guard modules are excluded from Wasm. Guards do not authenticate headers or
+provide sessions; applications must verify identity. Pre-render declarations
+remain public build artifacts and guards never make them private. Low-level
+Router handlers and assets are outside App guard scope.
+
+
 Alpha.28 recovers only leaf failures whose configured boundary retains every
 validated emitted layout. Typed RVP3/RVI1 errors undergo the full revision, URL,
 ownership, schema, read-only view and initial-action checks before adoption.

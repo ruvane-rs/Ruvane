@@ -306,3 +306,10 @@ Native tests cover discovery, publication, inheritance and failed-batch rollback
 CLI tests compile real projects in quoted paths and exercise route lifecycle and
 dev recovery. Node/Wasm tests check ownership before and after file additions
 and removals. No third-party build or test dependencies are used.
+
+## Native branch guards
+
+A `guard.rs` file returns `pub fn guard() -> ruvane::RouteGuard`. It guards that
+directory's segment prefix, pages, endpoints and unmatched descendants, inheriting
+from root to leaf. Its module is excluded from Wasm. See [route guards](route-guards.md)
+for local page/endpoint builders, private cache bypass and public build semantics.

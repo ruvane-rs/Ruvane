@@ -65,6 +65,10 @@ route tree; unknown URLs use the root 404 without guessing parent layouts.
 Native-only [file endpoints](docs/file-endpoints.md) add `route.rs` GET/HEAD and
 POST handlers, sharing existing HTTP protections and atomic registration.
 
+Native [route guards](docs/route-guards.md) add application, inherited `guard.rs`,
+page and endpoint access checks before caches and loaders. Typed allow/private/403/503
+decisions stay server-side; guarded navigation always checks the server again.
+
 Typed [client metadata](docs/client-metadata.md) keeps descriptions, canonical
 URLs, robots and PNG icons aligned across SSR, hydration, navigation and history.
 

@@ -263,7 +263,7 @@ pub struct NavigationPage {
     metadata: Option<Metadata>,
 }
 impl NavigationPage {
-    /// Constructs a bounded page. Supported statuses are 200, 400, 404 and 500.
+    /// Constructs a bounded page. Guard failures additionally support 403 and 503.
     pub fn new(
         url: InternalUrl,
         title: &str,
@@ -277,9 +277,24 @@ impl NavigationPage {
                 | StatusCode::BadRequest
                 | StatusCode::NotFound
                 | StatusCode::InternalServerError
+                | StatusCode::Forbidden
+                | StatusCode::ServiceUnavailable
         ) || title.trim().is_empty()
             || title.len() > 1024
             || title.chars().any(char::is_control)
+        {
+            return Err(NavigationError::InvalidData);
+        }
+        let guard = props.component() == crate::GUARD_COMPONENT_ID
+            || matches!(
+                status,
+                StatusCode::Forbidden | StatusCode::ServiceUnavailable
+            );
+        if guard
+            && (props.component() != crate::GUARD_COMPONENT_ID
+                || props.state() != InitialState::Number(status.as_u16().into())
+                || crate::guards::guard_title(status.as_u16().into()) != Some(title)
+                || !data.is_empty())
         {
             return Err(NavigationError::InvalidData);
         }
@@ -353,7 +368,8 @@ impl NavigationPage {
         failed: usize,
         layouts: Vec<NavigationLayout>,
     ) -> Result<Self, NavigationError> {
-        if self.status == StatusCode::Ok
+        if self.props.component() == crate::GUARD_COMPONENT_ID
+            || self.status == StatusCode::Ok
             || failed > MAX_CLIENT_LAYOUT_DEPTH
             || layouts.len() > failed
             || !self.data.is_empty()
@@ -587,8 +603,10 @@ impl NavigationPage {
         let status = match u16::from_le_bytes(reader.take(2)?.try_into().unwrap()) {
             200 => StatusCode::Ok,
             400 => StatusCode::BadRequest,
+            403 => StatusCode::Forbidden,
             404 => StatusCode::NotFound,
             500 => StatusCode::InternalServerError,
+            503 => StatusCode::ServiceUnavailable,
             _ => return Err(NavigationError::InvalidData),
         };
         let url = InternalUrl::from_target(reader.text(crate::MAX_INTERNAL_URL_BYTES)?)

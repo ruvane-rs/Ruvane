@@ -86,6 +86,7 @@ impl App {
     ) -> Result<(), AppError> {
         if self.client_factory.is_none()
             || component == 0
+            || component == crate::GUARD_COMPONENT_ID
             || route.pattern() != "/" && route.pattern().ends_with('/')
         {
             return Err(AppError::InvalidPage);

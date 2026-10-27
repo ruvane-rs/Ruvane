@@ -4,7 +4,8 @@ impl App {
     /// Sets the read-only Number(404) component for unknown URLs and unhandled client 404s.
     /// Native pages keep their separate App::not_found renderer.
     pub fn client_not_found(&mut self, component: Option<u32>) -> Result<(), AppError> {
-        if self.client_factory.is_none() || component == Some(0) {
+        if self.client_factory.is_none() || matches!(component, Some(0 | crate::GUARD_COMPONENT_ID))
+        {
             return Err(AppError::InvalidPage);
         }
         self.client_not_found = component;
@@ -16,7 +17,7 @@ impl App {
         name: &str,
         component: Option<u32>,
     ) -> Result<(), AppError> {
-        if component == Some(0) {
+        if matches!(component, Some(0 | crate::GUARD_COMPONENT_ID)) {
             return Err(AppError::InvalidPage);
         }
         let page = self
@@ -33,7 +34,7 @@ impl App {
         name: &str,
         component: Option<u32>,
     ) -> Result<(), AppError> {
-        if component == Some(0) {
+        if matches!(component, Some(0 | crate::GUARD_COMPONENT_ID)) {
             return Err(AppError::InvalidPage);
         }
         let index = self.client_layout_index(Some(name))?.unwrap();

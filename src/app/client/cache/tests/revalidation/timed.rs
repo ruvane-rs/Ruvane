@@ -412,3 +412,53 @@ fn output_refreshes_share_the_handle_load_budget_with_cold_reads() {
         "Title 3"
     );
 }
+
+#[test]
+fn denied_and_private_guards_do_not_schedule_stale_output_refresh() {
+    use crate::{GuardDecision, RouteGuard};
+    let mut f = fixture(8, 8, 2);
+    let mode = Arc::new(AtomicUsize::new(0));
+    let behavior = mode.clone();
+    f.app
+        .guard(RouteGuard::new(move |context| {
+            assert!(context.request().header("host").is_some());
+            match behavior.load(Ordering::SeqCst) {
+                0 => GuardDecision::Allow,
+                1 => GuardDecision::Private,
+                _ => GuardDecision::Forbidden,
+            }
+        }))
+        .unwrap();
+    let router = f.app.router(None).unwrap();
+    let _ = warm(&f, &router, "/articles/a");
+    f.value.store(3, Ordering::SeqCst);
+    f.cache.expire_for_test(false);
+    let before = f.loads.load(Ordering::SeqCst);
+    mode.store(2, Ordering::SeqCst);
+    assert_eq!(
+        request(&router, "/articles/a", true, "").status(),
+        StatusCode::Forbidden
+    );
+    assert_eq!(f.loads.load(Ordering::SeqCst), before);
+    mode.store(1, Ordering::SeqCst);
+    assert_eq!(
+        seed(&request(&router, "/articles/a", true, "")).title(),
+        "Title 3"
+    );
+    assert_eq!(f.loads.load(Ordering::SeqCst), before + 1);
+    assert_eq!(f.cache.stats().unwrap().refresh_attempts, 0);
+    mode.store(0, Ordering::SeqCst);
+    let release = f.block();
+    assert_eq!(
+        seed(&request(&router, "/articles/a", true, "")).title(),
+        "Title 2"
+    );
+    until(|| f.loads.load(Ordering::SeqCst) == before + 2);
+    release.send(()).unwrap();
+    settled(&f);
+    assert_eq!(f.cache.stats().unwrap().refresh_attempts, 1);
+    assert_eq!(
+        seed(&request(&router, "/articles/a", true, "")).title(),
+        "Title 3"
+    );
+}

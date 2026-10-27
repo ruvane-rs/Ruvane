@@ -218,7 +218,8 @@ impl BrowserRuntime {
         }
         let id = self.next.checked_add(1).ok_or(BrowserError::Limit)?;
         self.next = id;
-        let mut component = (self.factory)(props)?;
+        let mut component =
+            ruvane::guard_component(props).unwrap_or_else(|| (self.factory)(props))?;
         if let Some(seed) = seed {
             component
                 .page_data(seed.clone())
@@ -313,7 +314,9 @@ impl BrowserRuntime {
             .enumerate()
             .filter(|(index, _)| page.pending_layouts().is_none() || *index != 0)
         {
-            let mut component = (self.factory)(props).map_err(|_| BrowserError::InvalidPage)?;
+            let mut component = ruvane::guard_component(props)
+                .unwrap_or_else(|| (self.factory)(props))
+                .map_err(|_| BrowserError::InvalidPage)?;
             component
                 .page_data(data.clone())
                 .map_err(|_| BrowserError::InvalidPage)?;

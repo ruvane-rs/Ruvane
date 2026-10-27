@@ -182,7 +182,10 @@ impl App {
         factory: ComponentFactory,
         error_component: u32,
     ) -> Result<(), AppError> {
-        if self.client_factory.is_some() || error_component == 0 {
+        if self.client_factory.is_some()
+            || error_component == 0
+            || error_component == crate::GUARD_COMPONENT_ID
+        {
             return Err(AppError::InvalidPage);
         }
         self.client_factory = Some(factory);
@@ -210,6 +213,9 @@ impl App {
         load: impl Fn(&PageContext<'_>) -> Result<ClientPageData, PageError> + Send + Sync + 'static,
     ) -> Result<(), AppError> {
         if component == 0 || self.client_factory.is_none() {
+            return Err(AppError::InvalidPage);
+        }
+        if component == crate::GUARD_COMPONENT_ID {
             return Err(AppError::InvalidPage);
         }
         let mut candidate = self.clone();
@@ -290,6 +296,28 @@ impl App {
     /// Checks route ownership and props without executing loaders. The runtime then
     /// validates the complete seed with Component::page_data before preparing a view.
     pub fn validate_navigation(&self, page: &NavigationPage) -> bool {
+        if page.props().component() == crate::GUARD_COMPONENT_ID
+            || matches!(
+                page.status(),
+                StatusCode::Forbidden | StatusCode::ServiceUnavailable
+            )
+        {
+            return page.props().component() == crate::GUARD_COMPONENT_ID
+                && matches!(
+                    page.status(),
+                    StatusCode::Forbidden
+                        | StatusCode::ServiceUnavailable
+                        | StatusCode::InternalServerError
+                )
+                && page.props().state() == InitialState::Number(page.status().as_u16().into())
+                && crate::guards::guard_title(page.status().as_u16().into()) == Some(page.title())
+                && page.data().is_empty()
+                && page.layouts().is_empty()
+                && page.selected_segment() == 0
+                && page.pending_layouts().is_none()
+                && page.failed_segment().is_none()
+                && page.metadata() == Some(&Metadata::new().for_error());
+        }
         if self.client_factory.is_none()
             || page.metadata().is_some_and(|metadata| {
                 !metadata.accepts_origin(self.client_metadata_origin.as_ref())
@@ -533,6 +561,44 @@ impl App {
     pub(super) fn client_missing(&self, request: &Request) -> Response {
         self.client_failure(request, PageError::NotFound)
     }
+    pub(super) fn client_guard_failure(&self, request: &Request, status: StatusCode) -> Response {
+        if status == StatusCode::BadRequest {
+            return self.client_failure(request, PageError::BadRequest);
+        }
+        let Ok(url) = Self::target(request) else {
+            return Response::error(StatusCode::BadRequest);
+        };
+        let code = u32::from(status.as_u16());
+        let Some(title) = crate::guards::guard_title(code) else {
+            return Response::error(StatusCode::InternalServerError);
+        };
+        let packet = NavigationPage::new(
+            url,
+            title,
+            ComponentProps::new(crate::GUARD_COMPONENT_ID, InitialState::Number(code)).unwrap(),
+            ActionData::default(),
+            status,
+        )
+        .and_then(|page| page.with_metadata(Metadata::new()));
+        let Some(mut runtime) = self.client_runtime.clone() else {
+            return Response::error(status);
+        };
+        runtime.shell = |children| children;
+        let mut minimal = App::new();
+        minimal.client_runtime = Some(runtime);
+        minimal.client_factory = Some(|_| Err(ComponentError::InvalidProps));
+        minimal.client_metadata_origin = self.client_metadata_origin.clone();
+        Self::guarded(|| {
+            minimal.client_finish(
+                &packet.map_err(|_| PageError::InternalServerError)?,
+                Html::default(),
+                request,
+                crate::NavigationCachePolicy::no_store(),
+                None,
+            )
+        })
+        .unwrap_or_else(|_| Response::error(StatusCode::InternalServerError))
+    }
     fn client_failure(&self, request: &Request, error: PageError) -> Response {
         if error == PageError::InternalServerError {
             return Response::error(StatusCode::InternalServerError);
@@ -583,7 +649,9 @@ impl App {
         read_only: bool,
         editable: bool,
     ) -> Result<Html, PageError> {
-        let mut component = factory(props).map_err(|_| PageError::InternalServerError)?;
+        let mut component = crate::guard_component(props)
+            .unwrap_or_else(|| factory(props))
+            .map_err(|_| PageError::InternalServerError)?;
         component
             .page_data(data.clone())
             .map_err(|_| PageError::InternalServerError)?;

@@ -28,7 +28,7 @@ export function cacheFreshness(response, ttlMs, startedAt) {
   return expires > performance.now() ? expires : null;
 }
 async function pageBytes(response, signal) {
-  if (![200, 400, 404, 500].includes(response.status) || response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== NAVIGATION_MEDIA_TYPE || !response.body) throw failure();
+  if (![200, 400, 403, 404, 500, 503].includes(response.status) || response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== NAVIGATION_MEDIA_TYPE || !response.body) throw failure();
   const length = response.headers.get("content-length");
   if (length !== null && (!/^\d+$/.test(length) || Number(length) > 65536)) throw failure();
   const reader = response.body.getReader(), parts = []; let total = 0;

@@ -44,6 +44,7 @@ pub struct Request {
     pub(crate) query_params: Query,
     pub(crate) content_length: Option<u64>,
     pub(crate) form: Option<FormData>,
+    pub(crate) guard_private: bool,
 }
 
 impl Request {
@@ -56,6 +57,7 @@ impl Request {
             query_params: Query::default(),
             content_length: None,
             form: None,
+            guard_private: false,
         }
     }
     pub(crate) fn background_get(&self) -> Self {
@@ -67,11 +69,19 @@ impl Request {
             query_params: self.query_params.clone(),
             content_length: None,
             form: None,
+            guard_private: false,
         }
     }
     /// Returns the request method. GET handlers also receive HEAD requests.
     pub fn method(&self) -> Method {
         self.method
+    }
+    /// Requests carrying credentials or marked Private by a guard bypass public caches.
+    /// This flag is not an authentication result.
+    pub fn cache_bypass(&self) -> bool {
+        self.guard_private
+            || self.header("cookie").is_some()
+            || self.header("authorization").is_some()
     }
 
     /// Returns the path without its query string.
@@ -139,7 +149,7 @@ pub enum StatusCode {
     SeeOther,
     /// 400: the request is malformed or ambiguous.
     BadRequest,
-    /// 403: the mutation's source origin is not permitted.
+    /// 403: access or the mutation's source origin is not permitted.
     Forbidden,
     /// 404: no route matches this exact path.
     NotFound,
@@ -165,7 +175,7 @@ pub enum StatusCode {
     InternalServerError,
     /// 501: the method or transfer/upgrade functionality is unsupported.
     NotImplemented,
-    /// 503: a bounded public cache cannot accept or finish this request.
+    /// 503: the service or a bounded public cache cannot fulfill this request.
     ServiceUnavailable,
     /// 505: the HTTP version is outside this profile.
     HttpVersionNotSupported,
@@ -485,6 +495,10 @@ impl Response {
     pub(crate) fn error(status: StatusCode) -> Self {
         Self::text(format!("{}\n", status.reason())).with_status(status)
     }
+    pub(crate) fn guard_no_store(mut self) -> Self {
+        self.navigation_cache = crate::NavigationCachePolicy::no_store();
+        self
+    }
 
     pub(crate) fn wire_headers(&self, allowed: &str) -> String {
         let allow = if self.status == StatusCode::MethodNotAllowed {
@@ -679,6 +693,7 @@ pub(crate) fn parse(
         query_params: Query::default(),
         content_length,
         form: None,
+        guard_private: false,
     })
 }
 

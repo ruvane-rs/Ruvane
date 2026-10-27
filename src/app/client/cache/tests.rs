@@ -9,6 +9,7 @@ use std::sync::{
 };
 use std::time::Duration;
 mod background;
+mod guards;
 mod prerender;
 mod revalidation;
 

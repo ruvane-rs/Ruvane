@@ -13,6 +13,7 @@ enum Post {
 /// Duplicate method declarations and empty endpoints are rejected at registration.
 #[derive(Clone, Default)]
 pub struct FileEndpoint {
+    pub(super) guards: Vec<crate::RouteGuard>,
     get: Option<(QueryMode, Handler)>,
     post: Option<Post>,
     duplicate: bool,
@@ -21,6 +22,11 @@ impl FileEndpoint {
     /// Creates an empty endpoint to configure with one GET and/or POST handler.
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Appends a native guard for every method declared by this endpoint.
+    pub fn guard(mut self, guard: crate::RouteGuard) -> Self {
+        self.guards.push(guard);
+        self
     }
     /// Declares read-only GET/HEAD handling with URI query semantics.
     pub fn get(mut self, handler: impl Fn(&Request) -> Response + Send + Sync + 'static) -> Self {
@@ -59,13 +65,38 @@ impl FileEndpoint {
         usize::from(self.get.is_some()) + usize::from(self.post.is_some())
     }
     pub(super) fn mount(&self, router: &mut Router, pattern: &str) -> Result<(), RouteError> {
+        self.mount_with(router, pattern, None)
+    }
+    pub(super) fn mount_guarded(
+        &self,
+        router: &mut Router,
+        pattern: &str,
+        app: Arc<App>,
+    ) -> Result<(), RouteError> {
+        self.mount_with(router, pattern, Some(app))
+    }
+    fn mount_with(
+        &self,
+        router: &mut Router,
+        pattern: &str,
+        app: Option<Arc<App>>,
+    ) -> Result<(), RouteError> {
         if let Some((mode, handler)) = &self.get {
             let handler = Arc::clone(handler);
+            let (app, guards, pattern_owned) =
+                (app.clone(), self.guards.clone(), pattern.to_owned());
             let handle = move |request: &Request| {
                 if reserved(request.path()) {
                     Response::error(StatusCode::NotFound)
                 } else {
-                    handler(request)
+                    match &app {
+                        Some(app) => {
+                            app.guarded_endpoint(request, &pattern_owned, &guards, |request| {
+                                handler(request)
+                            })
+                        }
+                        None => handler(request),
+                    }
                 }
             };
             match mode {
@@ -77,23 +108,41 @@ impl FileEndpoint {
             match post {
                 Post::Form(handler) => {
                     let handler = Arc::clone(handler);
+                    let (app, guards, pattern_owned) =
+                        (app.clone(), self.guards.clone(), pattern.to_owned());
                     router.post_form(pattern, move |request| {
                         if reserved(request.path()) {
                             Response::error(StatusCode::NotFound)
                         } else {
-                            handler(request)
+                            match &app {
+                                Some(app) => app.guarded_endpoint(
+                                    request,
+                                    &pattern_owned,
+                                    &guards,
+                                    |request| handler(request),
+                                ),
+                                None => handler(request),
+                            }
                         }
                     })?;
                 }
                 Post::Action(handler) => {
                     let handler = Arc::clone(handler);
+                    let (app, guards, pattern_owned) =
+                        (app.clone(), self.guards.clone(), pattern.to_owned());
                     router.post_action_response(pattern, move |request| {
                         if reserved(request.path()) {
                             return Response::error(StatusCode::NotFound);
                         }
-                        match handler(request) {
+                        let run = |request: &Request| match handler(request) {
                             Ok(reply) => Response::action(&reply),
                             Err(_) => Response::error(StatusCode::InternalServerError),
+                        };
+                        match &app {
+                            Some(app) => {
+                                app.guarded_endpoint(request, &pattern_owned, &guards, run)
+                            }
+                            None => run(request),
                         }
                     })?;
                 }

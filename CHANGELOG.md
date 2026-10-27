@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0-alpha.46 — Unreleased
+
+- Add native App, branch, page and endpoint guards with typed allow, private,
+  forbidden and unavailable decisions, atomic declaration and bounded inheritance.
+- Check every protected GET/HEAD/POST before caches, persistent restoration,
+  loaders and handlers; keep Private sticky without altering original headers.
+- Generate native-only guard.rs modules with decoded segment prefix matching,
+  covering pages, endpoints and unmatched descendants.
+- Return fixed read-only 403/503/500 views across HTML, hydration and SPA navigation,
+  retiring the old branch and metadata without invoking application error factories.
+- Keep guarded browser responses no-store and native public cache reuse explicit;
+  refuse guarded native static export and retain public build-artifact semantics.
+- Exercise warm/frozen/persistent caches, POST validation, native module exclusion
+  and Wasm error mounts with zero dependencies, ABI v11 and the same four assets.
+
 ## 0.1.0-alpha.45 — Unreleased
 
 - Add optional bounded persistent storage for regenerated public client output,

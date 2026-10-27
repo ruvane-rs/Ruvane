@@ -73,6 +73,7 @@ enum SourceKind {
     Error,
     NotFound,
     Endpoint,
+    Guard,
 }
 impl SourceKind {
     fn name(self) -> &'static str {
@@ -83,6 +84,7 @@ impl SourceKind {
             Self::Error => "error.rs",
             Self::NotFound => "not_found.rs",
             Self::Endpoint => "route.rs",
+            Self::Guard => "guard.rs",
         }
     }
 }
@@ -174,7 +176,7 @@ impl FileRoutes {
                 .path
                 .to_str()
                 .ok_or_else(|| FileRouteError::at(&source.relative, "source path is not UTF-8"))?;
-            if source.kind == SourceKind::Endpoint {
+            if matches!(source.kind, SourceKind::Endpoint | SourceKind::Guard) {
                 result.push_str("#[cfg(not(target_family = \"wasm\"))]\n");
             }
             writeln!(result, "#[path = {path:?}]\nmod __ruvane_file_{index};").unwrap();
@@ -188,6 +190,9 @@ impl FileRoutes {
             result.push_str("    let mut registry = ruvane::FileRouteRegistry::new(app);\n");
         }
         for (index, source) in self.sources.iter().enumerate() {
+            if source.kind == SourceKind::Guard {
+                writeln!(result,"    #[cfg(not(target_family = \"wasm\"))]\n    registry.guard({:?}, {:?}, __ruvane_file_{index}::guard())?;",source.relative,source.pattern).unwrap();
+            }
             if source.kind == SourceKind::NotFound {
                 writeln!(result, "    let not_found_{index} = registry.not_found({:?}, __ruvane_file_{index}::not_found(), {})?;", source.relative, source.relative == "not_found.rs").unwrap();
             }
@@ -236,7 +241,8 @@ impl FileRoutes {
                 SourceKind::Loading
                 | SourceKind::Error
                 | SourceKind::NotFound
-                | SourceKind::Endpoint => {}
+                | SourceKind::Endpoint
+                | SourceKind::Guard => {}
             }
         }
         for (index, source) in self.sources.iter().enumerate() {
@@ -432,6 +438,7 @@ impl Scan {
         let mut error = false;
         let mut local_not_found = false;
         let mut endpoint = false;
+        let mut guard = false;
         for entry in entries {
             let name = entry
                 .file_name()
@@ -462,6 +469,7 @@ impl Scan {
                         | "error.rs"
                         | "not_found.rs"
                         | "route.rs"
+                        | "guard.rs"
                 )
             {
                 match name.as_str() {
@@ -471,12 +479,13 @@ impl Scan {
                     "error.rs" => error = true,
                     "not_found.rs" => local_not_found = true,
                     "route.rs" => endpoint = true,
+                    "guard.rs" => guard = true,
                     _ => unreachable!(),
                 }
             } else {
                 return Err(FileRouteError::at(
                     format!("{label}/{name}"),
-                    "expected page.rs, layout.rs, loading.rs, error.rs, not_found.rs, route.rs or a route directory",
+                    "expected page.rs, layout.rs, loading.rs, error.rs, not_found.rs, route.rs, guard.rs or a route directory",
                 ));
             }
         }
@@ -489,6 +498,16 @@ impl Scan {
                 .join("/")
         );
         PageRoute::new("file", &pattern).map_err(|error| FileRouteError::at(&label, error))?;
+        if guard {
+            self.add(
+                directory,
+                segments,
+                &pattern,
+                inherited,
+                SourceKind::Guard,
+                (None, None),
+            )?;
+        }
         let not_found = if local_not_found {
             Some(self.add(
                 directory,
@@ -643,7 +662,8 @@ impl Scan {
             SourceKind::Loading
             | SourceKind::Error
             | SourceKind::NotFound
-            | SourceKind::Endpoint => {}
+            | SourceKind::Endpoint
+            | SourceKind::Guard => {}
         }
         Ok(index)
     }

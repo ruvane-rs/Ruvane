@@ -10,6 +10,7 @@ mod content;
 mod development;
 mod file_routes;
 mod forms;
+mod guards;
 mod html;
 mod http;
 mod layout_snapshot;
@@ -58,6 +59,11 @@ pub use file_routes::{
     MAX_FILE_ROUTE_TOTAL_BYTES,
 };
 pub use forms::{FormData, FormError, GetForm, MAX_FORM_NAME_BYTES, MAX_POST_BODY_BYTES, PostForm};
+#[doc(hidden)]
+pub use guards::guard_component;
+pub use guards::{
+    GUARD_COMPONENT_ID, GuardContext, GuardDecision, MAX_APP_GUARDS, MAX_ROUTE_GUARDS, RouteGuard,
+};
 pub use html::{
     Attribute, Document, Element, Html, ImageError, MAX_IMAGE_DIMENSION, Tag, element, fragment,
     image, link, module_script, text,

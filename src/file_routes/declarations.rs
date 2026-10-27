@@ -58,6 +58,7 @@ impl FileRouteBoundary {
 
 /// A page declaration returned by a route file's `pub fn page()`.
 pub struct FilePage {
+    guards: Vec<crate::RouteGuard>,
     name: String,
     kind: PageKind,
     boundary: Option<FileRouteBoundary>,
@@ -79,6 +80,7 @@ impl FilePage {
     ) -> Self {
         Self {
             name: name.into(),
+            guards: Vec::new(),
             kind: PageKind::Server(mode, Arc::new(render)),
             boundary: None,
             not_found: None,
@@ -96,6 +98,7 @@ impl FilePage {
     ) -> Self {
         Self {
             name: name.into(),
+            guards: Vec::new(),
             kind: PageKind::Client(component, state, Arc::new(load)),
             boundary: None,
             not_found: None,
@@ -108,6 +111,11 @@ impl FilePage {
     /// Native-only declarations and enabled server cache policies are rejected.
     pub fn prerender(mut self, params: Vec<crate::PageParams>) -> Self {
         self.prerender = Some(params);
+        self
+    }
+    /// Appends a native GET/HEAD guard to this page declaration.
+    pub fn guard(mut self, guard: crate::RouteGuard) -> Self {
+        self.guards.push(guard);
         self
     }
     /// Regenerates the declared pre-rendered URLs on demand through a ServerCache handle.
@@ -197,6 +205,20 @@ pub struct FileRouteRegistry<'a> {
     failed: bool,
 }
 impl<'a> FileRouteRegistry<'a> {
+    /// Registers a native inherited guard without executing it.
+    pub fn guard(
+        &mut self,
+        source: &str,
+        pattern: &str,
+        guard: crate::RouteGuard,
+    ) -> Result<(), FileRouteError> {
+        let result = self
+            .candidate
+            .guard_branch(pattern, guard)
+            .map_err(|error| FileRouteError::at(source, error));
+        self.failed |= result.is_err();
+        result
+    }
     /// Starts an atomic registration batch without executing page/layout loaders.
     pub fn new(app: &'a mut App) -> Self {
         Self {
@@ -433,6 +455,11 @@ impl<'a> FileRouteRegistry<'a> {
         if let Some(params) = declaration.prerender {
             self.candidate
                 .client_page_prerender(&declaration.name, Some(params))
+                .map_err(|error| FileRouteError::at(source, error))?;
+        }
+        for guard in declaration.guards {
+            self.candidate
+                .page_guard(&declaration.name, guard)
                 .map_err(|error| FileRouteError::at(source, error))?;
         }
         if let Some(policy) = declaration.revalidation {

@@ -499,3 +499,62 @@ fn persistence_must_be_attached_before_handles_are_cloned_or_namespaces_created(
         assert!(!temp.path().join("LOCK").exists());
     }
 }
+
+#[test]
+fn guards_run_before_disk_restoration_and_private_requests_do_not_restore_or_replace() {
+    use crate::{GuardDecision, RouteGuard};
+    let temp = Temp::new();
+    let mut f = persistent(&temp);
+    let mode = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (decision, seen) = (mode.clone(), calls.clone());
+    f.app
+        .guard(RouteGuard::new(move |_| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            match decision.load(Ordering::SeqCst) {
+                0 => GuardDecision::Allow,
+                1 => GuardDecision::Private,
+                _ => GuardDecision::Forbidden,
+            }
+        }))
+        .unwrap();
+    let router = f.app.router(None).unwrap();
+    assert_eq!(
+        seed(&request(&router, "/articles/a", true, "")).title(),
+        "Title 2"
+    );
+    assert_eq!(f.cache.stats().unwrap().persistent_entries, 1);
+    f.cache.close_persistence().unwrap();
+    let next = persistent(&temp);
+    f.app.server_cache(next.cache.clone());
+    f.value.store(3, Ordering::SeqCst);
+    let router = f.app.router(None).unwrap();
+    let before = f.loads.load(Ordering::SeqCst);
+    mode.store(2, Ordering::SeqCst);
+    assert_eq!(
+        request(&router, "/articles/a", true, "").status(),
+        StatusCode::Forbidden
+    );
+    assert_eq!(f.loads.load(Ordering::SeqCst), before);
+    assert_eq!(next.cache.stats().unwrap().persistent_restores, 0);
+    mode.store(1, Ordering::SeqCst);
+    assert_eq!(
+        seed(&request(&router, "/articles/a", true, "")).title(),
+        "Title 3"
+    );
+    assert_eq!(next.cache.stats().unwrap().persistent_restores, 0);
+    assert_eq!(next.cache.stats().unwrap().entries, 0);
+    mode.store(0, Ordering::SeqCst);
+    assert_eq!(
+        seed(&request(&router, "/articles/a", true, "")).title(),
+        "Title 2"
+    );
+    assert_eq!(next.cache.stats().unwrap().persistent_restores, 1);
+    assert_eq!(f.loads.load(Ordering::SeqCst), before + 1);
+    mode.store(2, Ordering::SeqCst);
+    assert_eq!(
+        request(&router, "/articles/a", false, "").status(),
+        StatusCode::Forbidden
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 5);
+}
